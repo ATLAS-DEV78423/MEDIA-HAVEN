@@ -1,15 +1,13 @@
-/* The application shell: a fixed rail on the left, a scrolling canvas on
-   the right. The canvas is edge-to-edge so artwork can bleed. */
+/* The shell: full-bleed canvas. The navigation floats over it. */
 
 .shell {
-  display: flex;
+  position: relative;
   height: 100%;
   background-color: var(--bg-base);
 }
 
 .main {
-  flex: 1 1 auto;
-  min-width: 0;
+  height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   scroll-behavior: smooth;
@@ -18,8 +16,13 @@
 
 .canvas {
   min-height: 100%;
-  display: flex;
-  flex-direction: column;
+  padding-top: calc(var(--nav-top-spacing) + var(--nav-height) + var(--space-6));
+}
+
+@media (max-width: 48rem) {
+  .canvas {
+    padding-top: calc(var(--space-6) + var(--nav-height) + var(--space-4));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

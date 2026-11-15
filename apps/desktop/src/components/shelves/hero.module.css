@@ -1,12 +1,12 @@
-/* The hero. One wide backdrop, a gradient that protects the text, and a
-   small number of actions. It never rotates and never autoplays. */
+/* The hero. Full-width cinematic composition. The artwork extends behind
+   the navigation and blends into the background through layered gradients. */
 
 .hero {
   position: relative;
-  min-height: var(--hero-height);
-  display: flex;
-  align-items: flex-end;
+  min-height: var(--hero-min-height);
+  height: var(--hero-height);
   overflow: hidden;
+  background-color: var(--bg-base);
 }
 
 .backdrop {
@@ -15,6 +15,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center 30%;
   z-index: 0;
 }
 
@@ -22,11 +23,7 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(
-      120% 90% at 18% 20%,
-      var(--bg-raised) 0%,
-      var(--bg-base) 62%
-    ),
+    radial-gradient(120% 90% at 60% 30%, var(--bg-raised) 0%, var(--bg-base) 65%),
     linear-gradient(160deg, var(--bg-elevated), var(--bg-sunken));
   z-index: 0;
 }
@@ -36,34 +33,50 @@
   inset: 0;
   z-index: 1;
   background:
-    linear-gradient(
-      to top,
-      var(--surface-scrim-strong) 0%,
-      var(--surface-scrim) 34%,
-      transparent 68%
-    ),
-    linear-gradient(
-      to right,
-      var(--surface-scrim-strong) 0%,
-      transparent 58%
-    );
+    linear-gradient(to right, var(--surface-scrim-strong) 0%, var(--surface-scrim) 38%, transparent 72%),
+    linear-gradient(to top, var(--surface-scrim-strong) 0%, var(--surface-scrim) 30%, transparent 62%);
 }
 
 .content {
-  position: relative;
+  position: absolute;
   z-index: 2;
-  padding: var(--space-10) var(--page-gutter) var(--space-9);
-  max-width: 46rem;
+  left: 7.5vw;
+  top: 30%;
+  max-width: 26.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-.kicker {
-  font-size: var(--text-meta);
-  font-weight: 600;
-  letter-spacing: var(--tracking-wide);
-  text-transform: uppercase;
-  color: var(--text-secondary);
-  margin-bottom: var(--space-3);
+/* ------------------------------------------------------------------ *
+ * Genre chips
+ * ------------------------------------------------------------------ */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
 }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background-color: var(--surface-translucent);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: var(--text-tag);
+  font-weight: 500;
+  letter-spacing: var(--tracking-wide);
+  line-height: 1.4;
+  backdrop-filter: blur(var(--space-2));
+}
+
+/* ------------------------------------------------------------------ *
+ * Title
+ * ------------------------------------------------------------------ */
 
 .title {
   font-family: var(--font-display);
@@ -72,31 +85,39 @@
   letter-spacing: var(--tracking-tight);
   line-height: var(--leading-tight);
   color: var(--text-primary);
-  text-shadow: 0 var(--space-2) var(--space-6) var(--shadow-text-title);
-  margin-bottom: var(--space-4);
+  text-shadow: var(--shadow-text-hero);
+  max-width: 22.5rem;
 }
 
 .meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   font-size: var(--text-meta);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
-  margin-bottom: var(--space-4);
 }
 
-.dot {
-  color: var(--text-tertiary);
+.metaType {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.metaMatch {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.metaDot {
+  color: var(--text-muted);
 }
 
 .synopsis {
   font-size: var(--text-body);
   line-height: var(--leading-normal);
   color: var(--text-secondary);
-  max-width: 38rem;
-  margin-bottom: var(--space-6);
+  max-width: 26rem;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
@@ -105,55 +126,110 @@
 
 .actions {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-3);
+  margin-top: var(--space-2);
 }
 
 /* ------------------------------------------------------------------ *
- * Buttons
+ * Play Now button — dark translucent, rounded, clear but not loud
  * ------------------------------------------------------------------ */
 
-.button {
+.playButton {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: var(--space-11);
+  height: var(--play-button-height);
   padding: 0 var(--space-6);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-button);
+  background-color: var(--surface-control);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  color: var(--text-primary);
   font-size: var(--text-body);
   font-weight: 600;
+  backdrop-filter: blur(var(--space-3));
   transition:
     background-color var(--motion-fast) var(--ease-out),
-    transform var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
+    transform var(--motion-fast) var(--ease-out);
 }
 
-.button:active {
+.playButton:hover {
+  background-color: var(--surface-control-hover);
+}
+
+.playButton:active {
   transform: scale(0.98);
 }
 
-.primary {
-  background-color: var(--accent);
-  color: var(--accent-contrast);
-}
-
-.primary:hover {
-  background-color: var(--accent-strong);
-}
-
-.secondary {
-  background-color: var(--surface-translucent);
-  color: var(--text-primary);
-  border: var(--border-width-hairline) solid var(--border-strong);
-  backdrop-filter: blur(var(--space-2));
-}
-
-.secondary:hover {
-  background-color: var(--surface-active);
-}
-
-.button:focus-visible {
+.playButton:focus-visible {
   outline: var(--focus-ring-width) solid var(--focus-ring);
   outline-offset: var(--focus-ring-offset);
   box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}
+
+.playIcon {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex: 0 0 auto;
+}
+
+/* ------------------------------------------------------------------ *
+ * Favourite (heart) — outline by default, filled when selected
+ * ------------------------------------------------------------------ */
+
+.favourite {
+  display: grid;
+  place-items: center;
+  width: var(--favourite-size);
+  height: var(--favourite-size);
+  border-radius: var(--radius-button);
+  background-color: var(--surface-control-quiet);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  color: var(--text-primary);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.favourite:hover {
+  background-color: var(--surface-control-quiet-hover);
+}
+
+.favourite:active {
+  transform: scale(0.96);
+}
+
+.favouriteSelected {
+  color: var(--accent);
+  border-color: var(--accent-quiet);
+  background-color: var(--accent-quiet);
+}
+
+.favourite:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}
+
+.favouriteIcon {
+  width: var(--space-5);
+  height: var(--space-5);
+}
+
+@media (max-width: 75rem) {
+  .hero {
+    height: var(--hero-height-compact);
+    min-height: var(--hero-min-height-compact);
+  }
+
+  .content {
+    left: var(--page-gutter);
+    top: 24%;
+    max-width: 24rem;
+  }
+
+  .title {
+    font-size: var(--text-title);
+  }
 }
