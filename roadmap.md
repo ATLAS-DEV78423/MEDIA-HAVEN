@@ -795,6 +795,36 @@ touching their files.
   violation.
 - **Status:** Not started
 
+### [ ] P2-07 — Implement the local watchlist
+
+- **Goal:** The user can save media to watch later, and it survives restarts
+  and upgrades.
+- **Scope:** A `watchlist_items` table, add/remove actions reachable from any
+  media card and details surface, manual ordering, and a Watchlist screen with
+  movies and episodes. Missing files are shown as unavailable rather than
+  dropped.
+- **Out of scope:** Cloud sync, accounts, sharing, automatic reordering, and
+  any link between the watchlist and the play queue.
+- **Dependencies:** P2-03 (database entities).
+- **Implementation areas:** `crates/app-core`, `crates/persistence/sqlite`,
+  `apps/desktop/src/pages/Watchlist`, `apps/desktop/src/components/cards`.
+- **Acceptance criteria:**
+  - [ ] Adding an item from a media card and from the details surface both
+        work, and produce the same row.
+  - [ ] Order is preserved exactly as the user arranged it, across a restart.
+  - [ ] Removing an item deletes **zero** files — asserted by a file-count
+        test.
+  - [ ] An item whose file is missing is shown as unavailable and is **not**
+        silently removed.
+  - [ ] The watchlist is fully usable with the network disconnected.
+  - [ ] Adding to the watchlist does not change the play queue, and vice
+        versa — asserted by a test.
+- **Tests:** Persistence round-trip; manual reorder across restart; file-count
+  assertion on removal; missing-file handling; queue independence.
+- **Risks:** Conflating the watchlist with the queue, which would make
+  "play next" mutate unexpectedly.
+- **Status:** Not started
+
 ### ✅ Checkpoint CP-2 — The library is real
 
 - **Gate:** P2-01 … P2-06 complete.
@@ -804,6 +834,8 @@ touching their files.
   - [ ] Offline library session demonstrated with the network off.
   - [ ] File-count before/after proof that removing a root deleted nothing.
   - [ ] Duplicate detection report on a known duplicate set.
+  - [ ] Watchlist persistence demonstrated across a restart, with the
+        queue-independence and file-count assertions from P2-07.
 - **If it fails:** Do not start playback. Browsing on an unreliable library
   makes playback bugs indistinguishable from indexing bugs.
 

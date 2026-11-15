@@ -70,6 +70,7 @@ streaming interface:
 -   Large featured artwork and clear media details
 -   Horizontal content shelves and media cards
 -   Continue Watching and Up Next
+-   Watchlist
 -   Search, library, downloads and settings
 -   Full-screen playback
 -   Keyboard, mouse, controller and remote-friendly navigation
@@ -124,6 +125,7 @@ list.
 -   Metadata and artwork handling with a clear offline/fallback state
 -   Media playback, resume position and playback completion tracking
 -   Queue and Up Next management
+-   A local watchlist
 -   Persistent settings and database
 -   Storage usage visibility and configurable limits
 -   Logs, health checks, diagnostics and safe uninstall
@@ -516,7 +518,6 @@ WSL2 offers no cross-vendor hardware video-decode path. The engine selection, th
 codec matrix remain open.
 
 ## 4.5 Queue and Up Next
-
 Responsibilities:
 
 -   Maintain a durable queue.
@@ -528,6 +529,31 @@ Responsibilities:
 
 Queue state must be stored in SQLite. Do not rely only on frontend
 memory.
+
+## 4.5.1 Watchlist
+
+Responsibilities:
+
+-   Save and remove media from a watchlist, from any media card or details
+    surface.
+-   Keep the user's manual order. Nothing reorders it automatically.
+-   Support movies and episodes.
+-   Show entries whose file has gone missing as unavailable, and keep them —
+    never silently drop a row because a file moved.
+-   Work with the network disconnected. The watchlist is local state.
+
+Rules:
+
+-   The watchlist is **not** the queue. The queue is "play next"; the watchlist
+    is "someday". Adding to one must not add to the other.
+-   The watchlist is not an automatic recommendation list. The MVP's
+    "Recommended from Your Library" shelf is derived deterministically from
+    local data and is not editable into the watchlist.
+-   Removing a watchlist entry deletes **no media**. It deletes a row.
+-   Watchlist state is stored in SQLite and is backed up with the rest of the
+    database.
+-   No cloud sync, no account, no sharing. If a sync feature is ever proposed
+    it requires its own spec, threat model entry and ADR.
 
 ## 4.6 Download manager — optional Docker-managed feature
 
@@ -683,6 +709,9 @@ Suggested initial entities:
 
   `queue_items`                       Ordered queue and state
 
+  `watchlist_items`                   User-saved watch-later entries
+                                      and their manual order
+
   `downloads`                         Optional provider task references
                                       and status
 
@@ -785,6 +814,7 @@ project-root/
 │       │   │   ├── Movies/
 │       │   │   ├── Shows/
 │       │   │   ├── Library/
+│       │   │   ├── Watchlist/
 │       │   │   ├── Downloads/
 │       │   │   ├── Search/
 │       │   │   ├── Player/
@@ -974,13 +1004,20 @@ scaffolding and unnecessary crates.
     -   Search local library first
     -   Optional metadata search only if configured
     -   Clear indication of online searches
-7.  **Player**
+7.  **Watchlist**
+    -   Items the user has saved to watch later
+    -   Movies and episodes, in the order the user arranged them
+    -   Add and remove from any media card or details surface
+    -   Reorder by hand; no automatic reordering
+    -   Works fully offline; it is local state, not a cloud list
+    -   Missing files are shown as unavailable, never silently dropped
+8.  **Player**
     -   Full-screen playback
     -   Play/pause, seek, volume
     -   Subtitle/audio track controls where supported
     -   Episode next/previous
     -   Resume and completion behaviour
-8.  **Settings**
+9.  **Settings**
     -   General
     -   Library folders
     -   Playback
@@ -988,7 +1025,7 @@ scaffolding and unnecessary crates.
     -   Optional services
     -   Diagnostics
     -   About, licences and updates
-9.  **First-run setup**
+10. **First-run setup**
     -   Welcome and purpose
     -   System compatibility check
     -   Storage location
@@ -1084,7 +1121,8 @@ Recommended order, conditionally rendered when data exists:
 6. Recently Added Shows
 7. Recommended from Your Library (deterministic local rules only in MVP)
 8. Recently Played
-9. Collections / Genres
+9. Watchlist
+10. Collections / Genres
 
 Do not show empty shelves. If the library is empty, show a designed onboarding
 state with a prominent `Add Media Folder` action and a short explanation.
@@ -1775,6 +1813,7 @@ Each substantial task must contain:
 -   [ ] P2-04 Build Movies, Shows and Library views.
 -   [ ] P2-05 Add search, sorting, filtering and empty/error states.
 -   [ ] P2-06 Implement the metadata and artwork cache with an offline fallback.
+-   [ ] P2-07 Implement the local watchlist.
 
 ### Phase 3 --- Playback and queue
 

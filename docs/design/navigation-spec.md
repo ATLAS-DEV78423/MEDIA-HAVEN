@@ -50,6 +50,8 @@ Modals, details surfaces and the player form a stack.
 |---|---|---|
 | Home | Navigation rail, then hero actions, then first shelf | Card → details |
 | Movies/Shows | First card of the grid/shelf | Card → details |
+| Watchlist | First card of the list | Card → details; Back returns to the originating card |
+| Search | Search input, then result list | Result → details |
 | Details | Primary action (Play/Resume) | Back returns to originating card |
 | Player | Controls hidden until input | Escape → originating card |
 | Settings | First control of the active section | Back returns to previous page |
