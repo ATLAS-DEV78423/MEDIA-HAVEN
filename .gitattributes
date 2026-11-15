@@ -1,0 +1,36 @@
+# Normalise line endings in the repository, and check them out according to
+# .editorconfig, regardless of each contributor's global core.autocrlf setting.
+#
+# Without this, a contributor with core.autocrlf=true gets CRLF in the working
+# tree and a different contributor with core.autocrlf=input gets LF, which
+# produces whole-file diffs that have nothing to do with the change.
+
+* text=auto eol=lf
+
+# Windows scripts keep CRLF, matching .editorconfig.
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets are never rewritten.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.mp3 binary
+*.mp4 binary
+*.mkv binary
+*.webm binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.exe binary
+*.dll binary
+*.msi binary
+*.zip binary
