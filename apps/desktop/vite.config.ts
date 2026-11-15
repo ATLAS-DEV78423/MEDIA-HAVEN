@@ -11,6 +11,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      ignored: ["**/public/fonts/**"],
+    },
   },
   build: {
     target: "es2022",

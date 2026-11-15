@@ -13,6 +13,30 @@
   margin: 0;
 }
 
+@font-face {
+  font-family: "GeistPixel Grid";
+  src: url("/fonts/GeistPixel_Grid.woff2") format("woff2");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GeistPixel Line";
+  src: url("/fonts/GeistPixel_Line.woff2") format("woff2");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "GeistPixel Circle";
+  src: url("/fonts/GeistPixel_Circle.woff2") format("woff2");
+  font-weight: 400 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 html,
 body,
 #root {
