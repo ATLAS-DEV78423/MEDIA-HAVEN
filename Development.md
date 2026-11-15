@@ -1831,6 +1831,9 @@ Each substantial task must contain:
 -   [ ] P4-03 Implement keyboard/remote focus navigation.
 -   [ ] P4-04 Build details, settings and setup screens.
 -   [ ] P4-05 Validate readability and performance at TV distance.
+-   [ ] P4-06 Define the typed command and DTO contract (ADR-0009).
+-   [ ] P4-07 Build the development mock transport.
+-   [ ] P4-08 Integrate the frontend with the real backend.
 
 ### Phase 5 --- Reliability, security and storage
 

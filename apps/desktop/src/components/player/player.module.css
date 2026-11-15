@@ -1,0 +1,246 @@
+/* The player. Full screen, distraction-free. Controls appear on input and
+   fade on idle. Nothing autoplays on focus. */
+
+.surface {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-player);
+  background-color: var(--bg-sunken);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: m-fade var(--motion-base) var(--ease-out) both;
+}
+
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background-color: var(--bg-sunken);
+}
+
+/* The video surface is not implemented until the playback engine lands
+   (ADR-0002, roadmap P3-01). Until then this is a designed, honest
+   placeholder rather than an empty black rectangle. */
+.surfacePlaceholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: var(--space-5);
+  background:
+    radial-gradient(
+      110% 80% at 50% 12%,
+      var(--bg-raised) 0%,
+      var(--bg-sunken) 60%
+    );
+  color: var(--text-tertiary);
+  text-align: center;
+  padding: var(--space-8);
+}
+
+.surfacePlaceholderTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-subtitle);
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.surfacePlaceholderBody {
+  max-width: 30rem;
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: var(--space-8) var(--space-9);
+  background: linear-gradient(
+    to bottom,
+    var(--surface-scrim-strong) 0%,
+    transparent 26%,
+    transparent 58%,
+    var(--surface-scrim-strong) 100%
+  );
+  opacity: 1;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+
+.overlayIdle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.titleBlock {
+  animation: m-enter var(--motion-slow) var(--ease-out) both;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--text-title);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+  text-shadow: 0 var(--space-2) var(--space-6) var(--shadow-text-hero);
+}
+
+.subtitle {
+  margin-top: var(--space-2);
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------------ *
+ * Controls
+ * ------------------------------------------------------------------ */
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 68rem;
+  width: 100%;
+}
+
+.scrubber {
+  position: relative;
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background-color: var(--surface-active);
+  cursor: pointer;
+}
+
+.scrubberFill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-pill);
+  background-color: var(--accent);
+}
+
+.scrubberKnob {
+  position: absolute;
+  top: 50%;
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--radius-pill);
+  background-color: var(--accent-contrast);
+  border: var(--border-width-thick) solid var(--accent);
+  transform: translate(-50%, -50%);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.button {
+  display: grid;
+  place-items: center;
+  width: var(--space-11);
+  height: var(--space-11);
+  border-radius: var(--radius-pill);
+  color: var(--text-primary);
+  background-color: var(--surface-translucent);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.button:hover {
+  background-color: var(--surface-active);
+}
+
+.button:active {
+  transform: scale(0.94);
+}
+
+.button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}
+
+.playButton {
+  width: var(--space-12);
+  height: var(--space-12);
+  background-color: var(--accent);
+  color: var(--accent-contrast);
+  border-color: transparent;
+}
+
+.playButton:hover {
+  background-color: var(--accent-strong);
+}
+
+.time {
+  font-size: var(--text-meta);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.select {
+  min-height: var(--space-10);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  background-color: var(--surface-translucent);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: var(--text-meta);
+}
+
+.select:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}
+
+/* ------------------------------------------------------------------ *
+ * Up next
+ * ------------------------------------------------------------------ */
+
+.upNext {
+  position: absolute;
+  right: var(--space-9);
+  bottom: var(--space-9);
+  z-index: 2;
+  width: 22rem;
+  padding: var(--space-5);
+  border-radius: var(--radius-sheet);
+  background-color: var(--surface-translucent);
+  backdrop-filter: blur(var(--space-4));
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  box-shadow: var(--shadow-overlay);
+  animation: m-enter var(--motion-base) var(--ease-out) both;
+}
+
+.upNextTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-subtitle);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.upNextBody {
+  margin-top: var(--space-2);
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+}
+
+.upNextActions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}

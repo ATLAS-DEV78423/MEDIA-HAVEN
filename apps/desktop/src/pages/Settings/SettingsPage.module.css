@@ -1,0 +1,173 @@
+/* Settings: a list of labelled sections. Every control is keyboard
+   operable and every value is real — nothing here is decorative. */
+
+.layout {
+  display: grid;
+  grid-template-columns: 16rem 1fr;
+  gap: var(--space-9);
+  padding: 0 var(--page-gutter) var(--space-12);
+  align-items: start;
+}
+
+@media (max-width: 75rem) {
+  .layout {
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+}
+
+.nav {
+  position: sticky;
+  top: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.navItem {
+  padding: var(--space-3) var(--space-4);
+  min-height: var(--space-10);
+  border-radius: var(--radius-card);
+  text-align: left;
+  color: var(--text-secondary);
+  font-size: var(--text-body);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.navItem:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.navItem:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: calc(var(--focus-ring-offset) * -1);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}
+
+.panels {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-10);
+  min-width: 0;
+}
+
+.panel {
+  scroll-margin-top: var(--space-8);
+}
+
+.panelTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-title);
+  font-weight: 600;
+  letter-spacing: var(--tracking-tight);
+  color: var(--text-primary);
+  margin-bottom: var(--space-4);
+}
+
+.panelBody {
+  color: var(--text-secondary);
+  line-height: var(--leading-normal);
+  max-width: 44rem;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-4);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-4);
+  border-radius: var(--radius-card);
+  background-color: var(--surface-hover);
+  flex-wrap: wrap;
+}
+
+.rowLabel {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.rowHint {
+  margin-top: var(--space-1);
+  font-size: var(--text-meta);
+  color: var(--text-secondary);
+}
+
+.rowControl {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.select,
+.input {
+  min-height: var(--space-10);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  background-color: var(--bg-elevated);
+  border: var(--border-width-hairline) solid var(--border-subtle);
+  color: var(--text-primary);
+  font-size: var(--text-meta);
+}
+
+.input {
+  border-radius: var(--radius-card);
+  min-width: 14rem;
+}
+
+.select:focus-visible,
+.input:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}
+
+.toggle {
+  position: relative;
+  width: var(--space-11);
+  height: var(--space-7);
+  border-radius: var(--radius-pill);
+  background-color: var(--border-strong);
+  transition: background-color var(--motion-fast) var(--ease-out);
+  flex: 0 0 auto;
+}
+
+.toggleOn {
+  background-color: var(--accent);
+}
+
+.toggleKnob {
+  position: absolute;
+  top: var(--space-1);
+  left: var(--space-1);
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-pill);
+  background-color: var(--text-primary);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.toggleOn .toggleKnob {
+  transform: translateX(var(--space-4));
+}
+
+.toggle:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}
+
+.value {
+  font-size: var(--text-meta);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}

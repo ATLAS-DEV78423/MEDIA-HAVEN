@@ -1,0 +1,159 @@
+/* The hero. One wide backdrop, a gradient that protects the text, and a
+   small number of actions. It never rotates and never autoplays. */
+
+.hero {
+  position: relative;
+  min-height: var(--hero-height);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+}
+
+.backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+}
+
+.placeholder {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      120% 90% at 18% 20%,
+      var(--bg-raised) 0%,
+      var(--bg-base) 62%
+    ),
+    linear-gradient(160deg, var(--bg-elevated), var(--bg-sunken));
+  z-index: 0;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(
+      to top,
+      var(--surface-scrim-strong) 0%,
+      var(--surface-scrim) 34%,
+      transparent 68%
+    ),
+    linear-gradient(
+      to right,
+      var(--surface-scrim-strong) 0%,
+      transparent 58%
+    );
+}
+
+.content {
+  position: relative;
+  z-index: 2;
+  padding: var(--space-10) var(--page-gutter) var(--space-9);
+  max-width: 46rem;
+}
+
+.kicker {
+  font-size: var(--text-meta);
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-3);
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--text-hero);
+  font-weight: 700;
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-tight);
+  color: var(--text-primary);
+  text-shadow: 0 var(--space-2) var(--space-6) var(--shadow-text-title);
+  margin-bottom: var(--space-4);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--space-4);
+}
+
+.dot {
+  color: var(--text-tertiary);
+}
+
+.synopsis {
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  color: var(--text-secondary);
+  max-width: 38rem;
+  margin-bottom: var(--space-6);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+/* ------------------------------------------------------------------ *
+ * Buttons
+ * ------------------------------------------------------------------ */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-11);
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-body);
+  font-weight: 600;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.button:active {
+  transform: scale(0.98);
+}
+
+.primary {
+  background-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.primary:hover {
+  background-color: var(--accent-strong);
+}
+
+.secondary {
+  background-color: var(--surface-translucent);
+  color: var(--text-primary);
+  border: var(--border-width-hairline) solid var(--border-strong);
+  backdrop-filter: blur(var(--space-2));
+}
+
+.secondary:hover {
+  background-color: var(--surface-active);
+}
+
+.button:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--focus-ring-halo);
+}

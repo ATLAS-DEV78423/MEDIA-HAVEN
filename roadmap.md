@@ -47,6 +47,27 @@ must be re-run and re-recorded. Do not carry forward stale PASS results.
 
 Phases 0–7 are required for the first release. Docker/Compose is mandatory in v1 for the backend and media-inspection boundary; other services remain optional and require separate approval.
 
+### Execution order
+
+Phase **numbers** are thematic (what kind of work); the **execution order** is set here
+and is not always numeric.
+
+| Order | Phase | Why here |
+|---|---|---|
+| 1 | Phase 0 — Discovery | Evidence before anything is built |
+| 2 | Phase 1 — Foundation | Toolchain, CI, logging, config, preflight, the container boundary |
+| 3 | **Phase 4 — TV experience (frontend)** | **The product owner chose frontend-first.** The interface is built against a frozen command contract with a development-only mock (ADR-0009), so it can be reviewed while it is still cheap to change |
+| 4 | Phase 2 — Library (backend) | The library, scanner and database behind the contract the frontend already expects |
+| 5 | Phase 3 — Playback (backend) | The engine, resume state and completion rules |
+| 6 | Phase 5 — Reliability and security | Failure, storage policy, threat tests |
+| 7 | Phase 6 — Workspace hardening | Hardens and verifies what P1-07/P1-08 established |
+| 8 | Phase 7 — Packaging and release | Installer, update, uninstall |
+
+**What this changes and what it does not.** The frontend is built first; the container
+boundary, the command contract and the backend authority are unchanged. Acceptance
+criteria that need real data stay **open** until Phases 2–3 land — they are recorded as
+blocked, not passed. See ADR-0009.
+
 ---
 
 ## Current milestone
@@ -998,6 +1019,99 @@ Purpose: video actually plays, and the app remembers where the user was.
 
 Purpose: the product becomes pleasant to use from a couch.
 
+> **Runs third**, after Phase 1 and before Phase 2 — the product owner chose
+> frontend-first (ADR-0009). P4-01 … P4-05 build the interface against the frozen
+> contract and the development mock. P4-08 re-verifies it against the real backend.
+> **Dependencies below list the phases needed to *finish* each task, not the phases
+> needed to *start* it.**
+
+### [ ] P4-06 — Define the typed command and DTO contract
+
+- **Goal:** One frozen, typed description of everything the frontend may see and
+  call — written before either side exists.
+- **Scope:** The media, collection, episode, playback-state, queue, watchlist and
+  settings DTOs; the named command surface (`library_home`, `library_search`,
+  `library_detail`, `playback_start`, `playback_stop`, `queue_*`, `watchlist_*`,
+  `settings_*`); the error taxonomy the frontend renders; and the mapping from each
+  command to the backend operation that will eventually satisfy it.
+- **Out of scope:** The implementation of any command. No Docker access, no
+  filesystem paths that the frontend can act on, no generic passthrough.
+- **Dependencies:** P1-01 (workspace conventions).
+- **Implementation areas:** `apps/desktop/src/types/`,
+  `apps/desktop/src/services/commands.ts`.
+- **Acceptance criteria:**
+  - [ ] Every command has an explicit request type and an explicit response type.
+    Unknown fields are rejected, not ignored.
+  - [ ] No DTO exposes a raw filesystem path the UI could act on; any path that
+        must cross the boundary is labelled display-only.
+  - [ ] The command surface is named operations only — there is no
+        `http_request`-equivalent.
+  - [ ] Errors are a closed, typed set, each with a user-visible message and a
+        stable code. The frontend never renders a raw backend error.
+  - [ ] The contract is documented so the backend can be built against it, and
+        the ADR index links it.
+- **Tests:** A contract test that fails the build if a command is added without a
+  request and response type, or if a type is changed in one place only.
+- **Risks:** A contract that leaks backend internals into the UI, making the
+  backend impossible to change later.
+- **Status:** Not started
+
+### [ ] P4-07 — Build the development mock transport
+
+- **Goal:** The interface can be built, demoed and tested before the backend
+  exists — without that becoming a host-side backend.
+- **Scope:** An in-memory fixture library behind the single transport seam, with
+  realistic-but-fake data, deterministic ordering, and every state the UI must
+  handle (loading, empty, offline, missing artwork, error, missing file).
+- **Out of scope:** Any policy, filesystem access, database, or business rule. The
+  mock returns fixture objects; it decides nothing.
+- **Dependencies:** P4-06.
+- **Implementation areas:** `apps/desktop/src/services/mock/`,
+  `apps/desktop/src/services/transport.ts`.
+- **Acceptance criteria:**
+  - [ ] The mock is excluded from the production bundle, and the build **fails**
+        if it is reachable in a production build.
+  - [ ] The mock contains no filesystem access, no database and no policy — a
+        test asserts the mock module imports nothing from the domain layer.
+  - [ ] Fixture data is deterministic: the same library renders identically on
+        every load, so screenshots and tests are stable.
+  - [ ] Every state the UI must handle is reachable: empty library, offline,
+        missing artwork, missing file, and error.
+  - [ ] Swapping the mock for the real Tauri transport is a change to one file.
+- **Tests:** A test that the fixture set is deterministic; a test that the
+  production bundle excludes the mock.
+- **Risks:** The mock quietly growing into a second, unpoliced backend. That
+  would breach the mandatory boundary — see ADR-0009's revisit trigger.
+- **Status:** Not started
+
+### [ ] P4-08 — Integrate the frontend with the real backend
+
+- **Goal:** Every screen verified against live data from the containerised
+  backend.
+- **Scope:** Replace the mock with the real transport, re-run every screen against
+  real library data, re-run the data-dependent acceptance criteria that P4-01 …
+  P4-07 could not close, and verify the loading/empty/error paths against the real
+  failure modes.
+- **Out of scope:** Changing the contract to suit the UI — that direction is
+  closed. A contract change goes through P4-06.
+- **Dependencies:** P1-08 (host↔container boundary), P4-02 … P4-07.
+- **Implementation areas:** `apps/desktop/src/services/transport.ts`,
+  `apps/desktop/src/`.
+- **Acceptance criteria:**
+  - [ ] The frontend runs against the containerised backend with no mock code
+        in the bundle.
+  - [ ] Every data-dependent acceptance criterion from P4-01 … P4-05 is now
+        closed with observed evidence.
+  - [ ] A real library of at least 10 000 items browses without eager-loading
+        every image.
+  - [ ] The real failure modes — backend down, token rejected, library root
+        offline — produce the designed recovery states, not blank screens.
+- **Tests:** The full frontend suite against the live backend; a 10 000-item
+  performance check; a backend-down smoke test.
+- **Risks:** The contract and the backend disagreeing in a way the mock never
+  exposed. That is the point of this task.
+- **Status:** Not started
+
 ### [ ] P4-01 — Implement design tokens and responsive layout
 
 - **Goal:** One token source for colour, type, spacing, radii, elevation,
@@ -1006,7 +1120,8 @@ Purpose: the product becomes pleasant to use from a couch.
   palette with verified contrast, TV/laptop/narrow breakpoints, reduced-motion
   variants.
 - **Out of scope:** Screen composition.
-- **Dependencies:** CP-3, P0-08 prototype learnings.
+- **Dependencies:** P4-01, P0-08 prototype learnings. Tokens and layout do not need
+  a backend.
 - **Implementation areas:** `apps/desktop/src/styles/`.
 - **Acceptance criteria:**
   - [ ] No component contains a hard-coded colour or spacing literal outside
@@ -1032,7 +1147,8 @@ Purpose: the product becomes pleasant to use from a couch.
   onboarding empty state.
 - **Out of scope:** A recommendation engine — MVP uses deterministic local rules
   only.
-- **Dependencies:** P4-01, P2-04.
+- **Dependencies:** P4-06, P4-07. The real library views (P2-04) are re-verified
+  against live data in P4-08.
 - **Implementation areas:** `apps/desktop/src/{pages/Home,components}`.
 - **Acceptance criteria:**
   - [ ] Shelf order matches the spec, and shelves with no data do not render.
@@ -1106,7 +1222,8 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Scope:** Measure minimum text size, focus visibility, contrast in situ, and
   frame behaviour while scrolling shelves on the lowest supported hardware.
 - **Out of scope:** Visual redesign. Perf optimisation beyond recording.
-- **Dependencies:** P4-04.
+- **Dependencies:** P4-04, P4-06, P4-07. Readability and frame behaviour are
+  measured against the mock and re-measured in P4-08.
 - **Implementation areas:** `docs/testing/`.
 - **Acceptance criteria:**
   - [ ] No essential text renders below 16 CSS px in TV mode.
@@ -1123,7 +1240,7 @@ Purpose: the product becomes pleasant to use from a couch.
 
 ### ✅ Checkpoint CP-4 — Usable from the couch
 
-- **Gate:** P4-01 … P4-05 complete.
+- **Gate:** P4-01 … P4-08 complete.
 - **Evidence required:**
   - [ ] Keyboard-only walkthrough video or step log across every screen.
   - [ ] Before/after focus-restoration proof for each overlay.
@@ -1131,6 +1248,10 @@ Purpose: the product becomes pleasant to use from a couch.
   - [ ] Dropped-frame numbers on the lowest supported hardware.
   - [ ] A non-technical tester completes setup + first playback unassisted —
         record where they hesitated.
+  - [ ] The contract is frozen and the mock is excluded from the production
+        bundle (P4-06, P4-07).
+  - [ ] Every data-dependent criterion is closed against the **real** backend
+        (P4-08), or explicitly carried forward to CP-5.
 - **If it fails:** Do not proceed to reliability work; usability defects found
   later are far more expensive because they touch shared components.
 

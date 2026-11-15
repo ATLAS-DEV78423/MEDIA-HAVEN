@@ -1,0 +1,176 @@
+/*
+ * MEDIA_HAVEN design tokens.
+ *
+ * This file is the ONLY place a colour, spacing, radius, motion or layout
+ * value may be written as a literal. Every component consumes these custom
+ * properties. `npm run check:tokens` fails the build if a literal appears
+ * anywhere else.
+ *
+ * Derived from docs/design/design-system.md and Development.md §7.3–§7.4.
+ */
+
+:root {
+  /* ---------------------------------------------------------------------
+   * Colour
+   * One accent. State is never colour alone — every status pairs colour
+   * with text or shape.
+   * ------------------------------------------------------------------ */
+  --bg-base: #0b0c0e;
+  --bg-elevated: #141619;
+  --bg-sunken: #070809;
+  --bg-raised: #1c1f24;
+
+  --surface-translucent: rgba(18, 20, 24, 0.72);
+  --surface-scrim: rgba(4, 5, 7, 0.74);
+  --surface-scrim-strong: rgba(4, 5, 7, 0.9);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-active: rgba(255, 255, 255, 0.1);
+
+  --border-subtle: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  --text-primary: #f4f6f9;
+  --text-secondary: #a6aeb9;
+  --text-tertiary: #6d7580;
+
+  --accent: #4c9aff;
+  --accent-strong: #2f7de0;
+  --accent-quiet: rgba(76, 154, 255, 0.16);
+  --accent-contrast: #06101d;
+
+  --danger: #e5484d;
+  --danger-quiet: rgba(229, 72, 77, 0.16);
+  --success: #46a758;
+  --success-quiet: rgba(70, 167, 88, 0.16);
+  --warning: #f5a524;
+  --warning-quiet: rgba(245, 165, 36, 0.16);
+
+  --skeleton-base: rgba(255, 255, 255, 0.06);
+  --skeleton-sheen: rgba(255, 255, 255, 0.12);
+
+  /* ---------------------------------------------------------------------
+   * Typography
+   * System-adjacent stacks: nothing to download, nothing to wait for.
+   * ------------------------------------------------------------------ */
+  --font-display:
+    "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Display",
+    "Segoe UI", system-ui, sans-serif;
+  --font-ui:
+    "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", system-ui, sans-serif;
+
+  --text-hero: clamp(2.5rem, 5vw, 4.25rem);
+  --text-title: clamp(1.375rem, 2.1vw, 1.75rem);
+  --text-subtitle: clamp(1.125rem, 1.5vw, 1.3125rem);
+  --text-body: 1rem;
+  --text-meta: 1rem;
+  --text-caption: 0.875rem;
+
+  --leading-tight: 1.08;
+  --leading-snug: 1.25;
+  --leading-normal: 1.55;
+
+  --tracking-tight: -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide: 0.04em;
+
+  /* ---------------------------------------------------------------------
+   * Spacing — one scale
+   * ------------------------------------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+  --space-11: 80px;
+  --space-12: 96px;
+
+  /* ---------------------------------------------------------------------
+   * Layout
+   * ------------------------------------------------------------------ */
+  --nav-rail-width: 15rem;
+  --nav-rail-width-compact: 4.5rem;
+  --page-max-width: 100rem;
+  --page-gutter: var(--space-8);
+  --page-gutter-compact: var(--space-5);
+
+  --hero-height: 58vh;
+  --hero-height-compact: 42vh;
+
+  --card-width: 11.25rem;
+  --card-width-compact: 8.5rem;
+  --card-width-wide: 20rem;
+  --card-width-wide-compact: 15rem;
+  --shelf-gap: var(--space-6);
+  --shelf-gap-compact: var(--space-4);
+
+  --aspect-poster: 2 / 3;
+  --aspect-landscape: 16 / 9;
+
+  /* ---------------------------------------------------------------------
+   * Radii, elevation, layers
+   * ------------------------------------------------------------------ */
+  --radius-card: 10px;
+  --radius-sheet: 18px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-card-focus: 0 10px 28px rgba(0, 0, 0, 0.55);
+  --shadow-overlay: 0 18px 48px rgba(0, 0, 0, 0.62);
+
+  --z-nav: 100;
+  --z-overlay: 200;
+  --z-player: 300;
+  --z-toast: 400;
+
+  /* ---------------------------------------------------------------------
+   * Focus — the most important token in the product
+   * ------------------------------------------------------------------ */
+  --focus-ring-width: 3px;
+  --focus-ring-offset: 3px;
+  --focus-ring: #ffffff;
+  --focus-ring-halo: rgba(0, 0, 0, 0.85);
+
+  /* ---------------------------------------------------------------------
+   * Motion — a signal, not decoration
+   * ------------------------------------------------------------------ */
+  --motion-fast: 140ms;
+  --motion-base: 180ms;
+  --motion-slow: 240ms;
+  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0.05, 0.36, 1);
+
+  --scale-focus: 1.045;
+  --scale-hover: 1.02;
+}
+
+  /* ---------------------------------------------------------------------
+   * Borders, scrollbars and text shadows � the last literals that used to
+   * live in component CSS. Now tokens, so the token check stays clean.
+   * ------------------------------------------------------------------ */
+  --border-width-hairline: 1px;
+  --border-width-thick: 2px;
+  --scrollbar-width: 10px;
+  --scrollbar-border: 3px;
+  --shadow-text-hero: 0 2px 6px rgba(0, 0, 0, 0.7);
+  --shadow-text-title: 0 2px 6px rgba(0, 0, 0, 0.6);
+/*
+ * TV mode is the default. The compact tier kicks in below the laptop
+ * breakpoint, where card and hero dimensions shrink but the hierarchy —
+ * and the 16 px minimum for essential text — does not.
+ */
+@media (max-width: 75rem) {
+  :root {
+    --page-gutter: var(--page-gutter-compact);
+    --card-width: var(--card-width-compact);
+    --card-width-wide: var(--card-width-wide-compact);
+    --shelf-gap: var(--shelf-gap-compact);
+    --hero-height: var(--hero-height-compact);
+    --nav-rail-width: var(--nav-rail-width-compact);
+  }
+}

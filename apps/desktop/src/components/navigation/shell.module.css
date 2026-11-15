@@ -1,0 +1,29 @@
+/* The application shell: a fixed rail on the left, a scrolling canvas on
+   the right. The canvas is edge-to-edge so artwork can bleed. */
+
+.shell {
+  display: flex;
+  height: 100%;
+  background-color: var(--bg-base);
+}
+
+.main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  position: relative;
+}
+
+.canvas {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main {
+    scroll-behavior: auto;
+  }
+}
