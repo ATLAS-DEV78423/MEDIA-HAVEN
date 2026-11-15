@@ -2,7 +2,7 @@
 
 ## Last updated
 
-2026-11-15 (session: frontend build)
+2026-11-15 (session: frontend build + cinematic design system)
 
 ## Current state
 
@@ -36,7 +36,8 @@ every one of them requires an observed measurement, not a document.
   - `d826523` — chore: pin line endings with .gitattributes
   - `56dc4f9` — docs: record the baseline commits and push in progress.md
   - `c86ffd4` — docs: add the missing watchlist feature to the specification
-  - (this session) — feat: the frontend
+  - `c9a1675` — feat: build the full frontend against a frozen command contract
+  - `8e49047` — style: apply the MEDIA HAVEN cinematic design system
 
 ## Completed this session
 
