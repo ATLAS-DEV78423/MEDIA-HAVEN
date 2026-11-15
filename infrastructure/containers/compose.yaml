@@ -1,0 +1,178 @@
+# MEDIA_HAVEN — required v1 Docker/Compose workspace
+#
+# Status: Proposed. Docker/Compose is MANDATORY for the v1 backend and
+# media-inspection boundary (ADR-0001 Part 1). This file implements the
+# architecture in docs/architecture/docker-workspace.md. It is NOT verified
+# against a running engine yet — P0-10/P0-13/P0-14 and P6-03 are the gates.
+#
+# Do not add a service because it is convenient. Every container must have
+# exactly one justified responsibility. The baseline is `core` and `probe`.
+#
+# Security posture enforced here (docs/security/compose-security-checklist.md):
+#   - no container is ever given elevated host capabilities
+#   - no Docker control socket mounted into any workload
+#   - no host networking / host PID / host IPC
+#   - images pinned by digest, supplied as required variables (fails closed)
+#   - non-root users, cap_drop ALL, no-new-privileges, read-only rootfs
+#   - explicit tmpfs + named volumes; every writable path is declared
+#   - CPU / memory / PID limits on both services
+#   - real health checks on `core`; `probe` is networkless
+#   - exactly one published port, bound to loopback
+#
+# NOTE: the checklist's static greps match on several forbidden tokens.
+# Keep those tokens out of this file entirely, including comments, so the
+# greps stay meaningful. The token list lives in
+# docs/security/compose-security-checklist.md.
+#
+# Media mounts are NOT here. They are rendered per library root by the Windows
+# supervisor into a compose override, so that adding a root never widens an
+# existing mount. See docs/architecture/docker-workspace.md §4.
+
+name: mediahaven
+
+services:
+  # ---------------------------------------------------------------------
+  # core — the backend authority.
+  # Owns: HTTP API, product policy, SQLite database, job queue, storage policy.
+  # Owns no media parsing. That is `probe`'s job, deliberately.
+  # ---------------------------------------------------------------------
+  core:
+    image: "${MEDIAHAVEN_CORE_IMAGE:?must be <image>@sha256:<verified-digest>}"
+    container_name: mediahaven-core
+    restart: "on-failure:5"
+
+    # Non-root. The image must also declare USER; this is the enforced floor.
+    user: "10001:10001"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # The single API surface the Windows host may reach.
+    # Loopback only. Never 0.0.0.0 — see docs/architecture/docker-workspace.md §3.
+    # The port is fixed at runtime by the supervisor; it is never 0.
+    ports:
+      - "127.0.0.1:${MEDIAHAVEN_API_PORT:?set by the host supervisor}:8080"
+
+    environment:
+      # Injected at container start by the supervisor from Windows Credential
+      # Manager. Never a default, never in the repository, never in an image.
+      # See ADR-0007 for the honest limits of env-var delivery.
+      MEDIAHAVEN_API_TOKEN: "${MEDIAHAVEN_API_TOKEN:?generated per install by the host supervisor}"
+      MEDIAHAVEN_DATA_DIR: "/var/lib/mediahaven"
+      MEDIAHAVEN_STAGING_DIR: "/var/lib/mediahaven/staging"
+      MEDIAHAVEN_CACHE_DIR: "/var/cache/mediahaven"
+      # No route to the internet unless an opt-in metadata provider is enabled.
+      MEDIAHAVEN_EGRESS: "none"
+
+    volumes:
+      # Class 2 — application data. The SQLite database lives here.
+      - core-data:/var/lib/mediahaven
+      # Class 4 — imported / untrusted files. `probe` writes; `core` promotes.
+      - staging:/var/lib/mediahaven/staging
+
+    tmpfs:
+      # Class 3 — temporary processing. Bounded, lost on restart, never persisted.
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+
+    networks:
+      # `edge` carries the published loopback port and is the only network with
+      # a gateway. `internal` has no gateway at all.
+      - edge
+      - internal
+
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+          pids: 256
+        reservations:
+          memory: 128M
+    shm_size: 64m
+
+    healthcheck:
+      # Real check, not `true`. The image must ship curl or wget.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------
+  # probe — isolated media inspection.
+  # Owns: ffprobe metadata extraction, thumbnail and trickplay generation.
+  # It is the ONLY component that opens untrusted media bytes.
+  # It has no credentials, no database and no outbound network.
+  # ---------------------------------------------------------------------
+  probe:
+    image: "${MEDIAHAVEN_PROBE_IMAGE:?must be <image>@sha256:<verified-digest>}"
+    container_name: mediahaven-probe
+    restart: "on-failure:3"
+
+    # Different UID from `core`, so a compromise of one is not a compromise of
+    # the other's writable paths.
+    user: "10002:10002"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # No credentials. No database handle. No token.
+    environment:
+      MEDIAHAVEN_STAGING_DIR: "/var/lib/mediahaven/staging"
+      MEDIAHAVEN_TMP_DIR: "/var/lib/mediahaven/probe-tmp"
+
+    volumes:
+      # `core` promotes what `probe` stages. This is the one shared writable
+      # path, and it is a volume, not a host mount.
+      - staging:/var/lib/mediahaven/staging
+
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+      - /var/lib/mediahaven/probe-tmp:rw,noexec,nosuid,nodev,size=512m
+
+    networks:
+      # `internal` only. No gateway, no route to the internet or the LAN.
+      # `probe` can talk to `core`; it cannot talk to anything else.
+      - internal
+
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+          pids: 128
+        reservations:
+          memory: 128M
+    shm_size: 256m
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # Class 2 — application data (SQLite database, config, artwork cache).
+  # A named volume survives container recreation. It is NOT a backup.
+  core-data:
+  # Class 4 — imported / untrusted files awaiting promotion or purge.
+  staging:
+
+networks:
+  # Carries the single published loopback port.
+  edge:
+    driver: bridge
+  # No gateway: attached containers cannot reach the internet or the LAN.
+  internal:
+    driver: bridge
+    internal: true

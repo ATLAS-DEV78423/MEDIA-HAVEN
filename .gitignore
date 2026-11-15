@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------
+# MEDIA_HAVEN
+# ---------------------------------------------------------------------------
+
+# --- Build output ----------------------------------------------------------
+target/
+dist/
+build/
+out/
+*.exe
+*.dll
+*.pdb
+*.msi
+*.msix
+*.appx
+*.nupkg
+
+# --- Rust ------------------------------------------------------------------
+**/*.rs.bk
+*.rlib
+*.rmeta
+
+# --- Node / frontend -------------------------------------------------------
+node_modules/
+.vite/
+.turbo/
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
+
+# --- Tauri -----------------------------------------------------------------
+apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/WixTools/
+
+# --- Runtime data (must never be committed) --------------------------------
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.log
+logs/
+
+# --- Local configuration and secrets ---------------------------------------
+.env
+.env.*
+!.env.example
+*.local
+secrets/
+*.pem
+*.pfx
+*.key
+*.p12
+
+# --- Agent tooling (large, environment-specific, reinstalled per README) ---
+.agents/skills/
+.claude/skills/
+.claude/agents/
+.claude/settings.local.json
+.codex/hooks.json
+spikes/
+.cursor/
+.memorix/
+
+# --- Test fixtures that must stay local ------------------------------------
+tests/test-media/*
+!tests/test-media/README.md
+tests/fixtures/library-10k/
+tests/fixtures/generated/
+
+# --- OS and editor ---------------------------------------------------------
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# --- Diagnostics exports ---------------------------------------------------
+diagnostics/
+*.zip
+!infrastructure/packaging/**/*.zip

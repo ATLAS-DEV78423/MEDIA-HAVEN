@@ -1,0 +1,35 @@
+# Source-available placeholder licence
+
+**Status: placeholder — must be replaced before the first public release
+(roadmap O-01 / P7-01).**
+
+`Development.md` §1.1 requires the product to be free and open source. The
+specific licence has not been chosen by the human partner. Do not treat this file
+as a grant of rights.
+
+## Intended direction
+
+The project intends to ship under a permissive open-source licence so that users
+can inspect, build and modify the application they run on their own hardware.
+The remaining question is whether a copyleft component chosen for playback
+(such as an LGPL/GPL-licensed media library — see `docs/decisions/0002-playback-engine.md`)
+constrains that choice in practice.
+
+## What must happen before release
+
+- [ ] Confirm the playback engine's licence obligations (ADR-0002).
+- [ ] Confirm every third-party dependency's licence is compatible with the
+      chosen project licence.
+- [ ] Select the licence with the human partner's explicit approval.
+- [ ] Replace this file with the real licence text.
+- [ ] Populate `docs/decisions/` with the attribution and NOTICE requirements.
+- [ ] Verify the installer bundles the required notices (P7-01).
+
+## Until then
+
+This repository is a work in progress. No warranty is provided. Nothing here may
+be redistributed as a licensed product, and no licence is granted by implication
+or otherwise.
+
+Copyright (c) 2026 the MEDIA_HAVEN contributors. All rights reserved pending
+licence selection.
