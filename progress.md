@@ -25,9 +25,12 @@ of them requires an observed measurement, not a document.
   model, Compose configuration, roadmap and progress documentation; investigate and
   recommend the headless runtime distribution; re-evaluate playback/GPU placement.
 - **Status:** Complete — awaiting human review
-- **Branch/commit:** `master`, baseline commit + push to
-  `https://github.com/ATLAS-DEV78423/MEDIA-HAVEN.git` — **authorised by the human
+- **Branch/commit:** `master`, tracking `origin/master`. **Authorised by the human
   partner in this session** (`Development.md` §15.2 permission obtained).
+  - `4d28f79` — docs: make Docker mandatory for v1 and resolve the runtime architecture
+  - `d826523` — chore: pin line endings with .gitattributes
+  - Both pushed to `https://github.com/ATLAS-DEV78423/MEDIA-HAVEN.git`. Local and
+    remote verified in sync at `d826523`.
 
 ## Completed this session
 
@@ -190,6 +193,8 @@ spec and `Development.md` was updated.
 | Documentation consistency | **PASS** | ADR index, roadmap task IDs, `Development.md` §13.4/§18, threat-model references and the Phase 0 plan cross-checked; no dangling `P0-1x`/`P6-0x` references remain |
 | Reference-machine runtime facts | **PASS** (read-only) | OS/RAM/CPU/GPU, `wsl -l -v`, `docker context ls`, `docker info`, `docker ps`, `docker images` inspected; nothing modified |
 | Upstream documentation research | **PASS** (read-only) | Docker Desktop licensing and WSL2 backend docs, Docker Desktop Windows install/system-requirements page, Microsoft WSL networking and GPU-compute docs, mpv `options.rst` and `README.md` fetched and quoted |
+| Compose fails closed without a digest | **PASS** | `docker compose config --quiet` with `MEDIAHAVEN_CORE_IMAGE` unset → exit 1 with a clear "required variable … is missing" error |
+| Git baseline committed and pushed | **PASS** | Two commits on `master`; `git ls-remote` confirms `refs/heads/master` at `d826523`, matching local HEAD; working tree clean |
 | Threat model reviewed by a human | **NOT RUN** | CP-0 requires this; it has not happened |
 | CP-0 evidence items | **NOT RUN** | 0 of the CP-0 criteria are satisfied by this session |
 
@@ -307,6 +312,8 @@ spec and `Development.md` was updated.
   fail-closed behaviour and the documentation cross-reference sweep. **NOT RUN** for
   everything else — no Rust, frontend, build or E2E exists.
 - **Uncommitted changes:** none — the baseline is committed and pushed.
+  `4d28f79` (architecture revision) and `d826523` (line-ending pin) are on
+  `origin/master`.
 - **Known hazards:** the whole work is uncommitted and therefore fragile. A mirrored
   `.wslconfig` on the host would silently invalidate the loopback-isolation claim —
   preflight must check it. The reference machine's shared Docker engine is running
