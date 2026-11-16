@@ -2,9 +2,9 @@
 
 The Rust workspace. Business rules live here — never in the frontend, never in a Compose file. The backend application is deployed in the mandatory Docker `core` container; no host-side backend fallback is permitted.
 
-**Status: no crates exist yet.** `roadmap.md` P1-01 creates the workspace;
-later phases add crates as real modules need them. `Development.md` §6.2 is
-explicit: do not create empty scaffolding.
+**Status: workspace scaffolded (P1-01).** `app-core`, `media-persistence` and `mediahaven-core`
+exist as workspace members. Domain logic lands in later tasks. `Development.md` §6.2
+is explicit: do not create empty scaffolding beyond what a task requires.
 
 ## Planned crates and their single responsibility
 
