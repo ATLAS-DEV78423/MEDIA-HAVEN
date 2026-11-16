@@ -8,7 +8,12 @@ license.workspace = true
 app-core = { path = "../app-core" }
 sqlx.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
