@@ -25,5 +25,9 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "macros", "migrate", "chrono", "uuid"] }
 axum = "0.7"
-tower = "0.5"
+tower = { version = "0.5", features = ["util"] }
+hmac = "0.12"
+sha2 = "0.10"
+subtle = "2"
+hex = "0.4"
 tower-http = { version = "0.6", features = ["cors", "trace"] }

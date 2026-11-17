@@ -1,0 +1,23 @@
+# VCS and editor
+.git
+.gitignore
+.workbuddy-ai
+.impeccable
+
+# Frontend
+apps/
+node_modules/
+dist/
+
+# Design assets
+OTT Platform UI (Community)/
+docs/design/
+PRODUCT.md
+
+# Rust build artifacts
+target/
+**/target/
+
+# OS
+.DS_Store
+Thumbs.db

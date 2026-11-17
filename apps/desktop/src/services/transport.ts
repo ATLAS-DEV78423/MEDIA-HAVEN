@@ -44,7 +44,7 @@ export function createHostTransport(): Transport {
   };
 }
 
-export type TransportKind = "mock" | "host";
+export type TransportKind = "mock" | "host" | "http";
 
 /**
  * Chooses the transport.
@@ -57,6 +57,12 @@ export async function createTransport(): Promise<{
   transport: Transport;
   kind: TransportKind;
 }> {
+  const backendUrl = import.meta.env.VITE_BACKEND_URL;
+  if (backendUrl) {
+    const { createHttpTransport } = await import("./httpTransport");
+    const token = import.meta.env.VITE_BACKEND_TOKEN ?? "";
+    return { transport: createHttpTransport(backendUrl, token), kind: "http" };
+  }
   if (import.meta.env.DEV) {
     const { createMockTransport } = await import("./mock/handler");
     return { transport: createMockTransport(), kind: "mock" };

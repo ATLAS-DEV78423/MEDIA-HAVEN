@@ -271,3 +271,108 @@ every one of them requires an observed measurement, not a document.
   fallback (it exposes the published port to the LAN).
 - **Next safe action:** test the frontend in the browser, then accept or revise
   ADR-0009 and the other Proposed ADRs, then start Phase 0 with P0-10 and P0-13.
+
+---
+
+## Backend foundation (2026-11-17)
+
+The Rust backend foundation has been implemented per
+`docs/superpowers/plans/2026-11-16-backend-foundation.md` (Tasks 1–6). The
+`core` binary now serves the frontend's frozen command contract from SQLite
+over an authenticated HTTP API, so the UI's data-dependent acceptance criteria
+can finally be exercised.
+
+### What shipped (commits `6a809f0`, `6322beb`, plus uncommitted Task 4–6 work)
+
+**Task 1 — Workspace scaffold**
+- `Cargo.toml` workspace root with members `app-core`, `media-persistence`
+  (dir `crates/persistence`), `mediahaven-core` (dir `crates/core`).
+- `rust-toolchain.toml` pins channel `1.99.0` with rustfmt + clippy.
+- Crate manifests with workspace-inherited versions and dependency declarations.
+
+**Task 2 — app-core domain and ports**
+- `crates/app-core/src/domain/media.rs`: `MediaKind`, `MediaAvailability`,
+  `MediaSummary`, `HomeScreen`, `MediaShelf`, `ShelfId`, `LibraryScreen`,
+  `BrowseQuery`, `SearchQuery`, `SearchResults`, `AppErrorCode`, `AppError`
+  with serde derives producing the exact camelCase JSON the frontend expects.
+- `crates/app-core/src/ports/library.rs`: `LibraryRepository` trait.
+- `crates/app-core/src/application/library.rs`: `LibraryService<R>` delegating
+  to the repository.
+- `deny_unknown_fields` added to `BrowseQuery`, `SearchQuery` and (later)
+  `SettingsPatch`, `PlaybackStartRequest`, `PlaybackSettingsPatch`,
+  `StorageSettingsPatch` per ADR-0005 §4.
+
+**Task 3 — persistence (SQLite + migrations)**
+- Migration `crates/persistence/migrations/0001_init.sql` with `media_items`,
+  `media_files`, `library_roots`, `watchlist_items`, `queue_items` tables,
+  foreign keys, indexes, UTC timestamps. `cast` column renamed to
+  `cast_members` (SQL keyword collision); `watchlist_items.media_id` UNIQUE
+  for idempotent add.
+- `SqliteLibraryRepository` implementing `LibraryRepository`.
+- 7/7 tests pass; clippy clean.
+
+**Task 4 — core HTTP server**
+- `crates/core/src/{state,auth,routes,server,lib,main}.rs`.
+- `/healthz` (unauth) → `{"status":"ok"}`; `/readyz` (auth) → `{"status":"ready"}`.
+- 20 named command routes mirroring the frontend contract.
+- Auth middleware per ADR-0005 §2: Bearer token + HMAC-SHA256 signature over
+  `timestamp\nMETHOD\npath\nhex(sha256(body))`, ±30 s window, constant-time
+  compare. Dev token `dev-only-not-for-production` gated behind
+  `MEDIAHAVEN_DEV=1`.
+- Body limit 1 MiB; CORS loopback-only.
+- `crates/core/tests/auth.rs`: 11 auth-matrix tests, all passing.
+
+**Task 5 — Seed + frontend HTTP transport**
+- `crates/core/src/seed.rs`: fixture data inserted when `MEDIAHAVEN_SEED=1`;
+  `run()` calls `seed_if_requested`. Smoke verified Home returns
+  `Continue Watching` + `Recently Added Movies` shelves.
+- `apps/desktop/src/services/httpTransport.ts`: WebCrypto HMAC transport.
+- `apps/desktop/src/services/transport.ts`: HTTP transport selected when
+  `VITE_BACKEND_URL` is set; mock remains the default.
+- `apps/desktop/src/vite-env.d.ts`: typed `VITE_BACKEND_URL` / `VITE_BACKEND_TOKEN`.
+- Frontend: typecheck + build (82 modules) + `check:tokens` (0 violations) pass.
+
+**Task 6 — Dockerfile for core**
+- `infrastructure/containers/Dockerfile.core`: multi-stage (rust:1.99 builder →
+  debian:bookworm-slim runtime), non-root UID 10001, healthcheck on `/healthz`.
+- `.dockerignore` created.
+- Docker smoke: image builds successfully; container starts and
+  `curl http://127.0.0.1:18081/healthz` returns `{"status":"ok"}` (PASS).
+  (Dockerfile builder base upgraded from `rust:1.86` to `rust:1.99` to
+  satisfy dependency MSRVs.)
+
+### Verification
+
+| Check | Result | Notes |
+|---|---|---|
+| `cargo test --workspace` | **PASS** | All crate tests + 11 auth-matrix tests |
+| `cargo clippy --workspace --all-targets -- -D warnings` | **PASS** | Clean |
+| Frontend typecheck (`tsc --noEmit`) | **PASS** | Strict mode |
+| Frontend build (`npm run build`) | **PASS** | 82 modules |
+| Frontend token check (`check:tokens`) | **PASS** | 0 violations |
+| Docker build (`Dockerfile.core`) | **PASS** | Image builds |
+| Docker smoke (`/healthz`) | **PASS** | `{"status":"ok"}` |
+
+### Not tested
+- End-to-end browser smoke with `VITE_BACKEND_URL` set against the running
+  backend (Task 5 Step 4) — not executed in this session.
+- `cargo fmt --check` — not run (no CI yet).
+- Docker container security posture (`docker inspect` assertions for non-root,
+  cap_drop, no-new-privileges, read-only rootfs) — not asserted; image runs
+  as UID 10001 per Dockerfile but inspect-level verification was not performed.
+
+### Known hazards
+- The Dockerfile's `MEDIAHAVEN_BIND=0.0.0.0:8080` binds all interfaces inside
+  the container, which is expected for the container's published port but must
+  not be used for a host-native run without `MEDIAHAVEN_DEV=1`.
+- `Cargo.lock` was modified (new dependencies); ensure it is committed.
+- Uncommitted design assets (`.workbuddy-ai/`, `.impeccable/`,
+  `OTT Platform UI (Community)/`, `PRODUCT.md`, `docs/design/tv-ui/`) are
+  out of backend scope and remain uncommitted.
+
+### Next safe action
+- Commit Task 4–6 changes.
+- Update `roadmap.md` task statuses (P1-01, P1-05, P1-08 partially
+  satisfied; backend foundation plan complete).
+- Run end-to-end browser smoke with `VITE_BACKEND_URL` set to confirm the
+  frontend renders seeded backend data.

@@ -212,7 +212,7 @@ pub struct LibraryScreen {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SearchQuery {
     pub text: String,
     pub kinds: Vec<MediaKind>,
@@ -370,7 +370,7 @@ pub struct AppSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlaybackSettingsPatch {
     pub preferred_language: Option<String>,
     pub subtitle_size: Option<String>,
@@ -378,14 +378,14 @@ pub struct PlaybackSettingsPatch {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StorageSettingsPatch {
     pub root_display_name: Option<String>,
     pub limit_bytes: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettingsPatch {
     pub playback: Option<PlaybackSettingsPatch>,
     pub storage: Option<StorageSettingsPatch>,
@@ -400,7 +400,7 @@ pub enum BrowseSort {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BrowseQuery {
     pub sort: BrowseSort,
     pub genre: Option<String>,
@@ -409,7 +409,7 @@ pub struct BrowseQuery {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PlaybackStartRequest {
     pub media_id: MediaId,
     pub start_position_seconds: Option<f64>,

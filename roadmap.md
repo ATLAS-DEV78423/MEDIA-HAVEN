@@ -444,7 +444,7 @@ evidence that the recommendation holds.
 Purpose: turn the proof of concept into a repository that builds, logs, fails
 safely and can be verified by CI.
 
-### [ ] P1-01 — Create the workspace and repository conventions
+### [~] P1-01 — Create the workspace and repository conventions
 
 - **Goal:** A Cargo workspace plus a frontend package that builds from a clean
   clone with one documented command.
@@ -523,7 +523,7 @@ safely and can be verified by CI.
 - **Risks:** Silent settings loss on upgrade; partially written config.
 - **Status:** Not started
 
-### [ ] P1-05 — Implement SQLite migrations and backup
+### [~] P1-05 — Implement SQLite migrations and backup
 
 - **Goal:** A database that can be created, migrated and restored without data
   loss.
@@ -610,7 +610,7 @@ safely and can be verified by CI.
   exercised; a container that can reach more than it should.
 - **Status:** Not started
 
-### [ ] P1-08 — Implement the host↔container boundary and the supervisor lifecycle
+### [~] P1-08 — Implement the host↔container boundary and the supervisor lifecycle
 
 - **Goal:** The Windows host can talk to `core` securely, and the frontend
   cannot reach the Docker daemon or the API directly.
