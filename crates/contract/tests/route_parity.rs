@@ -53,24 +53,49 @@ fn commands_from_contract(src: &str) -> BTreeSet<String> {
 }
 
 /// Registered POST routes from `crates/core/src/routes.rs`.
+///
+/// Whitespace-tolerant on purpose: rustfmt may reflow a long registration onto
+/// several lines, so neither the opening quote nor `post(` may be assumed to
+/// sit immediately after `.route(`.
 fn routes_from_core(src: &str) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     let mut cursor = 0;
-    while let Some(idx) = src[cursor..].find(".route(\"") {
-        let path_start = cursor + idx + ".route(\"".len();
-        let rest = &src[path_start..];
-        let Some(quote_end) = rest.find('"') else {
+    while let Some(idx) = src[cursor..].find(".route(") {
+        let after_call = cursor + idx + ".route(".len();
+        let rest = &src[after_call..];
+
+        // Skip whitespace between `.route(` and the path's opening quote.
+        let Some(path_open) = rest.find('"') else {
             break;
         };
-        let name = &rest[..quote_end];
-        let tail = rest[quote_end + 1..].trim_start();
-        // Only POST routes are renderer commands; GET probes are excluded.
-        if tail.starts_with(", post(") && name != "healthz" && name != "readyz" {
-            names.insert(name.trim_start_matches('/').to_string());
+        if !rest[..path_open].chars().all(char::is_whitespace) {
+            cursor = after_call;
+            continue;
         }
-        cursor = path_start + quote_end + 1;
+
+        let path_body = &rest[path_open + 1..];
+        let Some(path_close) = path_body.find('"') else {
+            break;
+        };
+        let name = &path_body[..path_close];
+
+        // After the path: whitespace, comma, whitespace, then `post(`.
+        let tail = path_body[path_close + 1..].trim_start();
+        if let Some(tail) = tail.strip_prefix(',') {
+            // Only POST routes are renderer commands; GET probes are excluded.
+            if tail.trim_start().starts_with("post(") && name != "healthz" && name != "readyz" {
+                names.insert(name.trim_start_matches('/').to_string());
+            }
+        }
+        cursor = after_call + path_open + path_close + 2;
     }
     names
+}
+
+/// Independent POST count — deliberately does not use the route parser, so a
+/// registration the parser misses still trips the count assertions below.
+fn post_registration_count(src: &str) -> usize {
+    src.matches("post(").count()
 }
 
 /// CommandName union from `apps/desktop/src/services/generated.ts`.
@@ -99,8 +124,28 @@ fn command_lists_derive_from_one_source() {
     };
 
     let contract = commands_from_contract(&read("crates/contract/src/lib.rs"));
-    let routes = routes_from_core(&read("crates/core/src/routes.rs"));
+    let routes_src = read("crates/core/src/routes.rs");
+    let routes = routes_from_core(&routes_src);
     let generated = commands_from_generated_ts(&read("apps/desktop/src/services/generated.ts"));
+
+    // The independent `post(` count cannot be fooled by a route the parser
+    // skips (e.g. a reflowed multi-line registration). Three-way agreement is
+    // required: source registrations, parsed routes and the command list.
+    let post_calls = post_registration_count(&routes_src);
+    assert_eq!(
+        post_calls, 24,
+        "routes.rs must register exactly 24 POST renderer commands"
+    );
+    assert_eq!(
+        post_calls,
+        routes.len(),
+        "POST registrations != parsed POST routes — a .route( registration was missed"
+    );
+    assert_eq!(
+        post_calls,
+        contract.len(),
+        "POST registrations != COMMANDS — a registered command is missing from the contract"
+    );
 
     assert_eq!(
         contract, routes,
@@ -141,6 +186,35 @@ mod parser_self_check {
         assert_eq!(
             got,
             BTreeSet::from(["library_home".to_string(), "queue_add".to_string()])
+        );
+    }
+
+    #[test]
+    fn route_parser_handles_multiline_registrations() {
+        // Would FAIL on the old parser: it searched the literal `.route("` and
+        // required `, post(` on one line, so it found none of these reflowed
+        // registrations. The independent count must see them too.
+        let sample = r#"
+            Router::new()
+                .route(
+                    "/healthz",
+                    get(healthz),
+                )
+                .route(
+                    "/new_cmd",
+                    post(new_cmd),
+                )
+                .route(
+                    "/readyz",
+                    get(readyz),
+                )
+                .route("/one_line", post(one_line));
+        "#;
+        assert_eq!(post_registration_count(sample), 2);
+        assert_eq!(
+            routes_from_core(sample),
+            BTreeSet::from(["new_cmd".to_string(), "one_line".to_string()]),
+            "multi-line .route( registrations must be parsed; GET probes excluded"
         );
     }
 
