@@ -10,6 +10,7 @@ const TABS = [
   { to: "/shows", label: "TV Shows" },
   { to: "/library", label: "Library" },
   { to: "/watchlist", label: "My List" },
+  { to: "/queue", label: "Queue" },
 ];
 
 export function Nav() {

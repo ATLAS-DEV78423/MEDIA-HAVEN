@@ -22,6 +22,22 @@ import { call } from "./transport";
 
 export { apiBase, ApiFailure, describeError } from "./errors";
 
+/* Queue DTOs. The Rust wire types live in app-core's domain/media.rs; they are
+ * declared here rather than in types.ts because that file is owned by another
+ * workstream in this change set. */
+export type QueueEntryState = "pending" | "active" | "done" | "failed";
+
+export interface QueueEntry {
+  id: string;
+  media: MediaSummary;
+  position: number;
+  state: QueueEntryState;
+}
+
+export interface QueueScreen {
+  entries: QueueEntry[];
+}
+
 const NO_QUERY: BrowseQuery = { sort: "recent", genre: null, limit: 200, offset: 0 };
 
 export const api = {
@@ -63,6 +79,15 @@ export const api = {
 
   watchlistRemove: (mediaId: string) =>
     call<null>("watchlist_remove", { media_id: mediaId }),
+
+  queueList: () => call<QueueScreen>("queue_list", {}),
+
+  queueAdd: (mediaId: string) => call<null>("queue_add", { media_id: mediaId }),
+
+  queueRemove: (queueId: string) => call<null>("queue_remove", { queue_id: queueId }),
+
+  queueReorder: (orderedIds: string[]) =>
+    call<null>("queue_reorder", { ordered_ids: orderedIds }),
 
   downloads: () => call<DownloadsScreen>("downloads_list", {}),
 

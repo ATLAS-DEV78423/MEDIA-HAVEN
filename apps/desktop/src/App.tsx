@@ -10,6 +10,7 @@ import { AnimePage } from "./pages/Anime/AnimePage";
 import { MediaDetailsPage } from "./pages/Details/MediaDetailsPage";
 import { LibraryPage } from "./pages/Library/LibraryPage";
 import { WatchlistPage } from "./pages/Watchlist/WatchlistPage";
+import { QueuePage } from "./pages/Queue/QueuePage";
 import { DownloadsPage } from "./pages/Downloads/DownloadsPage";
 import { SearchPage } from "./pages/Search/SearchPage";
 import { SettingsPage } from "./pages/Settings/SettingsPage";
@@ -113,6 +114,7 @@ export function App() {
           <Route path="/player/:mediaId" element={<PlayerPage key={key} />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/watchlist" element={<WatchlistPage />} />
+          <Route path="/queue" element={<QueuePage />} />
           <Route path="/downloads" element={<DownloadsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/settings" element={<SettingsPage />} />
