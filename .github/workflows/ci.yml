@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# ---------------------------------------------------------------------------
+# Gate red/green proof record (LOCAL dry runs only — no GitHub Actions run was
+# performed while authoring this workflow). Each gate below was either executed
+# red locally, or has its deliberate-break procedure recorded where it could
+# not be executed without editing another agent's in-progress source file.
+#
+#   * check:tokens  EXECUTED red/green: added a temporary new UI file containing
+#                   `#fff` and `16px` -> exit 1, 2 violations named; deleted it
+#                   -> exit 0 (61 files, 0 violations).
+#   * check:bundle  EXECUTED red/green: added a temporary JS chunk under
+#                   dist/assets containing `dev-only-not-for-production` ->
+#                   exit 1 naming the string; deleted it -> exit 0.
+#   * H3 boundaries EXECUTED red/green: copied the three Cargo.toml files to a
+#                   temp tree, appended `axum` to app-core and `sqlx` to the
+#                   host -> dependency_graph.sh exit 1 naming both offending
+#                   crates; unmodified files -> exit 0.
+#   * H2 drift      EXECUTED red/green in-memory: route_parity.rs self-check
+#                   proves a drifted CommandName union compares unequal (red);
+#                   the real three-file parity test passes (green, 3 tests).
+#   * fmt           deliberate break: run `cargo fmt --all` to reformat a line,
+#                   then `--check` exits 1; restore and it exits 0. (Not run red
+#                   locally: other agents' src-tauri files are mid-edit and
+#                   already carry fmt diffs; no checked-in source was touched.)
+#   * clippy        deliberate break: add `let _ = 1 + 1;` (unused/needless)
+#                   to any target; `-D warnings` exits 1; remove and it is 0.
+#   * cargo test    deliberate break: flip any assertion to `assert!(false)`;
+#                   workspace tests exit 1; restore and they are 0.
+#   * typecheck     deliberate break: add `const x: number = "wrong";` to a
+#                   src file; `tsc --noEmit` exits 1; remove and it is 0.
+#   * lint          deliberate break: add an unused `var` to a src file;
+#                   `eslint .` exits 1; remove and it is 0.
+#   * build         fails on any TypeScript error (same break as typecheck).
+# ---------------------------------------------------------------------------
+
+jobs:
+  rust:
+    name: Rust — fmt, clippy, tests, contract drift, dependency graph
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
+          components: rustfmt, clippy
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (all targets, warnings as errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: H2 — contract / route / generated-TS drift
+        run: cargo test -p mediahaven-contract --test route_parity
+
+      - name: Workspace tests
+        run: cargo test --workspace
+
+      - name: H3 — dependency-graph layer assertions
+        run: bash tests/dependency_graph.sh
+
+  node:
+    name: Frontend — typecheck, lint, tests, tokens, build, bundle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Node 22 (engines requires >=22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Token discipline
+        run: npm run check:tokens
+
+      - name: Build
+        run: npm run build
+
+      - name: Bundle guard
+        run: npm run check:bundle
