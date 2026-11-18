@@ -1,0 +1,372 @@
+.page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.background {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.bgArt {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: blur(var(--blur-art)) saturate(0.55) brightness(0.46);
+  transform: scale(1.16);
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse at 50% 42%,
+      var(--black-18) 0%,
+      var(--black-62) 58%,
+      var(--black-90) 100%
+    ),
+    linear-gradient(180deg, var(--black-55) 0%, var(--scrim-0) 40%);
+}
+
+.brandBar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding: var(--safe-top) var(--safe-x);
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wordmark);
+  color: var(--paper-72);
+}
+
+.exit {
+  font-size: var(--text-small);
+  color: var(--paper-72);
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-pill);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  transition:
+    color var(--t-base) var(--ease-out),
+    background var(--t-base) var(--ease-out);
+}
+
+.exit:hover {
+  color: var(--paper);
+  background: var(--nav-hover);
+}
+
+.exit:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.stage {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: var(--s-6) var(--safe-x) var(--s-8);
+}
+
+.panel {
+  width: min(100%, calc(var(--card-w) * 3.9));
+  padding: clamp(var(--s-6), 2.9vw, var(--s-10));
+  border-radius: var(--r-sheet);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: var(--hairline) solid var(--glass-edge);
+  box-shadow: var(--shadow-float), var(--glass-inner);
+  text-align: center;
+  animation: page-rise var(--t-reveal) var(--ease-out) both;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--text-display);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-display);
+  font-weight: var(--weight-semibold);
+  text-wrap: balance;
+}
+
+.sub {
+  max-width: var(--measure-copy);
+  margin: var(--s-4) auto 0;
+  font-size: var(--text-small);
+  line-height: var(--leading-copy);
+  color: var(--paper-54);
+}
+
+.grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: center;
+  gap: clamp(var(--s-4), 2.6vw, var(--s-8));
+  margin-top: clamp(var(--s-6), 2.4vw, var(--s-9));
+}
+
+.cell {
+  position: relative;
+  width: calc(var(--avatar) * 1.22);
+}
+
+.profile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+  width: 100%;
+  padding: var(--s-2);
+  border-radius: var(--r-lg);
+  transition: transform var(--t-base) var(--ease-out);
+}
+
+.profile:focus {
+  outline: none;
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--r-lg);
+  font-family: var(--font-display);
+  font-size: calc(var(--avatar) * 0.44);
+  font-weight: var(--weight-semibold);
+  color: var(--paper);
+  border: var(--hairline) solid var(--glass-edge-bright);
+  box-shadow: var(--shadow-card), var(--glass-inner);
+  transition:
+    transform var(--t-base) var(--ease-out),
+    box-shadow var(--t-base) var(--ease-out);
+}
+
+.profile:hover .avatar {
+  transform: translateY(calc(var(--focus-lift) * -0.7));
+  box-shadow: var(--shadow-card-focus), var(--glass-inner);
+}
+
+.profile:focus .avatar {
+  transform: scale(1.045);
+  box-shadow:
+    0 0 0 var(--ring-w) var(--paper),
+    var(--shadow-card-focus);
+}
+
+.profileActive .avatar {
+  box-shadow:
+    0 0 0 var(--ring-w) var(--glass-edge-bright),
+    var(--shadow-card);
+}
+
+.name {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  color: var(--paper-90);
+}
+
+.kind {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-38);
+}
+
+.add {
+  width: calc(var(--avatar) * 1.22);
+  flex: none;
+}
+
+.add .avatar {
+  background: var(--fill-4);
+  border-style: dashed;
+  border-color: var(--glass-edge);
+  box-shadow: none;
+  font-size: calc(var(--icon-size) * 1.4);
+  color: var(--paper-54);
+}
+
+.remove {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: var(--s-8);
+  height: var(--s-8);
+  border-radius: var(--r-pill);
+  background: var(--black-72);
+  border: var(--hairline) solid var(--glass-edge);
+  color: var(--paper-90);
+  font-size: var(--text-small);
+  transition: background var(--t-base) var(--ease-out);
+}
+
+.remove:hover {
+  background: var(--danger);
+  color: var(--ink-void);
+}
+
+.remove:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  margin-top: clamp(var(--s-7), 3vw, var(--s-9));
+}
+
+.legal {
+  position: relative;
+  z-index: 2;
+  padding: var(--s-6) var(--safe-x) var(--s-8);
+  text-align: center;
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-38);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  display: grid;
+  place-items: center;
+  padding: var(--safe-x);
+  background: var(--black-66);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  animation: fade-in var(--t-base) var(--ease-out) both;
+}
+
+.dialog {
+  width: min(100%, calc(var(--card-w) * 1.7));
+  padding: var(--sheet-pad);
+  border-radius: var(--r-lg);
+  background: var(--glass-bg-deep);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: var(--hairline) solid var(--glass-edge);
+  box-shadow: var(--shadow-float);
+  animation: page-rise var(--t-slow) var(--ease-out) both;
+}
+
+.dialogTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-heading);
+  letter-spacing: var(--tracking-title);
+  font-weight: var(--weight-semibold);
+}
+
+.dialogBody {
+  margin-top: var(--s-3);
+  font-size: var(--text-small);
+  line-height: var(--leading-copy);
+  color: var(--paper-72);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-6);
+  text-align: start;
+}
+
+.fieldLabel {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-38);
+}
+
+.input {
+  width: 100%;
+  height: var(--field-h);
+  padding-inline: var(--s-4);
+  border-radius: var(--r-sm);
+  background: var(--fill-6);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  color: var(--paper);
+  font-size: var(--text-body);
+}
+
+.input:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.dialogRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-top: var(--s-5);
+  padding-block-start: var(--s-4);
+  border-top: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.dialogRowLabel {
+  font-size: var(--text-small);
+  color: var(--paper-90);
+}
+
+.dialogActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  margin-top: var(--s-7);
+}
+
+.tone1 {
+  background: linear-gradient(160deg, var(--tone-1), var(--ink-600));
+}
+
+.tone2 {
+  background: linear-gradient(160deg, var(--tone-2), var(--ink-600));
+}
+
+.tone3 {
+  background: linear-gradient(160deg, var(--tone-3), var(--ink-600));
+}
+
+.tone4 {
+  background: linear-gradient(160deg, var(--tone-4), var(--ink-600));
+}
+
+@media (max-width: 40em) {
+  .cell {
+    width: calc(var(--avatar) * 1.05);
+  }
+
+  .panel {
+    padding: var(--s-7) var(--s-5);
+  }
+}

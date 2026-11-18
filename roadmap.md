@@ -668,7 +668,7 @@ safely and can be verified by CI.
 Purpose: the user's own media becomes a browsable, searchable library without
 touching their files.
 
-### [ ] P2-01 — Add user-selected folder import
+### [~] P2-01 — Add user-selected folder import
 
 - **Goal:** A user picks folders; the app indexes them and never modifies them.
 - **Scope:** Folder picker, persisted library roots, canonical path storage,
@@ -693,7 +693,9 @@ touching their files.
   nested roots.
 - **Status:** Not started
 
-### [ ] P2-02 — Implement a safe scanner and metadata extraction
+> Backend completion note (2026-11-17): backend routes for root management exist (`/library_root_add`, `/library_root_remove`); the folder picker, nested-root detection and file-count assertion are frontend/test work and remain open.
+
+### [~] P2-02 — Implement a safe scanner and metadata extraction
 
 - **Goal:** Deterministic, interruptible, resumable scanning that treats every
   filename as hostile input.
@@ -720,7 +722,9 @@ touching their files.
 - **Risks:** Path escape, resource exhaustion on huge trees, duplicate flood.
 - **Status:** Not started
 
-### [ ] P2-03 — Implement media database entities
+> Backend completion note (2026-11-17): closed by the 2026-11-17 backend pass — path-escape and hostile-filename tests (`crates/media-library/tests/roots.rs`), cancellation idempotency, duplicate detection, disappearing-file skip. Remaining: interrupted-scan recovery on next start; duration/technical metadata (needs ffprobe in the `probe` container — not the O-04 provider decision, which was accepted 2026-11-18; local NFO titles/year/synopsis/genres now come from `crates/metadata`).
+
+### [~] P2-03 — Implement media database entities
 
 - **Goal:** The data model from `Development.md` §5 exists with constraints and
   indexes that match real queries.
@@ -746,6 +750,8 @@ touching their files.
   behaviour test.
 - **Risks:** Missing indexes causing a slow library at 10k items.
 - **Status:** Not started
+
+> Backend completion note (2026-11-17): closed — schema matches entity list with deviations recorded in ADR-0010 (`collections` deferred), UTC round-trip test, index-usage test via EXPLAIN, and `media_replace_for_root` upsert+prune with cascade-safe rescan tests. Remaining: `collections` (deferred), normalised path comparison, explicit cascade test for `media_item` deletion.
 
 ### [ ] P2-04 — Build Movies, Shows and Library views
 
@@ -799,7 +805,7 @@ touching their files.
   with size limits and cleanup, artwork placeholder path, manual correction,
   explicit disclosure of any network request, and full offline operation.
 - **Out of scope:** Paid providers. Uploading library contents. Scraping.
-- **Dependencies:** P2-03. Provider choice requires an ADR.
+- **Dependencies:** P2-03. Provider decided: ADR-0011 is **Accepted** (2026-11-18) — TMDB primary with local NFO offline fallback; network use is opt-in and off by default. Local NFO reading needs no provider and lands first.
 - **Implementation areas:** `crates/metadata`, `apps/desktop/src/components/media`.
 - **Acceptance criteria:**
   - [ ] With the network disabled, the library is fully browsable using cached
@@ -814,7 +820,9 @@ touching their files.
   tests with hostile strings and malformed images.
 - **Risks:** Privacy leak via filenames; cache growth; terms-of-service
   violation.
-- **Status:** Not started
+- **Status:** In progress — local NFO reader landed 2026-11-18
+  (`crates/metadata`, plan Task D2). Provider (TMDB, opt-in), artwork cache and
+  the UI opt-in surface remain; acceptance criteria above are not yet met.
 
 ### [ ] P2-07 — Implement the local watchlist
 
@@ -857,6 +865,8 @@ touching their files.
   - [ ] Duplicate detection report on a known duplicate set.
   - [ ] Watchlist persistence demonstrated across a restart, with the
         queue-independence and file-count assertions from P2-07.
+
+> Backend-side evidence now producible (2026-11-17): `cargo test -p media-library --test roots` (8 tests, path-escape + hostile names + cancel + duplicates), `cargo test -p media-persistence` (14 + 1 ignored), `cargo test -p media-persistence -- --ignored` (10k search under 200 ms observed at 1.39 s wall incl. setup). Remaining evidence (offline session, file-count before/after, restart persistence) is frontend/integration work.
 - **If it fails:** Do not start playback. Browsing on an unreliable library
   makes playback bugs indistinguishable from indexing bugs.
 
@@ -873,7 +883,7 @@ Purpose: video actually plays, and the app remembers where the user was.
   error surfacing for unsupported codecs and missing files, and a documented
   integration note.
 - **Out of scope:** Custom controls skin (P3-02). Queue (Phase 4).
-- **Dependencies:** CP-2, accepted playback ADR.
+- **Dependencies:** CP-2. (Playback ADR accepted provisionally 2026-11-18; engine is mpv via JSON IPC.)
 - **Implementation areas:** `crates/playback`.
 - **Acceptance criteria:**
   - [ ] Every codec proven in P0-03 plays; unsupported ones produce a clear
@@ -1709,15 +1719,15 @@ approved requirement and a spec update.
 | R-19 | Third-party decoder parses hostile media on the host | Risk | Code execution | ADR-0002 exception; OS mitigations; sandboxed renderer | Accepted |
 | R-20 | Watch history readable by the same OS user | Risk | Privacy | Per-user app data and per-user distro | Accepted |
 | R-21 | No HDR guarantee | Risk | Experience | Deferred with the playback ADR | P0-12 result |
-| O-01 | Project name / branding / package ID | Decision | Blocks installer identity | Human decision; neutral placeholder until then | Before P7-01 |
-| O-02 | Windows 10 support claim | Decision | Support surface | Review servicing status + P7-04 results | Before P7-04 |
+| O-01 | Project name / branding / package ID | **Decided 2026-11-18** — MEDIA HAVEN is the project and the app name | Blocks installer identity | Package ID still needed at P7-01 | Before P7-01 |
+| O-02 | Windows 10 support claim | **Decided 2026-11-18** — Windows 11 x64 only for v1 | Support surface | Development.md and installer must state it | Before P7-04 |
 | O-03 | Offline-indefinitely guarantee | Decision | Metadata feature behaviour | Decide after Phase 2 | Before CP-2 |
-| O-04 | Metadata provider selection and terms | Decision | Legal/feature scope | P2-06 provider ADR | Before P2-06 |
-| O-05 | Download provider legal/security review | Decision | Blocks P6-02 entirely | Human legal sign-off | Before P6-02 |
-| O-06 | Windows Docker runtime distribution | Decision | Required backend packaging and lifecycle | P0-10 evidence + ADR-0001 Part 2 | Before CP-0 |
-| O-07 | Whether to reuse an existing Docker Desktop engine instead of a dedicated distro | Decision | Isolation vs install friction | Human decision, informed by P0-10; detected and reported, never silent | Before CP-0 |
+| O-04 | Metadata provider selection and terms | **Accepted 2026-11-18** — TMDB primary, local NFO fallback (ADR-0011) | Legal/feature scope | Opt-in egress, attribution, secret-store key | Before P2-06 |
+| O-05 | Download provider legal/security review | **Deferred 2026-11-18** — the whole download workstream is out of v1 | Blocks P6-02 entirely | Revisit only if downloads are proposed again | Before P6-02 |
+| O-06 | Windows Docker runtime distribution | **Accepted 2026-11-18** — dedicated WSL2 distro + Docker Engine (ADR-0001 Part 2) | Required backend packaging and lifecycle | P0-10/P0-13/P0-14 numbers still owed | Before CP-0 |
+| O-07 | Whether to reuse an existing Docker Desktop engine instead of a dedicated distro | **Decided 2026-11-18** — no reuse; the product ships its own dedicated distro | Isolation vs install friction | Detection still reported to the user, never silent | Before CP-0 |
 | O-08 | Installer signing certificate | Decision | Trust/SmartScreen | Human budget decision | Before P7-01 |
-| O-09 | libmpv LGPL vs GPL build | Decision | **Project licence compatibility** | Confirm the build configuration; blocks CP-0 | Before CP-0 |
+| O-09 | libmpv LGPL vs GPL build | **Decided 2026-11-18** — LGPL build (ADR-0002 acceptance record) | **Project licence compatibility** | Confirm the shipped artefact really is LGPL-configured | Before CP-0 |
 
 **Rule:** an agent may propose options for any `O-*` item and must record the
 proposal in `docs/decisions/`. An agent may not mark one accepted. Only the

@@ -1,6 +1,6 @@
 # ADR-0007 — Secrets live in Windows Credential Manager and are injected at runtime
 
-- **Status:** Proposed
+- **Status:** Accepted (provisional, 2026-11-18) — secrets external, never committed or baked into images, redacted from logs, rotation documented
 - **Date:** 2026-11-16
 - **Related:** ADR-0005, `docs/architecture/docker-workspace.md` §4
 

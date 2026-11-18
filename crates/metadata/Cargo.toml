@@ -1,0 +1,10 @@
+[package]
+name = "media-metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+app-core = { path = "../app-core" }
+thiserror.workspace = true
+async-trait.workspace = true

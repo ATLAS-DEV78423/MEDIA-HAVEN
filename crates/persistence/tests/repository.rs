@@ -6,6 +6,7 @@
 use app_core::domain::*;
 use app_core::ports::LibraryRepository;
 use media_persistence::sqlite::{connect_path, SqliteLibraryRepository};
+use sqlx::Row;
 
 struct Fixture {
     dir: std::path::PathBuf,
@@ -117,7 +118,10 @@ async fn browse_paths_return_seeded_media() {
         genre: Some("sci-fi".to_string()),
         ..browse()
     };
-    assert_eq!(fixture.repo.movies(&filtered).await.expect("genre").len(), 1);
+    assert_eq!(
+        fixture.repo.movies(&filtered).await.expect("genre").len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -167,7 +171,10 @@ async fn home_roots_and_settings_are_populated() {
 
     let home = fixture.repo.home().await.expect("home");
     assert!(home.hero.is_some());
-    assert!(home.shelves.iter().any(|s| s.id == ShelfId::RecentlyAddedMovies));
+    assert!(home
+        .shelves
+        .iter()
+        .any(|s| s.id == ShelfId::RecentlyAddedMovies));
 
     let library = fixture.repo.roots().await.expect("roots");
     assert_eq!(library.roots.len(), 1);
@@ -186,6 +193,7 @@ async fn home_roots_and_settings_are_populated() {
                 ..Default::default()
             }),
             storage: None,
+            profiles: None,
         })
         .await
         .expect("settings set");
@@ -194,6 +202,46 @@ async fn home_roots_and_settings_are_populated() {
     // Round-trips through the settings row rather than the default.
     let reloaded = fixture.repo.settings_get().await.expect("settings get");
     assert!(!reloaded.playback.autoplay_next);
+}
+
+#[tokio::test]
+async fn profiles_store_real_colours_not_css_variables() {
+    let fixture = Fixture::new().await;
+    let created_at = "2026-11-16T00:00:00+00:00";
+    let profile = |id: &str, colour: &str| Profile {
+        id: id.to_string(),
+        name: id.to_string(),
+        avatar_color: colour.to_string(),
+        created_at: created_at.to_string(),
+    };
+
+    let stored = fixture
+        .repo
+        .settings_set(&SettingsPatch {
+            playback: None,
+            storage: None,
+            profiles: Some(vec![
+                profile("assigned", ""),
+                profile("invalid", "red"),
+                profile("hex", "#ABC123"),
+            ]),
+        })
+        .await
+        .expect("settings set");
+
+    assert_eq!(stored.profiles[0].avatar_color, "#5f7183");
+    assert_eq!(stored.profiles[1].avatar_color, "#7d6a7a");
+    assert_eq!(stored.profiles[2].avatar_color, "#abc123");
+
+    let reloaded = fixture.repo.settings_get().await.expect("settings get");
+    for profile in &reloaded.profiles {
+        assert!(
+            profile.avatar_color.starts_with('#') && profile.avatar_color.len() == 7,
+            "stored colour is not a hex value: {}",
+            profile.avatar_color
+        );
+    }
+    assert_eq!(reloaded.profiles[2].avatar_color, "#abc123");
 }
 
 #[tokio::test]
@@ -214,7 +262,13 @@ async fn watchlist_and_queue_mutations_persist() {
         .await
         .expect("reorder");
     fixture.repo.watchlist_remove("m1").await.expect("remove");
-    assert!(fixture.repo.watchlist().await.expect("list").entries.is_empty());
+    assert!(fixture
+        .repo
+        .watchlist()
+        .await
+        .expect("list")
+        .entries
+        .is_empty());
 
     fixture.repo.queue_add("m1").await.expect("queue add");
     let queue = fixture.repo.queue().await.expect("queue list");
@@ -227,8 +281,18 @@ async fn watchlist_and_queue_mutations_persist() {
         .queue_reorder(std::slice::from_ref(&queue_id))
         .await
         .expect("queue reorder");
-    fixture.repo.queue_remove(&queue_id).await.expect("queue remove");
-    assert!(fixture.repo.queue().await.expect("queue list").entries.is_empty());
+    fixture
+        .repo
+        .queue_remove(&queue_id)
+        .await
+        .expect("queue remove");
+    assert!(fixture
+        .repo
+        .queue()
+        .await
+        .expect("queue list")
+        .entries
+        .is_empty());
 
     assert!(fixture.repo.watchlist_add("ghost").await.is_err());
 }
@@ -250,7 +314,22 @@ async fn playback_start_records_progress_for_continue_watching() {
     assert!(session.can_resume);
 
     let home = fixture.repo.home().await.expect("home");
-    assert!(home.shelves.iter().any(|s| s.id == ShelfId::ContinueWatching));
+    assert!(home
+        .shelves
+        .iter()
+        .any(|s| s.id == ShelfId::ContinueWatching));
+
+    // Reopening without an explicit start must continue from the checkpoint
+    // rather than resetting the resume position to zero.
+    let resumed = fixture
+        .repo
+        .playback_start(&PlaybackStartRequest {
+            media_id: "m1".to_string(),
+            start_position_seconds: None,
+        })
+        .await
+        .expect("resume");
+    assert_eq!(resumed.start_position_seconds, 120.0);
 
     sqlx::query("UPDATE media_items SET availability_state = 'missing-file' WHERE id = 'm1'")
         .execute(fixture.repo.pool())
@@ -268,4 +347,522 @@ async fn playback_start_records_progress_for_continue_watching() {
 
     let downloads = fixture.repo.downloads().await.expect("downloads");
     assert!(!downloads.enabled);
+}
+
+#[tokio::test]
+async fn rescan_preserves_watchlist_and_queue() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let items = vec![MediaUpsert {
+        metadata: None,
+        id: "m1".to_string(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/tmp/r/arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h".to_string()),
+    }];
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &items)
+        .await
+        .expect("scan");
+    fixture.repo.watchlist_add("m1").await.expect("wl");
+    fixture.repo.queue_add("m1").await.expect("q");
+    let wl_before = fixture.repo.watchlist().await.unwrap().entries.len();
+    let q_before = fixture.repo.queue().await.unwrap().entries.len();
+    let created_before: String =
+        sqlx::query_scalar("SELECT created_at FROM media_items WHERE id = 'm1'")
+            .fetch_one(fixture.repo.pool())
+            .await
+            .unwrap();
+
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &items)
+        .await
+        .expect("rescan");
+    assert_eq!(
+        fixture.repo.watchlist().await.unwrap().entries.len(),
+        wl_before
+    );
+    assert_eq!(fixture.repo.queue().await.unwrap().entries.len(), q_before);
+    let created_after: String =
+        sqlx::query_scalar("SELECT created_at FROM media_items WHERE id = 'm1'")
+            .fetch_one(fixture.repo.pool())
+            .await
+            .unwrap();
+    assert_eq!(created_before, created_after);
+}
+
+#[tokio::test]
+async fn rescan_preserves_progress_and_availability() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let items = vec![MediaUpsert {
+        metadata: None,
+        id: "m1".to_string(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/tmp/r/arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h".to_string()),
+    }];
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &items)
+        .await
+        .expect("scan");
+    sqlx::query("UPDATE media_items SET availability_state = 'missing-file', availability_last_seen = '2026-11-16T00:00:00+00:00', progress_position = 42.0, progress_duration = 100.0, progress_completed = 0, progress_updated_at = '2026-11-16T00:00:00+00:00' WHERE id = 'm1'")
+        .execute(fixture.repo.pool()).await.unwrap();
+
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &items)
+        .await
+        .expect("rescan");
+
+    let row: (String, Option<f64>) = sqlx::query_as(
+        "SELECT availability_state, progress_position FROM media_items WHERE id = 'm1'",
+    )
+    .fetch_one(fixture.repo.pool())
+    .await
+    .unwrap();
+    assert_eq!(row.0, "missing-file");
+    assert_eq!(row.1, Some(42.0));
+}
+
+#[tokio::test]
+async fn prune_removes_only_stale_ids() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let mk = |id: &str| MediaUpsert {
+        metadata: None,
+        id: id.to_string(),
+        kind: MediaKind::Movie,
+        title: id.to_string(),
+        root_id: None,
+        path: Some(format!("/tmp/r/{id}.mkv")),
+        size_bytes: Some(1),
+        hash: Some("h".to_string()),
+    };
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &[mk("a"), mk("b")])
+        .await
+        .expect("scan1");
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &[mk("a"), mk("c")])
+        .await
+        .expect("scan2");
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items WHERE root_id = ?")
+        .bind(&root.id)
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+
+    let b: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items WHERE id = 'b'")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    assert_eq!(b, 0);
+    let a: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items WHERE id = 'a'")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    assert_eq!(a, 1);
+    let c: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items WHERE id = 'c'")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    assert_eq!(c, 1);
+}
+
+#[tokio::test]
+async fn rescan_does_not_accumulate_media_files_rows() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let items = vec![MediaUpsert {
+        metadata: None,
+        id: "m1".to_string(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/tmp/r/arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h".to_string()),
+    }];
+    for _ in 0..3 {
+        fixture
+            .repo
+            .media_replace_for_root(&root.id, &items)
+            .await
+            .expect("scan");
+    }
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE media_id = 'm1'")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn empty_id_is_rejected() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let items = vec![MediaUpsert {
+        metadata: None,
+        id: String::new(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/tmp/r/arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h".to_string()),
+    }];
+    let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    let res = fixture.repo.media_replace_for_root(&root.id, &items).await;
+    assert!(res.is_err());
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+}
+
+#[tokio::test]
+async fn search_treats_like_metacharacters_literally() {
+    let fixture = Fixture::new().await;
+    // insert directly
+    let now = "2026-11-16T00:00:00+00:00";
+    for title in ["100% Pure", "a_b", "a%b"] {
+        sqlx::query("INSERT INTO media_items (id, kind, title, created_at, updated_at) VALUES (?, 'movie', ?, ?, ?)")
+            .bind(format!("m-{}", title))
+            .bind(title)
+            .bind(now)
+            .bind(now)
+            .execute(fixture.repo.pool()).await.unwrap();
+    }
+
+    let pct = fixture
+        .repo
+        .search(&SearchQuery {
+            text: "%".to_string(),
+            kinds: vec![],
+            genres: vec![],
+        })
+        .await
+        .unwrap();
+    // Only titles containing a literal '%' match; '%' is not a wildcard.
+    assert_eq!(pct.items.len(), 2);
+
+    let us = fixture
+        .repo
+        .search(&SearchQuery {
+            text: "_".to_string(),
+            kinds: vec![],
+            genres: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(us.items.len(), 1);
+    assert_eq!(us.items[0].title, "a_b");
+
+    let hundred = fixture
+        .repo
+        .search(&SearchQuery {
+            text: "100".to_string(),
+            kinds: vec![],
+            genres: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(hundred.items.len(), 1);
+    assert_eq!(hundred.items[0].title, "100% Pure");
+}
+
+#[tokio::test]
+async fn search_query_uses_escape_clause() {
+    let fixture = Fixture::new().await;
+    let now = "2026-11-16T00:00:00+00:00";
+    for title in ["100% Pure", "100X Pure"] {
+        sqlx::query("INSERT INTO media_items (id, kind, title, created_at, updated_at) VALUES (?, 'movie', ?, ?, ?)")
+            .bind(format!("m-{}", title))
+            .bind(title)
+            .bind(now)
+            .bind(now)
+            .execute(fixture.repo.pool()).await.unwrap();
+    }
+    // Searching literal "%" should match only the title containing a percent.
+    let res = fixture
+        .repo
+        .search(&SearchQuery {
+            text: "%".to_string(),
+            kinds: vec![],
+            genres: vec![],
+        })
+        .await
+        .unwrap();
+    assert_eq!(res.items.len(), 1);
+    assert_eq!(res.items[0].title, "100% Pure");
+}
+
+#[tokio::test]
+async fn timestamps_round_trip_as_utc() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let items = vec![MediaUpsert {
+        metadata: None,
+        id: "m1".to_string(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/tmp/r/arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h".to_string()),
+    }];
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &items)
+        .await
+        .expect("scan");
+    let created: String = sqlx::query_scalar("SELECT created_at FROM media_items WHERE id = 'm1'")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    let updated: String = sqlx::query_scalar("SELECT updated_at FROM media_items WHERE id = 'm1'")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    let c = chrono::DateTime::parse_from_rfc3339(&created).unwrap();
+    let u = chrono::DateTime::parse_from_rfc3339(&updated).unwrap();
+    assert_eq!(c.offset().local_minus_utc(), 0);
+    assert_eq!(u.offset().local_minus_utc(), 0);
+    assert!((c - u).num_seconds().abs() <= 1);
+}
+
+#[tokio::test]
+async fn browse_query_plan_uses_the_root_index() {
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let rows = sqlx::query("EXPLAIN QUERY PLAN SELECT id FROM media_items WHERE root_id = 'r1'")
+        .fetch_all(fixture.repo.pool())
+        .await
+        .unwrap();
+    let mut detail = String::new();
+    for r in &rows {
+        let d: String = r.get("detail");
+        detail.push_str(&d);
+        detail.push(' ');
+    }
+    assert!(!detail.contains("SCAN media_items"), "plan: {detail}");
+    assert!(
+        detail.contains("idx_media_items_root")
+            || detail.contains("sqlite_autoindex")
+            || detail.contains("INDEX"),
+        "plan: {detail}"
+    );
+}
+
+#[tokio::test]
+#[ignore]
+async fn searching_10k_items_is_within_budget() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let mut items = Vec::with_capacity(10_000);
+    for i in 0..10_000 {
+        items.push(MediaUpsert {
+            metadata: None,
+            id: format!("m{i}"),
+            kind: MediaKind::Movie,
+            title: format!("item-{i:05}"),
+            root_id: None,
+            path: Some(format!("/tmp/r/{i}.mkv")),
+            size_bytes: Some(1),
+            hash: Some("h".to_string()),
+        });
+    }
+    // one item with a needle
+    items[5000].title = "needle-title".to_string();
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &items)
+        .await
+        .expect("scan");
+
+    let start = std::time::Instant::now();
+    let res = fixture
+        .repo
+        .search(&SearchQuery {
+            text: "needle".to_string(),
+            kinds: vec![],
+            genres: vec![],
+        })
+        .await
+        .unwrap();
+    let elapsed = start.elapsed();
+    assert!(!res.items.is_empty());
+    assert!(
+        elapsed.as_millis() < 200,
+        "search took {} ms",
+        elapsed.as_millis()
+    );
+}
+
+#[tokio::test]
+async fn playback_checkpoint_writes_progress() {
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    fixture
+        .repo
+        .playback_checkpoint(&PlaybackCheckpointRequest {
+            media_id: "m1".to_string(),
+            position_seconds: 42.0,
+            duration_seconds: Some(100.0),
+        })
+        .await
+        .expect("checkpoint");
+    let pos: Option<f64> =
+        sqlx::query_scalar("SELECT progress_position FROM media_items WHERE id = 'm1'")
+            .fetch_one(fixture.repo.pool())
+            .await
+            .unwrap();
+    assert_eq!(pos, Some(42.0));
+    let dur: Option<f64> =
+        sqlx::query_scalar("SELECT progress_duration FROM media_items WHERE id = 'm1'")
+            .fetch_one(fixture.repo.pool())
+            .await
+            .unwrap();
+    assert_eq!(dur, Some(100.0));
+
+    let err = fixture
+        .repo
+        .playback_checkpoint(&PlaybackCheckpointRequest {
+            media_id: "ghost".to_string(),
+            position_seconds: 1.0,
+            duration_seconds: None,
+        })
+        .await
+        .expect_err("missing media");
+    assert_eq!(err.code, AppErrorCode::MediaMissing);
+}
+
+#[tokio::test]
+async fn scanned_sidecar_metadata_is_stored_and_survives_a_bare_rescan() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+
+    let with_sidecar = MediaUpsert {
+        metadata: Some(MetadataRecord {
+            title: Some("Arrival".to_string()),
+            year: Some(2016),
+            synopsis: Some("A linguist is recruited to translate.".to_string()),
+            runtime_minutes: Some(116),
+            genres: vec!["Science Fiction".to_string(), "Drama".to_string()],
+        }),
+        id: "m-nfo".to_string(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/tmp/r/Arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h-nfo".to_string()),
+    };
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &[with_sidecar])
+        .await
+        .expect("scan");
+
+    match fixture.repo.detail("m-nfo").await.expect("detail") {
+        MediaDetail::Movie(movie) => {
+            assert_eq!(movie.year, Some(2016));
+            assert_eq!(
+                movie.synopsis.as_deref(),
+                Some("A linguist is recruited to translate.")
+            );
+            assert_eq!(movie.runtime_minutes, Some(116));
+            assert_eq!(
+                movie.genres,
+                vec!["Science Fiction".to_string(), "Drama".to_string()]
+            );
+        }
+        MediaDetail::Series(_) => panic!("m-nfo must be a movie"),
+    }
+
+    // The sidecar is gone on the next scan (file renamed, drive offline, or the
+    // user deleted it). Stored metadata must survive rather than be blanked.
+    let bare = MediaUpsert {
+        metadata: None,
+        id: "m-nfo".to_string(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/tmp/r/Arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h-nfo".to_string()),
+    };
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &[bare])
+        .await
+        .expect("rescan");
+
+    match fixture
+        .repo
+        .detail("m-nfo")
+        .await
+        .expect("detail after rescan")
+    {
+        MediaDetail::Movie(movie) => {
+            assert_eq!(movie.year, Some(2016));
+            assert_eq!(
+                movie.synopsis.as_deref(),
+                Some("A linguist is recruited to translate.")
+            );
+            assert_eq!(movie.runtime_minutes, Some(116));
+            assert_eq!(movie.genres.len(), 2);
+        }
+        MediaDetail::Series(_) => panic!("m-nfo must be a movie"),
+    }
 }

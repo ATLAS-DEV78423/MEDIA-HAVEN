@@ -31,7 +31,10 @@ async fn fixture() -> Fixture {
     let pool = connect_path(&dir.join("library.db"))
         .await
         .expect("connect");
-    let state = AppState::new(LibraryService::new(SqliteLibraryRepository::new(pool)), TOKEN);
+    let state = AppState::new(
+        LibraryService::new(SqliteLibraryRepository::new(pool)),
+        TOKEN,
+    );
     Fixture {
         router: build_router(state),
         _dir: dir,

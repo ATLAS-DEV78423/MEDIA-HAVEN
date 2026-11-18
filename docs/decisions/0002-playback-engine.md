@@ -1,6 +1,6 @@
 # ADR-0002 — Playback runs on the Windows host, not in a container
 
-- **Status:** **Proposed** — pending the P0-11/P0-12 codec-and-GPU spikes
+- **Status:** **Accepted (provisional, 2026-11-18)** — mpv via JSON IPC; engine selection sub-decisions below remain open
 - **Date:** 2026-11-16 (evidence refreshed 2026-11-15 against the mpv manual and primary docs)
 - **Deciders:** architecture; final approval at CP-0
 - **Related:** ADR-0001, `docs/architecture/docker-workspace.md` §2.3, roadmap P0-11, P0-12, P3-01
@@ -182,3 +182,23 @@ P0-12 records the actual matrix. Nothing above is a tested result.
    proof that `nvdec` would fail on an NVIDIA machine.
 3. **Licence check (O-09).** Determine the libmpv build's licence and confirm it is
    compatible with the intended project licence. Blocks CP-0.
+
+## Provisional decision (2026-11-18)
+
+**Engine and integration: mpv as an independently managed process, communicating via JSON IPC.** Do not introduce libmpv directly into the main application at this stage.
+
+- Implement playback inside crates/playback.
+- Use mpv as the initial backend, driven through its JSON IPC interface.
+- Define an abstract playback-engine interface so alternative backends (including libmpv) can be introduced later; never hardcode mpv specifics outside the crate.
+- Keep process management, lifecycle, error handling and recovery inside the playback crate; support state, seeking, volume, subtitles, audio-track selection, position and events; preserve hardware-acceleration integration; allow independent terminate/restart.
+- Licensing: prefer an integration that does not unnecessarily introduce GPL obligations into the main application; document mpv's licensing and distribution obligations; verify actual implications before distributing binaries.
+
+## Acceptance record — build licence (2026-11-18)
+
+**O-09 decided: the shipped mpv is an LGPL build.** The human partner chose the LGPL
+route over a GPL build when asked directly, so the project is not forced into GPL by
+its playback dependency. This settles *which* build is wanted; it does not prove the
+artefact is one. Before distribution, the exact binary must be checked (built with
+`-Dgpl=false` / `--enable-lgpl`, or its provenance confirmed), and P0-12's codec
+matrix must state what the LGPL configuration loses. Recorded here by the agent at
+the human's direction.

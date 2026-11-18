@@ -63,8 +63,7 @@ impl Config {
             bail!("MEDIAHAVEN_API_TOKEN must be at least {MIN_TOKEN_BYTES} characters.");
         }
 
-        let raw_bind =
-            std::env::var("MEDIAHAVEN_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_owned());
+        let raw_bind = std::env::var("MEDIAHAVEN_BIND").unwrap_or_else(|_| DEFAULT_BIND.to_owned());
         let bind: SocketAddr = raw_bind
             .parse()
             .with_context(|| format!("MEDIAHAVEN_BIND is not a socket address: {raw_bind}"))?;
@@ -113,7 +112,9 @@ pub fn build_router(state: AppState) -> Router {
 /// Only the dev server needs cross-origin access, and only for loopback origins.
 fn cors_layer() -> CorsLayer {
     CorsLayer::new()
-        .allow_origin(AllowOrigin::predicate(|origin, _| is_loopback_origin(origin)))
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            is_loopback_origin(origin)
+        }))
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers([
             header::AUTHORIZATION,

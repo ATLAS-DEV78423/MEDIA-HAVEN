@@ -1,194 +1,293 @@
-/*
- * MEDIA_HAVEN design tokens.
- *
- * The canonical palette, typography, spacing and motion for the cinematic
- * streaming interface. Derived from the MEDIA HAVEN UI/UX design
- * specification and Development.md §7.3–§7.4.
- *
- * This file is the ONLY place a colour, spacing, radius, motion or layout
- * value may be written as a literal. Every component consumes these custom
- * properties. `npm run check:tokens` enforces it.
- */
+/* MEDIA HAVEN — presentation tokens.
+   The only file in apps/desktop/src allowed to contain raw values.
+   Every colour, size, radius, gap and duration used by the UI is declared here. */
+
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/space-grotesk.woff2") format("woff2");
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Roboto Condensed";
+  src: url("/fonts/roboto-condensed-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 :root {
-  /* ---------------------------------------------------------------------
-   * Colour — cinematic, green-accented, deep green-charcoal base
-   * ------------------------------------------------------------------ */
-  --bg-base: #080b0a;
-  --bg-secondary: #101412;
-  --bg-elevated: #171c19;
-  --bg-hover: #222a26;
-  --bg-raised: #1c221f;
+  color-scheme: dark;
 
-  --surface-translucent: rgba(255, 255, 255, 0.09);
-  --surface-scrim: rgba(0, 0, 0, 0.65);
-  --surface-scrim-strong: rgba(0, 0, 0, 0.85);
-  --surface-hover: rgba(255, 255, 255, 0.06);
-  --surface-active: rgba(255, 255, 255, 0.1);
+  /* ---- ground ------------------------------------------------------- */
+  --ink-void: #000000;
+  --ink-950: #040507;
+  --ink-900: #07080b;
+  --ink-850: #0a0c10;
+  --ink-800: #0e1116;
+  --ink-700: #14171d;
+  --ink-600: #1b1f26;
+  --ink-500: #242932;
 
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
+  /* ---- ink ---------------------------------------------------------- */
+  --paper: #f7f7f8;
+  --paper-90: rgba(247, 247, 248, 0.93);
+  --paper-72: rgba(247, 247, 248, 0.8);
+  --paper-54: rgba(247, 247, 248, 0.64);
+  --paper-38: rgba(247, 247, 248, 0.5);
+  --paper-22: rgba(247, 247, 248, 0.26);
 
-  --text-primary: #f5f5f3;
-  --text-secondary: #b8bfba;
-  --text-muted: #818a84;
+  --accent: #ffffff;
+  --accent-ink: #08090b;
+  --accent-soft: rgba(255, 255, 255, 0.14);
+  --accent-hover: #ececef;
 
-  --accent: #16c784;
-  --accent-dark: #087c55;
-  --accent-quiet: rgba(22, 199, 132, 0.16);
-  --accent-contrast: #04120b;
+  --success: #74d9a5;
+  --danger: #ff7a6e;
+  --warning: #f0c273;
 
-  --danger: #e5484d;
-  --danger-quiet: rgba(229, 72, 77, 0.16);
-  --success: #16c784;
-  --warning: #f5a524;
-  --warning-quiet: rgba(245, 165, 36, 0.16);
+  /* profile tones — muted, matte, never candy */
+  --tone-1: #5f7183;
+  --tone-2: #7d6a7a;
+  --tone-3: #63786c;
+  --tone-4: #82755f;
+  --tone-ink: #0b0c0e;
 
-  --skeleton-base: rgba(255, 255, 255, 0.06);
-  --skeleton-sheen: rgba(255, 255, 255, 0.12);
+  /* neutral overlays — one set of alphas for every translucent fill */
+  --fill-4: rgba(255, 255, 255, 0.04);
+  --fill-5: rgba(255, 255, 255, 0.05);
+  --fill-6: rgba(255, 255, 255, 0.06);
+  --fill-7: rgba(255, 255, 255, 0.07);
+  --fill-8: rgba(255, 255, 255, 0.08);
+  --fill-12: rgba(255, 255, 255, 0.12);
+  --fill-22: rgba(255, 255, 255, 0.22);
+  --fill-24: rgba(255, 255, 255, 0.24);
+  --fill-34: rgba(255, 255, 255, 0.34);
 
-  /* ---------------------------------------------------------------------
-   * Typography — Inter, clean and modern
-   * ------------------------------------------------------------------ */
-  --font-display:
-    "GeistPixel Grid", "GeistPixel Line", "Inter", "SF Pro Display",
-    -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-ui:
-    "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
-    system-ui, sans-serif;
+  --scrim-0: rgba(0, 0, 0, 0);
+  --black-18: rgba(0, 0, 0, 0.18);
+  --black-38: rgba(0, 0, 0, 0.38);
+  --black-42: rgba(0, 0, 0, 0.42);
+  --black-45: rgba(0, 0, 0, 0.45);
+  --black-50: rgba(0, 0, 0, 0.5);
+  --black-52: rgba(0, 0, 0, 0.52);
+  --black-55: rgba(0, 0, 0, 0.55);
+  --black-60: rgba(0, 0, 0, 0.6);
+  --black-62: rgba(0, 0, 0, 0.62);
+  --black-66: rgba(0, 0, 0, 0.66);
+  --black-72: rgba(0, 0, 0, 0.72);
+  --black-74: rgba(0, 0, 0, 0.74);
+  --black-78: rgba(0, 0, 0, 0.78);
+  --black-90: rgba(0, 0, 0, 0.9);
+  --black-94: rgba(0, 0, 0, 0.94);
+  --black-95: rgba(0, 0, 0, 0.95);
 
-  --text-hero: clamp(2.25rem, 4.5vw, 3.25rem);
-  --text-title: clamp(1.5rem, 2.2vw, 1.875rem);
-  --text-subtitle: clamp(1.125rem, 1.5vw, 1.3125rem);
-  --text-body: 0.9375rem;
-  --text-meta: 0.8125rem;
-  --text-caption: 0.75rem;
-  --text-tag: 0.6875rem;
+  --danger-soft: rgba(255, 122, 110, 0.1);
+  --danger-edge: rgba(255, 122, 110, 0.3);
 
-  --leading-tight: 1.05;
-  --leading-snug: 1.25;
-  --leading-normal: 1.5;
+  --blur-art: 46px;
+  --blur-art-soft: 40px;
+  --shadow-solid: 0 10px 30px rgba(0, 0, 0, 0.45);
 
-  --tracking-tight: -0.02em;
-  --tracking-normal: 0;
-  --tracking-wide: 0.06em;
+  --nav-hover: rgba(255, 255, 255, 0.09);
+  --nav-active-bg: #eff0f2;
+  --nav-active-ink: #0a0b0d;
 
-  /* ---------------------------------------------------------------------
-   * Spacing — one scale
-   * ------------------------------------------------------------------ */
-  --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-7: 32px;
-  --space-8: 40px;
-  --space-9: 48px;
-  --space-10: 64px;
-  --space-11: 80px;
-  --space-12: 96px;
+  /* ---- liquid glass ------------------------------------------------- */
+  --glass-bg: linear-gradient(
+    158deg,
+    rgba(255, 255, 255, 0.13) 0%,
+    rgba(255, 255, 255, 0.055) 38%,
+    rgba(255, 255, 255, 0.028) 72%,
+    rgba(255, 255, 255, 0.06) 100%
+  );
+  --glass-bg-quiet: linear-gradient(
+    158deg,
+    rgba(255, 255, 255, 0.075) 0%,
+    rgba(255, 255, 255, 0.028) 46%,
+    rgba(255, 255, 255, 0.02) 100%
+  );
+  --glass-bg-deep: linear-gradient(
+    165deg,
+    rgba(20, 23, 29, 0.86) 0%,
+    rgba(9, 10, 13, 0.9) 58%,
+    rgba(6, 7, 9, 0.94) 100%
+  );
+  --glass-fill-solid: rgba(16, 18, 23, 0.82);
+  --glass-edge: rgba(255, 255, 255, 0.16);
+  --glass-edge-soft: rgba(255, 255, 255, 0.09);
+  --glass-edge-bright: rgba(255, 255, 255, 0.34);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  --glass-inner-quiet: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(34px) saturate(165%);
+  --glass-blur-strong: blur(52px) saturate(180%);
+  --shadow-float: 0 24px 70px rgba(0, 0, 0, 0.62);
+  --shadow-card: 0 18px 44px rgba(0, 0, 0, 0.55);
+  --shadow-card-focus: 0 30px 70px rgba(0, 0, 0, 0.72);
+  --shadow-nav: 0 18px 46px rgba(0, 0, 0, 0.5);
+  --shadow-sheet: 0 -28px 90px rgba(0, 0, 0, 0.65);
 
-  /* ---------------------------------------------------------------------
-   * Layout
-   * ------------------------------------------------------------------ */
-  --nav-top-spacing: 26px;
-  --nav-height: 42px;
-  --page-gutter-large: 4.5vw;
-  --page-gutter-medium: 3.5vw;
-  --page-gutter: var(--page-gutter-large);
-  --page-max-width: 120rem;
+  /* ---- scrims ------------------------------------------------------- */
+  --scrim-hero-side: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.74) 0%,
+    rgba(0, 0, 0, 0.42) 30%,
+    rgba(0, 0, 0, 0.1) 58%,
+    rgba(0, 0, 0, 0) 80%
+  );
+  --scrim-hero-bottom: linear-gradient(
+    0deg,
+    var(--ink-void) 0%,
+    rgba(0, 0, 0, 0.68) 11%,
+    rgba(0, 0, 0, 0.2) 38%,
+    rgba(0, 0, 0, 0) 62%
+  );
+  --scrim-hero-top: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.5) 0%,
+    rgba(0, 0, 0, 0.12) 24%,
+    rgba(0, 0, 0, 0) 48%
+  );
+  --scrim-card: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.82) 0%,
+    rgba(0, 0, 0, 0.32) 24%,
+    rgba(0, 0, 0, 0) 56%
+  );
+  --scrim-detail: linear-gradient(
+    0deg,
+    var(--ink-void) 0%,
+    rgba(0, 0, 0, 0.78) 26%,
+    rgba(0, 0, 0, 0.24) 62%,
+    rgba(0, 0, 0, 0) 100%
+  );
 
-  --hero-height: 64vh;
-  --hero-height-compact: 48vh;
-  --hero-min-height: 540px;
+  /* ---- type --------------------------------------------------------- */
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-ui: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-condensed: "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
 
-  --card-width: 170px;
-  --card-width-compact: 130px;
-  --card-width-wide: 300px;
-  --card-width-wide-compact: 220px;
-  --card-radius: 9px;
-  --shelf-gap: 14px;
-  --shelf-gap-compact: 10px;
+  --text-hero: clamp(48px, 6.2vw, 104px);
+  --text-display: clamp(34px, 4.2vw, 68px);
+  --text-title: clamp(24px, 3vw, 56px);
+  --text-section: clamp(21px, 1.9vw, 32px);
+  --text-heading: clamp(18px, 1.35vw, 24px);
+  --text-body: clamp(15px, 1.02vw, 19px);
+  --text-small: clamp(14px, 0.95vw, 17px);
+  --text-micro: clamp(11px, 0.8vw, 14px);
 
-  --aspect-poster: 2 / 3;
-  --aspect-landscape: 16 / 9;
+  --tracking-display: -0.035em;
+  --tracking-title: -0.028em;
+  --tracking-tight: -0.015em;
+  --tracking-wide: 0.14em;
+  --tracking-wordmark: 0.34em;
 
-  /* ---------------------------------------------------------------------
-   * Radii, elevation, layers
-   * ------------------------------------------------------------------ */
-  --radius-card: 9px;
-  --radius-sheet: 16px;
-  --radius-pill: 999px;
-  --radius-button: 8px;
+  --leading-hero: 0.94;
+  --leading-title: 1.02;
+  --leading-body: 1.5;
+  --leading-copy: 1.55;
 
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
-  --shadow-card-focus: 0 8px 24px rgba(0, 0, 0, 0.5);
-  --shadow-overlay: 0 18px 48px rgba(0, 0, 0, 0.62);
-  --shadow-text-hero: 0 2px 8px rgba(0, 0, 0, 0.7);
-  --shadow-text-title: 0 2px 6px rgba(0, 0, 0, 0.6);
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
 
-  --z-nav: 100;
-  --z-overlay: 200;
-  --z-player: 300;
-  --z-toast: 400;
+  --measure-copy: 58ch;
+  --measure-hero: 44ch;
 
-  /* ---------------------------------------------------------------------
-   * Focus
-   * ------------------------------------------------------------------ */
-  --focus-ring-width: 2px;
-  --focus-ring-offset: 2px;
-  --focus-ring: #ffffff;
-  --focus-ring-halo: rgba(0, 0, 0, 0.85);
+  /* ---- space -------------------------------------------------------- */
+  --s-0: 0px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 32px;
+  --s-8: 40px;
+  --s-9: 56px;
+  --s-10: 72px;
+  --s-11: 96px;
+  --s-12: 128px;
 
-  /* ---------------------------------------------------------------------
-   * Motion
-   * ------------------------------------------------------------------ */
-  --motion-fast: 150ms;
-  --motion-base: 200ms;
-  --motion-slow: 250ms;
-  --ease-out: cubic-bezier(0.22, 0.61, 0.36, 1);
-  --ease-in-out: cubic-bezier(0.65, 0.05, 0.36, 1);
+  --safe-x: clamp(22px, 4.2vw, 80px);
+  --safe-y: clamp(22px, 3.4vw, 60px);
+  --safe-top: clamp(20px, 3.2vh, 56px);
 
-  --scale-focus: 1.04;
-  --scale-hover: 1.02;
+  --card-w: clamp(198px, 16.7vw, 320px);
+  --card-w-wide: clamp(248px, 21vw, 404px);
+  --card-w-hero: clamp(220px, 18.4vw, 356px);
+  --card-gap: clamp(14px, 2.08vw, 40px);
+  --row-gap: clamp(44px, 5.2vw, 100px);
+  --shelf-head-gap: clamp(18px, 1.8vw, 30px);
+  --grid-gap-y: clamp(28px, 3.2vw, 56px);
 
-  /* ---------------------------------------------------------------------
-   * Borders
-   * ------------------------------------------------------------------ */
-  --border-width-hairline: 1px;
-  --border-width-thick: 2px;
-  --scrollbar-width: 10px;
-  --scrollbar-border: 3px;
+  --nav-h: clamp(50px, 3.4vw, 64px);
+  --nav-top: clamp(14px, 2.2vh, 30px);
+  --nav-pad: clamp(6px, 0.5vw, 8px);
+  --nav-item-x: clamp(12px, 1.25vw, 22px);
+  --nav-item-y: clamp(8px, 1.05vh, 14px);
+  --nav-gap: clamp(12px, 1.4vw, 26px);
 
-  /* ---------------------------------------------------------------------
-   * Hero and control surfaces
-   * ------------------------------------------------------------------ */
-  --play-button-height: 46px;
-  --favourite-size: 46px;
-  --search-height: 36px;
-  --search-width: 200px;
-  --search-width-focus: 260px;
-  --profile-size: 34px;
-  --hero-min-height-compact: 420px;
-  --surface-control: rgba(255, 255, 255, 0.12);
-  --surface-control-hover: rgba(255, 255, 255, 0.18);
-  --surface-control-quiet: rgba(255, 255, 255, 0.08);
-  --surface-control-quiet-hover: rgba(255, 255, 255, 0.14);
-}
+  --btn-h: clamp(40px, 3vw, 52px);
+  --btn-pad-x: clamp(18px, 1.7vw, 30px);
+  --icon-btn: clamp(38px, 2.9vw, 50px);
+  --icon-size: clamp(16px, 1.15vw, 21px);
 
-@media (max-width: 75rem) {
-  :root {
-    --page-gutter: var(--page-gutter-medium);
-    --card-width: var(--card-width-compact);
-    --card-width-wide: var(--card-width-wide-compact);
-    --shelf-gap: var(--shelf-gap-compact);
-    --hero-height: var(--hero-height-compact);
-  }
-}
+  --hero-min-h: clamp(540px, 88vh, 960px);
+  --hero-copy-w: min(634px, 46vw);
+  --hero-pad-bottom: clamp(64px, 8vh, 118px);
 
-@media (max-width: 48rem) {
-  :root {
-    --page-gutter: 24px;
-  }
+  --backdrop-h: clamp(380px, 64vh, 720px);
+  --sheet-lift: clamp(48px, 5vw, 84px);
+  --sheet-pad: clamp(22px, 3vw, 52px);
+  --sheet-max-w: 1360px;
+
+  --field-h: clamp(44px, 3.4vw, 60px);
+  --row-h: clamp(48px, 3.6vw, 62px);
+
+  --avatar: clamp(74px, 5.8vw, 116px);
+  --avatar-sm: clamp(30px, 2.2vw, 38px);
+
+  --progress-h: 4px;
+  --progress-h-lg: 6px;
+
+  /* ---- radii -------------------------------------------------------- */
+  --r-xs: 8px;
+  --r-sm: 10px;
+  --r-card: 14px;
+  --r-md: 16px;
+  --r-lg: 22px;
+  --r-sheet: 30px;
+  --r-pill: 999px;
+
+  --hairline: 1px;
+  --ring-w: 2px;
+  --ring-offset: 4px;
+
+  /* ---- motion ------------------------------------------------------- */
+  --t-fast: 120ms;
+  --t-base: 200ms;
+  --t-slow: 300ms;
+  --t-reveal: 420ms;
+  --t-hero: 900ms;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+
+  --focus-scale: 1.044;
+  --focus-lift: 6px;
+  --rise: 14px;
+
+  /* ---- layers ------------------------------------------------------- */
+  --z-base: 0;
+  --z-sticky: 20;
+  --z-nav: 40;
+  --z-sheet: 60;
+  --z-player: 80;
+  --z-dialog: 90;
+  --z-toast: 100;
 }

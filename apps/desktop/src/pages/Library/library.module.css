@@ -1,0 +1,139 @@
+.page {
+  padding-bottom: var(--s-12);
+}
+
+.categories {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--card-gap);
+  padding-inline: var(--safe-x);
+}
+
+@media (min-width: 64em) {
+  .categories {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.section {
+  padding-inline: var(--safe-x);
+  padding-block-start: var(--s-11);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding-block-end: var(--s-4);
+}
+
+.sectionTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-section);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-title);
+}
+
+.roots {
+  display: flex;
+  flex-direction: column;
+}
+
+.root {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding-block: var(--s-4);
+  border-top: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.root:first-child {
+  border-top: 0;
+  padding-block-start: 0;
+}
+
+.root:last-child {
+  padding-block-end: 0;
+}
+
+.rootIcon {
+  display: grid;
+  place-items: center;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  flex: none;
+  border-radius: var(--r-sm);
+  background: var(--fill-7);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  font-size: var(--text-heading);
+  color: var(--paper-72);
+}
+
+.rootCopy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  min-width: 0;
+  flex: 1;
+}
+
+.rootLabel {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  color: var(--paper-90);
+}
+
+.rootPath {
+  font-size: var(--text-small);
+  color: var(--paper-54);
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rootCount {
+  flex: none;
+  font-size: var(--text-small);
+  color: var(--paper-54);
+  font-variant-numeric: tabular-nums;
+}
+
+.status {
+  flex: none;
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  font-size: var(--text-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.statusOk {
+  color: var(--success);
+}
+
+.statusOff {
+  color: var(--danger);
+}
+
+.recent {
+  padding-block-start: var(--s-11);
+}
+
+@media (max-width: 60em) {
+  .rootCount {
+    display: none;
+  }
+}
+
+@media (max-width: 44em) {
+  .root {
+    flex-wrap: wrap;
+  }
+
+  .status {
+    margin-left: calc(var(--icon-btn) + var(--s-4));
+  }
+}

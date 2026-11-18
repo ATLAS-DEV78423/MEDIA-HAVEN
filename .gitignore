@@ -60,6 +60,8 @@ secrets/
 .claude/agents/
 .claude/settings.local.json
 .codex/hooks.json
+.impeccable/
+.workbuddy-ai/
 spikes/
 .cursor/
 .memorix/
@@ -82,3 +84,6 @@ desktop.ini
 diagnostics/
 *.zip
 !infrastructure/packaging/**/*.zip
+
+# --- Local dev backend data ------------------------------------------------
+.mediahaven-dev/

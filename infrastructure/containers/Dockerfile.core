@@ -4,6 +4,14 @@ FROM rust:1.99-bookworm AS builder
 WORKDIR /src
 # Copy manifests first for layer caching.
 COPY Cargo.toml Cargo.lock ./
+# A2 added apps/desktop/src-tauri as a workspace member. Cargo loads every
+# member manifest AND resolves its declared lib target path even for
+# `-p mediahaven-core`, so the manifest and a stub at src/lib.rs must exist in
+# the context; the desktop crate's sources are never compiled here. Verified
+# locally with `cargo metadata --no-deps` on a context containing only these
+# two files plus crates/. .dockerignore un-ignores just these paths.
+COPY apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/Cargo.toml
+COPY infrastructure/containers/desktop-lib-stub.rs apps/desktop/src-tauri/src/lib.rs
 COPY crates ./crates
 
 RUN cargo build --release -p mediahaven-core

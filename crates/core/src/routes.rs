@@ -13,6 +13,7 @@ use axum::{async_trait, Json, Router};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 use crate::state::AppState;
 
@@ -121,6 +122,12 @@ struct PlaybackArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CheckpointArgs {
+    request: PlaybackCheckpointRequest,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MediaIdArgs {
     media_id: String,
 }
@@ -129,6 +136,19 @@ struct MediaIdArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct QueueIdArgs {
     queue_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootAddArgs {
+    display_name: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RootIdArgs {
+    root_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +212,9 @@ pub fn protected_router() -> Router<AppState> {
         .route("/library_episodes", post(library_episodes))
         .route("/library_search", post(library_search))
         .route("/library_roots", post(library_roots))
+        .route("/library_root_add", post(library_root_add))
+        .route("/library_root_remove", post(library_root_remove))
+        .route("/library_scan", post(library_scan))
         .route("/library_watchlist", post(library_watchlist))
         .route("/queue_list", post(queue_list))
         .route("/downloads_list", post(downloads_list))
@@ -199,6 +222,7 @@ pub fn protected_router() -> Router<AppState> {
         .route("/settings_set", post(settings_set))
         .route("/playback_start", post(playback_start))
         .route("/playback_stop", post(playback_stop))
+        .route("/playback_checkpoint", post(playback_checkpoint))
         .route("/watchlist_add", post(watchlist_add))
         .route("/watchlist_remove", post(watchlist_remove))
         .route("/watchlist_reorder", post(watchlist_reorder))
@@ -285,6 +309,143 @@ async fn library_roots(State(state): State<AppState>) -> Result<Json<LibraryScre
     Ok(Json(state.service.roots().await?))
 }
 
+async fn library_root_add(
+    State(state): State<AppState>,
+    ApiJson(args): ApiJson<RootAddArgs>,
+) -> Result<Json<LibraryRoot>, ApiError> {
+    if args.display_name.trim().is_empty() {
+        return Err(invalid("displayName must not be empty."));
+    }
+    if args.path.trim().is_empty() {
+        return Err(invalid("path must not be empty."));
+    }
+    // Containment/validity check happens in the scanner/policy layer; here we
+    // at least require the path to be an existing directory.
+    let p = std::path::Path::new(&args.path);
+    if !p.is_dir() {
+        return Err(ApiError(AppError::new(
+            AppErrorCode::LibraryRootUnreadable,
+            "The selected path is not a readable directory.",
+            true,
+        )));
+    }
+    Ok(Json(
+        state
+            .service
+            .root_add(&args.display_name, &args.path)
+            .await?,
+    ))
+}
+
+async fn library_root_remove(
+    State(state): State<AppState>,
+    ApiJson(args): ApiJson<RootIdArgs>,
+) -> Result<Json<Value>, ApiError> {
+    check_id(&args.root_id, "rootId")?;
+    state.service.root_remove(&args.root_id).await?;
+    Ok(Json(Value::Null))
+}
+
+async fn library_scan(
+    State(state): State<AppState>,
+    ApiJson(args): ApiJson<RootIdArgs>,
+) -> Result<Json<Value>, ApiError> {
+    check_id(&args.root_id, "rootId")?;
+    let roots = state.service.roots().await?;
+    let root = roots
+        .roots
+        .into_iter()
+        .find(|r| r.id == args.root_id)
+        .ok_or_else(|| invalid("Unknown library root."))?;
+    let path = root
+        .path
+        .clone()
+        .ok_or_else(|| invalid("Library root has no path."))?;
+
+    state
+        .service
+        .root_update(
+            &args.root_id,
+            root.item_count,
+            app_core::domain::LibraryRootStatus::Scanning,
+            root.last_scan_at.as_deref(),
+            None,
+        )
+        .await?;
+
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let scanner = media_library::Scanner::new();
+    let outcome = scanner.scan(std::path::Path::new(&path), &cancel);
+
+    let items: Vec<app_core::domain::MediaUpsert> = outcome
+        .files
+        .into_iter()
+        .map(|f| {
+            // A sidecar title wins over the filename-derived one; the filename
+            // stays as the fallback for files with no sidecar.
+            let title = f
+                .metadata
+                .as_ref()
+                .and_then(|m| m.title.clone())
+                .unwrap_or(f.title);
+            app_core::domain::MediaUpsert {
+                id: f.id,
+                kind: f.kind,
+                title,
+                root_id: Some(args.root_id.clone()),
+                path: Some(f.path),
+                size_bytes: f.size_bytes,
+                hash: f.hash,
+                metadata: f.metadata,
+            }
+        })
+        .collect();
+    let scanned = items.len() as i64;
+
+    // Same content under two paths is reported, never silently deduplicated.
+    let mut by_hash: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for item in &items {
+        if let (Some(hash), Some(path)) = (item.hash.as_deref(), item.path.as_deref()) {
+            by_hash.entry(hash).or_default().push(path);
+        }
+    }
+    let duplicates: Vec<Value> = by_hash
+        .into_iter()
+        .filter(|(_, paths)| paths.len() > 1)
+        .map(|(hash, paths)| serde_json::json!({ "hash": hash, "paths": paths }))
+        .collect();
+    let errors: Vec<String> = outcome
+        .errors
+        .iter()
+        .map(|e| format!("{}: {}", e.path, e.message))
+        .collect();
+
+    let scan_result = state
+        .service
+        .media_replace_for_root(&args.root_id, &items)
+        .await;
+
+    let (status, err) = match scan_result {
+        Ok(()) => (app_core::domain::LibraryRootStatus::Ok, None),
+        Err(e) => (app_core::domain::LibraryRootStatus::Error, Some(e.message)),
+    };
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = state
+        .service
+        .root_update(&args.root_id, scanned, status, Some(&now), err.as_deref())
+        .await;
+
+    if let Some(e) = err {
+        return Err(ApiError(AppError::new(AppErrorCode::Internal, e, true)));
+    }
+    Ok(Json(serde_json::json!({
+        "scanned": scanned,
+        "cancelled": outcome.cancelled,
+        "errors": errors,
+        "duplicates": duplicates,
+    })))
+}
+
 async fn library_watchlist(
     State(state): State<AppState>,
 ) -> Result<Json<WatchlistScreen>, ApiError> {
@@ -295,9 +456,7 @@ async fn queue_list(State(state): State<AppState>) -> Result<Json<QueueScreen>, 
     Ok(Json(state.service.queue().await?))
 }
 
-async fn downloads_list(
-    State(state): State<AppState>,
-) -> Result<Json<DownloadsScreen>, ApiError> {
+async fn downloads_list(State(state): State<AppState>) -> Result<Json<DownloadsScreen>, ApiError> {
     Ok(Json(state.service.downloads().await?))
 }
 
@@ -319,7 +478,9 @@ async fn playback_start(
     check_id(&args.request.media_id, "request.mediaId")?;
     if let Some(position) = args.request.start_position_seconds {
         if !position.is_finite() || position < 0.0 {
-            return Err(invalid("request.startPositionSeconds must be a finite, non-negative number."));
+            return Err(invalid(
+                "request.startPositionSeconds must be a finite, non-negative number.",
+            ));
         }
     }
     Ok(Json(state.service.playback_start(&args.request).await?))
@@ -327,6 +488,26 @@ async fn playback_start(
 
 async fn playback_stop(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     state.service.playback_stop().await?;
+    Ok(Json(Value::Null))
+}
+
+async fn playback_checkpoint(
+    State(state): State<AppState>,
+    ApiJson(args): ApiJson<CheckpointArgs>,
+) -> Result<Json<Value>, ApiError> {
+    if !args.request.position_seconds.is_finite() || args.request.position_seconds < 0.0 {
+        return Err(invalid(
+            "request.positionSeconds must be a finite, non-negative number.",
+        ));
+    }
+    if let Some(duration) = args.request.duration_seconds {
+        if !duration.is_finite() || duration < 0.0 {
+            return Err(invalid(
+                "request.durationSeconds must be a finite, non-negative number.",
+            ));
+        }
+    }
+    state.service.playback_checkpoint(&args.request).await?;
     Ok(Json(Value::Null))
 }
 

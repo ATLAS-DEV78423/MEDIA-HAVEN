@@ -1,134 +1,226 @@
-import type { AppSettings } from "@/types/media";
-import { getCommands } from "@/services/commands";
-import { useCommand } from "@/hooks/useCommand";
-import { PageHeader, ErrorState } from "@/components/feedback/States";
-import { StatusPill } from "@/components/cards/ProgressBar";
-import styles from "./SetupPage.module.css";
+import { useState } from "react";
+import { Link } from "react-router-dom";
 
-type StepState = "done" | "blocked" | "pending";
+import { ActionButton, buttonClass } from "@/components/ui/Controls";
+import { Icon } from "@/components/ui/Icon";
+import { describeError } from "@/services/api";
+import { useAppState } from "@/state/AppState";
+import styles from "./setup.module.css";
 
-interface Step {
-  readonly title: string;
-  readonly body: string;
-  readonly state: StepState;
-  readonly status?: string;
-}
+type Step = 1 | 2 | 3;
+
+const STEPS: { step: Step; label: string }[] = [
+  { step: 1, label: "Folder" },
+  { step: 2, label: "Scan" },
+  { step: 3, label: "Ready" },
+];
+
+const folderName = (path: string): string => {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? "Media";
+};
 
 export function SetupPage() {
-  const settings = useCommand<AppSettings>(
-    async () => (await getCommands()).settings_get(),
-    [],
-  );
+  const { data, activeProfile, addRoot, scanRoot } = useAppState();
+  const [step, setStep] = useState<Step>(1);
+  const [path, setPath] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [scanned, setScanned] = useState<number | null>(null);
+  const [scanErrors, setScanErrors] = useState<string[]>([]);
 
-  if (settings.status === "error") {
-    return <ErrorState error={settings.error} onRetry={settings.reload} />;
-  }
+  const startScan = async () => {
+    const target = path.trim();
+    if (!target || busy) return;
+    setBusy(true);
+    setError(null);
+    setScanErrors([]);
+    setScanned(null);
+    setStep(2);
+    try {
+      const root = await addRoot(folderName(target), target);
+      const result = await scanRoot(root.id);
+      setScanned(result.scanned);
+      setScanErrors(result.errors);
+      setStep(3);
+    } catch (failure) {
+      setError(describeError(failure));
+      setStep(1);
+    } finally {
+      setBusy(false);
+    }
+  };
 
-  if (settings.status === "loading") {
-    return <PageHeader title="Setup" subtitle="Checking this machine…" />;
-  }
-
-  const data = settings.data;
-  const runtime = data.diagnostics.runtimeStatus;
-  const backend = data.diagnostics.backendStatus;
-
-  const runtimeReady = runtime.state === "ready";
-  const backendReady = backend.state === "ready";
-  const rootsAdded = data.libraryRoots.length > 0;
-
-  const steps: readonly Step[] = [
-    {
-      title: "This machine",
-      body: "MEDIA_HAVEN runs on Windows with a local container runtime. Nothing is installed without your say-so.",
-      state: "done",
-      status: "Checked",
-    },
-    {
-      title: "Container runtime",
-      body:
-        runtime.state === "unhealthy"
-          ? ("message" in runtime ? runtime.message : "The runtime is running but not healthy.")
-          : "The backend runs inside an isolated Docker workspace, so it cannot read anything it was not given.",
-      state: runtimeReady ? "done" : "blocked",
-      status: runtime.state,
-    },
-    {
-      title: "Backend service",
-      body:
-        "The service that holds your library, watch history and watchlist. It runs in the container workspace, never as a loose process on your machine.",
-      state: backendReady ? "done" : "blocked",
-      status: backend.state,
-    },
-    {
-      title: "Media folders",
-      body: rootsAdded
-        ? `${data.libraryRoots.length} folder${data.libraryRoots.length === 1 ? "" : "s"} added. They are mounted read-only, so your files are never modified.`
-        : "Add a folder that holds your films and series. MEDIA_HAVEN reads them where they are — it does not move, rename or delete them.",
-      state: rootsAdded ? "done" : "pending",
-      status: rootsAdded ? `${data.libraryRoots.length} added` : "Not added",
-    },
-    {
-      title: "Optional services",
-      body: "Metadata providers and downloads are separate, opt-in integrations. MEDIA_HAVEN ships no content sources and needs none of them to work.",
-      state: "done",
-      status: "Optional",
-    },
-  ];
+  const counts = data?.roots.counts;
 
   return (
-    <>
-      <PageHeader title="Setup" />
-      <div className={styles.page}>
-        <p className={styles.intro}>
-          MEDIA_HAVEN is a local appliance: it reads the folders you choose,
-          keeps everything else on this machine, and never uploads your library.
-          These are the steps to get it running.
-        </p>
-
-        <ol className={styles.steps}>
-          {steps.map((step, index) => (
-            <li className={styles.step} key={step.title}>
-              <span
-                className={`${styles.stepIndex} ${
-                  step.state === "done"
-                    ? styles.stepDone
-                    : step.state === "blocked"
-                      ? styles.stepBlocked
-                      : ""
-                }`}
-                aria-hidden="true"
-              >
-                {index + 1}
-              </span>
-              <span>
-                <span className={styles.stepTitle}>{step.title}</span>
-                <span className={styles.stepBody}>{step.body}</span>
-              </span>
-              <StatusPill
-                tone={
-                  step.state === "done"
-                    ? "available"
-                    : step.state === "blocked"
-                      ? "missing"
-                      : "offline"
-                }
-              >
-                {step.status}
-              </StatusPill>
-            </li>
-          ))}
-        </ol>
-
-        <div className={styles.notes}>
-          <strong>What MEDIA_HAVEN will never do:</strong>
-          <ul className={styles.notesList}>
-            <li>Delete or modify a file in a folder you added.</li>
-            <li>Upload your library, your filenames or your watch history.</li>
-            <li>Ask for an account, a subscription or a card.</li>
-            <li>Change Windows settings or install anything without asking.</li>
-          </ul>
-        </div>
+    <div className={styles.page}>
+      <div className={styles.background} aria-hidden="true">
+        <img src="/artwork/dune-hero.jpg" alt="" className={styles.bgArt} />
+        <div className={styles.scrim} />
       </div>
-    </>
+
+      <header className={styles.top}>
+        <span className={styles.wordmark}>MEDIA HAVEN</span>
+        <Link to="/" className={styles.skip} data-focusable="true">
+          Skip setup
+        </Link>
+      </header>
+
+      <main className={styles.stage}>
+        <section className={styles.panel} aria-labelledby="setup-title">
+          <ol className={styles.steps} aria-label="Setup progress">
+            {STEPS.map((item) => (
+              <li
+                key={item.step}
+                className={`${styles.stepItem} ${
+                  item.step === step ? styles.stepCurrent : ""
+                } ${item.step < step ? styles.stepDone : ""}`}
+                aria-current={item.step === step ? "step" : undefined}
+              >
+                <span className={styles.stepBar} />
+                <span className={styles.stepLabel}>{item.label}</span>
+              </li>
+            ))}
+          </ol>
+
+          {step === 1 ? (
+            <>
+              <h1 id="setup-title" className={styles.title}>
+                Bring your library in
+              </h1>
+              <p className={styles.lede}>
+                Point MEDIA HAVEN at the folder that holds your films and series.
+                The backend reads it, indexes what it finds and never moves a
+                file.
+              </p>
+
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Media folder</span>
+                <span className={styles.inputRow}>
+                  <Icon name="folder" className={styles.inputIcon} />
+                  <input
+                    className={styles.input}
+                    value={path}
+                    spellCheck={false}
+                    autoFocus
+                    placeholder="D:\Media"
+                    onChange={(event) => setPath(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void startScan();
+                    }}
+                  />
+                </span>
+              </label>
+
+              {error ? <p className={styles.error}>{error}</p> : null}
+
+              <p className={styles.fineprint}>
+                Files are indexed in place. Nothing is copied, renamed or
+                deleted. You can add more folders later.
+              </p>
+
+              <div className={styles.actions}>
+                <ActionButton
+                  variant="solid"
+                  icon="arrowRight"
+                  disabled={!path.trim() || busy}
+                  onClick={() => void startScan()}
+                >
+                  Scan this folder
+                </ActionButton>
+                <Link to="/" className={buttonClass("quiet")} data-focusable="true">
+                  Not now
+                </Link>
+              </div>
+            </>
+          ) : null}
+
+          {step === 2 ? (
+            <>
+              <h1 id="setup-title" className={styles.title}>
+                Reading {path}
+              </h1>
+              <p className={styles.lede}>
+                The backend is walking the folder. Nothing is uploaded and no
+                catalogue service is contacted.
+              </p>
+
+              <div className={styles.progressBlock}>
+                <div className={styles.progressHead}>
+                  <span>Indexing</span>
+                  <span className={styles.progressValue}>In progress</span>
+                </div>
+                <span className={styles.scanBar} aria-hidden="true" />
+              </div>
+
+              <p className={styles.fineprint}>
+                A large folder can take a moment. The scan is interruptible and
+                safe to re-run.
+              </p>
+            </>
+          ) : null}
+
+          {step === 3 ? (
+            <>
+              <span className={styles.doneIcon} aria-hidden="true">
+                <Icon name="checkCircle" />
+              </span>
+              <h1 id="setup-title" className={styles.title}>
+                Your library is ready
+              </h1>
+              <p className={styles.lede}>
+                {scanned ?? 0} files indexed from {path}. The backend now serves
+                them to every screen.
+              </p>
+
+              <dl className={styles.counts}>
+                <div>
+                  <dt>Films</dt>
+                  <dd>{counts?.movies ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Series</dt>
+                  <dd>{counts?.shows ?? 0}</dd>
+                </div>
+                <div>
+                  <dt>Episodes</dt>
+                  <dd>{counts?.episodes ?? 0}</dd>
+                </div>
+              </dl>
+
+              {scanErrors.length > 0 ? (
+                <p className={styles.error}>
+                  {scanErrors.length} files could not be read: {scanErrors[0]}
+                </p>
+              ) : null}
+
+              <div className={styles.actions}>
+                <Link
+                  to={activeProfile ? "/" : "/profiles"}
+                  className={buttonClass("solid")}
+                  data-focusable="true"
+                >
+                  {activeProfile ? "Start watching" : "Choose a profile"}
+                </Link>
+                <ActionButton
+                  variant="quiet"
+                  onClick={() => {
+                    setPath("");
+                    setStep(1);
+                  }}
+                >
+                  Add another folder
+                </ActionButton>
+              </div>
+            </>
+          ) : null}
+        </section>
+
+        <p className={styles.legal}>
+          Local-first · Nothing leaves this machine · No account required
+        </p>
+      </main>
+    </div>
   );
 }

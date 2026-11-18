@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1.7
+#
+# probe — untrusted media inspection only (ADR-0001, docker-workspace.md §2.2).
+# No token, no database, no healthcheck, no shell and no package manager.
+# Network isolation is enforced by compose.yaml (internal-only network).
+
+# Debian's ffmpeg package is the only build-time dependency. It supplies both
+# ffprobe (metadata) and ffmpeg (thumbnail/trickplay generation, §2.2).
+FROM debian:bookworm-slim AS ffmpeg-builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# distroless/cc carries the C runtime libraries but no shell and no package
+# manager (plan R-27). The `static` variant cannot run Debian's ffprobe: it is
+# dynamically linked against libav* and codec libraries, so `cc` is the
+# smallest distroless variant that actually starts it.
+#
+# HONEST LIMITATION: both base tags above are mutable. Record verified digests
+# at build time and replace these FROM lines with <image>@sha256:... before
+# release. A real `docker build` plus an `ffprobe -version` smoke is still
+# needed to prove the copied library set is complete; that requires the engine
+# and is deliberately NOT claimed here.
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+
+# Distinct from core's 10001; compose.yaml enforces the same floor.
+USER 10002:10002
+
+COPY --from=ffmpeg-builder /usr/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg-builder /usr/bin/ffmpeg /usr/local/bin/ffmpeg
+# Shared objects only, not the multiarch directory's executable helpers.
+# Copying the full set avoids an ldd list that rots with each distro package
+# bump. This image targets x64 only (O-02).
+COPY --from=ffmpeg-builder /usr/lib/x86_64-linux-gnu/*.so* /usr/lib/x86_64-linux-gnu/
+
+ENTRYPOINT ["/usr/local/bin/ffprobe"]

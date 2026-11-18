@@ -1,0 +1,445 @@
+.page {
+  padding-bottom: var(--s-12);
+}
+
+.backdrop {
+  position: relative;
+  height: var(--backdrop-h);
+  overflow: hidden;
+}
+
+.backdropArt {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 30%;
+}
+
+.backdropScrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim-detail);
+}
+
+.back {
+  position: absolute;
+  inset-block-start: calc(var(--nav-h) + var(--safe-top) + var(--s-2));
+  inset-inline-start: var(--safe-x);
+  display: grid;
+  place-items: center;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  border-radius: var(--r-pill);
+  background: var(--glass-bg-quiet);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  color: var(--paper-90);
+  font-size: var(--icon-size);
+  transition:
+    background var(--t-base) var(--ease-out),
+    transform var(--t-base) var(--ease-out);
+}
+
+.back:hover {
+  background: var(--nav-hover);
+}
+
+.back:focus {
+  transform: scale(1.06);
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.sheet {
+  position: relative;
+  z-index: 2;
+  width: min(
+    calc(100% - var(--safe-x) * 2),
+    calc(var(--sheet-max-w) + var(--safe-x) * 2)
+  );
+  margin-inline: auto;
+  margin-block-start: calc(var(--sheet-lift) * -1);
+  padding: var(--sheet-pad);
+  border-radius: var(--r-sheet);
+  background: var(--glass-bg-deep);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: var(--hairline) solid var(--glass-edge);
+  box-shadow: var(--shadow-sheet), var(--glass-inner);
+  animation: page-rise var(--t-reveal) var(--ease-out) both;
+}
+
+.head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s-5);
+}
+
+.titleBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--text-display);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-display);
+  font-weight: var(--weight-semibold);
+  text-wrap: balance;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  font-size: var(--text-small);
+  color: var(--paper-54);
+  font-variant-numeric: tabular-nums;
+}
+
+.match {
+  color: var(--paper-90);
+  font-weight: var(--weight-semibold);
+}
+
+.rating {
+  padding: var(--s-1) var(--s-2);
+  border: var(--hairline) solid var(--glass-edge);
+  border-radius: var(--r-xs);
+  font-size: var(--text-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper-72);
+}
+
+.offline {
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-xs);
+  background: var(--fill-8);
+  font-size: var(--text-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--paper-72);
+}
+
+.tagline {
+  font-size: var(--text-body);
+  color: var(--paper-72);
+  font-style: italic;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.actionNote {
+  margin-left: var(--s-1);
+  padding-left: var(--s-3);
+  border-left: var(--hairline) solid var(--paper-38);
+  font-size: var(--text-micro);
+  letter-spacing: 0.06em;
+  opacity: 0.62;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+  gap: var(--s-9);
+  margin-top: var(--s-8);
+  padding-block-start: var(--s-7);
+  border-top: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.synopsis {
+  max-width: var(--measure-copy);
+  font-size: var(--text-body);
+  line-height: var(--leading-copy);
+  color: var(--paper-72);
+  text-wrap: pretty;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-5);
+  margin: 0;
+}
+
+.facts div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.facts dt {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-38);
+}
+
+.facts dd {
+  margin: 0;
+  font-size: var(--text-small);
+  color: var(--paper-90);
+}
+
+.episodes {
+  margin-top: var(--s-9);
+  padding-block-start: var(--s-7);
+  border-top: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.seasonBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin-bottom: var(--s-5);
+}
+
+.sectionTitle {
+  font-family: var(--font-display);
+  font-size: var(--text-section);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-title);
+}
+
+.seasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.trackTotal {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-38);
+}
+
+.episodeList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.episode {
+  display: flex;
+  align-items: center;
+  gap: var(--s-5);
+  padding: var(--s-3);
+  border-radius: var(--r-md);
+  border: var(--hairline) solid transparent;
+  transition:
+    background var(--t-base) var(--ease-out),
+    border-color var(--t-base) var(--ease-out),
+    transform var(--t-base) var(--ease-out);
+}
+
+.episode:hover {
+  background: var(--fill-5);
+  border-color: var(--glass-edge-soft);
+}
+
+.episode:focus {
+  background: var(--fill-7);
+  border-color: var(--paper);
+  transform: scale(1.005);
+  outline: none;
+}
+
+.episodeThumb {
+  position: relative;
+  flex: none;
+  width: calc(var(--card-w) * 0.52);
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: var(--ink-700);
+}
+
+.episodeThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.episodePlay {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  display: grid;
+  place-items: center;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  border-radius: var(--r-pill);
+  background: var(--black-50);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--hairline) solid var(--glass-edge);
+  font-size: var(--text-small);
+  opacity: 0;
+  transition: opacity var(--t-base) var(--ease-out);
+}
+
+.episode:hover .episodePlay,
+.episode:focus .episodePlay {
+  opacity: 1;
+}
+
+.episodeCopy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.episodeTop {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-3);
+}
+
+.episodeNumber {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  color: var(--paper-38);
+  font-variant-numeric: tabular-nums;
+}
+
+.episodeTitle {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  color: var(--paper-90);
+}
+
+.episodeTime {
+  margin-left: auto;
+  font-size: var(--text-small);
+  color: var(--paper-38);
+  font-variant-numeric: tabular-nums;
+}
+
+.episodeSynopsis {
+  font-size: var(--text-small);
+  line-height: var(--leading-copy);
+  color: var(--paper-54);
+  max-width: var(--measure-copy);
+}
+
+.episodeProgress {
+  display: block;
+  max-width: calc(var(--card-w) * 1.3);
+  margin-top: var(--s-1);
+}
+
+.trackList {
+  display: flex;
+  flex-direction: column;
+}
+
+.track {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  padding: var(--s-3) var(--s-3);
+  border-radius: var(--r-sm);
+  border-top: var(--hairline) solid var(--glass-edge-soft);
+  transition:
+    background var(--t-base) var(--ease-out),
+    color var(--t-base) var(--ease-out);
+}
+
+.trackList li:first-child .track {
+  border-top: 0;
+}
+
+.track:hover {
+  background: var(--fill-5);
+}
+
+.track:focus {
+  background: var(--fill-7);
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: calc(var(--ring-offset) * -1);
+}
+
+.trackNumber {
+  width: var(--s-8);
+  flex: none;
+  font-size: var(--text-small);
+  color: var(--paper-38);
+  font-variant-numeric: tabular-nums;
+}
+
+.trackTitle {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-body);
+  color: var(--paper-90);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trackTime {
+  font-size: var(--text-small);
+  color: var(--paper-38);
+  font-variant-numeric: tabular-nums;
+}
+
+.trackPlay {
+  font-size: var(--text-small);
+  color: var(--paper-38);
+  opacity: 0;
+  transition: opacity var(--t-base) var(--ease-out);
+}
+
+.track:hover .trackPlay,
+.track:focus .trackPlay {
+  opacity: 1;
+  color: var(--paper);
+}
+
+.related {
+  padding-block-start: var(--s-11);
+}
+
+@media (max-width: 62em) {
+  .body {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s-6);
+  }
+
+  .sheet {
+    border-radius: var(--r-lg);
+  }
+}
+
+@media (max-width: 44em) {
+  .episodeThumb {
+    width: calc(var(--card-w) * 0.68);
+  }
+
+  .episodeTime {
+    display: none;
+  }
+
+  .trackNumber {
+    display: none;
+  }
+}

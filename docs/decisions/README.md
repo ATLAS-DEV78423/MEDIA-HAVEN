@@ -8,14 +8,19 @@ Never rewrite an accepted ADR's decision.
 
 | ADR | Title | Status | Evidence needed |
 |---|---|---|---|
-| [0001](0001-windows-container-runtime.md) | Mandatory Docker boundary and Windows runtime distribution | Mandatory boundary **Accepted**; distribution **Proposed** (dedicated WSL2 distro recommended) | P0-10, P0-13, P0-14 |
-| [0002](0002-playback-engine.md) | Playback engine and placement | Proposed; host placement recommended, not accepted | P0-11, P0-12, O-09 |
+| [0001](0001-windows-container-runtime.md) | Mandatory Docker boundary and Windows runtime distribution | Mandatory boundary **Accepted**; distribution **Accepted (provisional)** (dedicated WSL2 + Docker Engine) | P0-10, P0-13, P0-14 |
+| [0002](0002-playback-engine.md) | Playback engine and placement | **Accepted (provisional)** — mpv via JSON IPC, abstract interface | P0-11, P0-12, O-09 |
 | [0003](0003-modular-monolith.md) | Modular monolith | Accepted; deployment boundary reconciled by ADR-0008 | — |
 | [0004](0004-local-playback-first.md) | Local HDMI playback first | Not started; requires human acceptance | P0-01 |
 | [0005](0005-host-container-boundary.md) | Host/container transport and authentication | Proposed; not verified | P0-13, P1-08 |
-| [0006](0006-filesystem-and-volume-policy.md) | Filesystem and volume policy | Proposed; not verified | P1-07, P6-03 |
-| [0007](0007-secrets-management.md) | Secrets management | Proposed; not verified | P1-03, P1-08 |
+| [0006](0006-filesystem-and-volume-policy.md) | Filesystem and volume policy | **Accepted (provisional)** | P1-07, P6-03 |
+| [0007](0007-secrets-management.md) | Secrets management | **Accepted (provisional)** — token storage mechanism amended by ADR-0014 | P1-03, P1-08 |
 | [0008](0008-modular-monolith-deployment-boundary.md) | Modular monolith across Windows host and Docker backend | Proposed; human review required | P0-07, P1-08 |
+| [0009](0009-frontend-first-contract-driven.md) | Frontend-first, contract-driven development | Accepted | — |
+| [0010](0010-library-entity-deviations.md) | Library entity deviations and scanner conventions | Proposed | P2-02, P2-03 |
+| [0011](0011-metadata-provider-selection.md) | Metadata provider selection | **Accepted** (2026-11-18) — TMDB primary, local NFO offline fallback, network opt-in | P2-06, O-04 |
+| [0013](0013-backend-completion-sequencing.md) | Containerise the backend before the remaining features | **Accepted** (2026-11-18) | P1-08, P4-08 |
+| [0014](0014-host-token-storage.md) | Host token storage uses DPAPI | **Accepted** (2026-11-18) — amends ADR-0007 for the API token | P1-08, O-07 |
 
 **Two decisions are already binding and are not reopened by Phase 0:**
 
@@ -28,7 +33,8 @@ Never rewrite an accepted ADR's decision.
 runtime distribution (ADR-0001 Part 2), the playback engine and its placement (ADR-0002),
 the host/container transport and auth scheme (ADR-0005), the volume policy (ADR-0006),
 the secret-provisioning mechanism (ADR-0007) and the deployment-boundary rules
-(ADR-0008).
+(ADR-0008). The metadata provider is no longer open: ADR-0011 was accepted by the
+human partner on 2026-11-18 (TMDB primary, local NFO offline fallback).
 
 ## Status values
 

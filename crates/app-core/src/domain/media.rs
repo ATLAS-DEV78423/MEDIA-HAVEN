@@ -34,7 +34,9 @@ pub enum MediaAvailability {
     Available,
     #[serde(rename = "missing-file")]
     #[serde(rename_all = "camelCase")]
-    MissingFile { last_seen_at: Option<IsoTimestamp> },
+    MissingFile {
+        last_seen_at: Option<IsoTimestamp>,
+    },
     Offline,
 }
 
@@ -194,6 +196,37 @@ pub struct LibraryRoot {
     pub status: LibraryRootStatus,
     pub last_scan_at: Option<IsoTimestamp>,
     pub error_message: Option<String>,
+    pub path: Option<String>,
+}
+
+/// Metadata read from a local source (currently an `.nfo` sidecar) before any
+/// provider is involved. Every field is optional so a sparse source never
+/// blanks a value the library already holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataRecord {
+    pub title: Option<String>,
+    pub year: Option<i64>,
+    pub synopsis: Option<String>,
+    pub runtime_minutes: Option<i64>,
+    pub genres: Vec<String>,
+}
+
+/// A media item discovered by the scanner, ready to be persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaUpsert {
+    pub id: MediaId,
+    pub kind: MediaKind,
+    pub title: String,
+    pub root_id: Option<String>,
+    pub path: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub hash: Option<String>,
+    /// Offline metadata found beside the file. `None` leaves stored values
+    /// untouched on rescan.
+    #[serde(default)]
+    pub metadata: Option<MetadataRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -327,7 +360,9 @@ pub enum RuntimeStatus {
     Starting,
     Ready,
     #[serde(rename = "unhealthy")]
-    Unhealthy { message: String },
+    Unhealthy {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -361,12 +396,23 @@ pub struct DiagnosticsSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: String,
+    pub name: String,
+    pub avatar_color: String,
+    pub created_at: IsoTimestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub library_roots: Vec<LibraryRoot>,
     pub playback: PlaybackSettings,
     pub storage: StorageSettings,
     pub optional_services: OptionalServicesSettings,
     pub diagnostics: DiagnosticsSettings,
+    #[serde(default)]
+    pub profiles: Vec<Profile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -389,6 +435,8 @@ pub struct StorageSettingsPatch {
 pub struct SettingsPatch {
     pub playback: Option<PlaybackSettingsPatch>,
     pub storage: Option<StorageSettingsPatch>,
+    #[serde(default)]
+    pub profiles: Option<Vec<Profile>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -413,4 +461,12 @@ pub struct BrowseQuery {
 pub struct PlaybackStartRequest {
     pub media_id: MediaId,
     pub start_position_seconds: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlaybackCheckpointRequest {
+    pub media_id: MediaId,
+    pub position_seconds: f64,
+    pub duration_seconds: Option<f64>,
 }

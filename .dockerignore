@@ -6,6 +6,9 @@
 
 # Frontend
 apps/
+# Required by Dockerfile.core: cargo resolves all member manifests + lib target
+# paths even for -p mediahaven-core (verified with cargo metadata --no-deps).
+!apps/desktop/src-tauri/Cargo.toml
 node_modules/
 dist/
 

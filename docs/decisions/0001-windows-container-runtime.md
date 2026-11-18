@@ -1,6 +1,6 @@
 # ADR-0001 — Docker is the mandatory v1 backend runtime; engine hosted in a dedicated WSL2 distro
 
-- **Status:** Accepted (mandatory-in-v1 decision) / **Proposed** (runtime distribution) — the distribution choice requires P0-10 measurements before CP-0
+- **Status:** Accepted (mandatory-in-v1 decision) / **Accepted (2026-11-18)** (runtime distribution) — dedicated WSL2 Linux environment running Docker Engine directly; no Docker Desktop dependency. The human partner confirmed the distribution on 2026-11-18; P0-10/P0-13/P0-14 measurements are still required before release (see Verification).
 - **Date:** 2026-11-16 (evidence refreshed 2026-11-15 against primary documentation and the reference machine)
 - **Supersedes:** the earlier "Proposed — optional, evidence-gated" version of this ADR
 - **Deciders:** product owner (mandatory), architecture (distribution)
@@ -162,3 +162,17 @@ Still **unmeasured** — see Verification below.
 
 If P0-10 shows Option B materially worse on this hardware, this ADR is revisited with
 numbers rather than re-argued from preference.
+
+## Acceptance record (2026-11-18)
+
+The human partner accepted the runtime distribution above when asked directly: a
+dedicated WSL2 distro running Docker Engine, rather than reusing the engine already
+installed on this machine. Recorded here by the agent at the human's direction; the
+acceptance is of the *target*, not evidence that it works. P0-10/P0-13/P0-14 still
+have to produce the numbers before this is relied upon or shipped.
+
+Observed on the reference machine at acceptance time, and relevant to the install
+decision: a Docker CLI (29.9.3) is already present, `C:\Program Files\Docker` does not
+exist, and WSL reports a stopped `docker-desktop` distro alongside `OmniRushBox`. So
+the machine already reaches *an* engine; the accepted decision is nonetheless to run
+the product's own dedicated distro rather than depend on that one.

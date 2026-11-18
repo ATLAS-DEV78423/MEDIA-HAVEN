@@ -1,6 +1,6 @@
 # ADR-0006 — Five storage classes, one read-only media rule
 
-- **Status:** Proposed — architecture fixed, volume names finalised at P1-07
+- **Status:** Accepted (provisional, 2026-11-18) — explicit volume mounts, read-only media by default, separate volumes for data/cache/artwork/temp, no unrestricted host access
 - **Date:** 2026-11-16
 - **Related:** ADR-0001, ADR-0002, `docs/architecture/docker-workspace.md` §4, `docs/security/threat-model.md`
 

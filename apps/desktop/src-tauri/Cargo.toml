@@ -1,0 +1,27 @@
+[package]
+name = "mediahaven-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "MEDIA_HAVEN Windows host: window, lifecycle and named command surface"
+
+[lib]
+name = "mediahaven_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+app-core = { path = "../../../crates/app-core" }
+mediahaven-contract = { path = "../../../crates/contract" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+tauri = { workspace = true }
+windows = { workspace = true }
+thiserror = { workspace = true }

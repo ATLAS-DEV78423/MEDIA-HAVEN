@@ -1,127 +1,124 @@
 # Design system
 
-The visual contract. Derived from `Development.md` §7.3 and §7.4. Every value
-here becomes a CSS custom property in `apps/desktop/src/styles/tokens.css`
-(P4-01). Components consume tokens; components never contain literals.
+The visual contract for `apps/desktop`. Every value used by the interface is a
+custom property in `apps/desktop/src/styles/tokens.css`; components consume
+tokens and contain no literals. `npm run check:tokens` enforces this.
+
+The interface is a TV-first, liquid-glass surface: full-bleed artwork, floating
+glass chrome, one neutral ink ramp, generous safe areas and a focus ring that
+survives bright stills.
 
 ## Principles
 
-1. **Artwork is the interface.** Surfaces stay quiet; posters carry the colour.
+1. **Artwork is the interface.** Surfaces stay quiet; stills carry the colour.
 2. **One system, one scale.** No per-screen spacing inventions.
-3. **Legible at three metres.** Sizes are set for TV distance, not a desk.
-4. **Motion is a signal, not decoration.** It shows where you are and where
-   focus moved. It never runs unattended.
-5. **Never colour-only.** State is always colour *plus* text, icon or shape.
+3. **Legible at three metres.** Type and targets are sized for a couch.
+4. **Motion is a signal.** It shows focus and page change; it never runs
+   unattended except the hero's paused-on-hover rotation.
+5. **State is never colour alone.** Focus, selection and status always carry
+   shape, text or an icon too.
 
 ## Colour
 
-| Token | Role | Notes |
+| Group | Tokens | Role |
 |---|---|---|
-| `--bg-base` | App background | Near-black/charcoal, not pure `#000` |
-| `--bg-elevated` | Cards, sheets | Slightly lifted from base |
-| `--surface-translucent` | Navigation rail, player overlay | Restrained blur; not every surface |
-| `--text-primary` | Titles, primary labels | Must clear AA on every surface it lands on |
-| `--text-secondary` | Metadata, timestamps | AA against its own surface |
-| `--text-tertiary` | De-emphasised hints | Never the only carrier of essential info |
-| `--accent` | Primary action, progress fill | One accent; do not introduce a second |
-| `--focus-ring` | Focus indicator | Must survive bright artwork |
-| `--danger` | Destructive action | Always paired with a label and confirmation |
-| `--success`, `--warning`, `--info` | Status pills | Always paired with text |
-
-**Contrast:** normal text meets WCAG AA (4.5:1) against its actual rendered
-surface. Hero text sits on a gradient over unknown artwork — verify against both
-a bright and a dark fixture, not against the gradient's average.
-
-**No gradient soup.** Gradients exist to protect text over artwork, not as
-decoration.
-
-## Typography
-
-| Token | Use | Guidance |
-|---|---|---|
-| `--font-display` | Hero title | Large, tight tracking, two lines max |
-| `--font-ui` | Everything else | System-adjacent, high legibility |
-| `--text-hero` | Featured title | Scales with viewport; never below TV minimum |
-| `--text-title` | Section headers | Clear hierarchy step |
-| `--text-body` | Descriptions | Line length capped |
-| `--text-meta` | Year, runtime, episode count | **Never below 16 CSS px in TV mode** |
+| Ground | `--ink-void` … `--ink-500` | Pure black canvas, lifted panels |
+| Ink | `--paper`, `--paper-90/72/54/38/22` | One neutral ramp for every text level |
+| Accent | `--accent`, `--accent-soft`, `--accent-hover` | White primary action on black |
+| Status | `--success`, `--danger`, `--warning` | Always paired with a label |
+| Overlays | `--fill-*`, `--black-*`, `--scrim-*` | One alpha set for every translucent fill |
+| Profile | `--tone-1` … `--tone-4` | Fallback avatar colours only; the backend stores and returns real hex values |
+| Glass | `--glass-bg*`, `--glass-edge*`, `--glass-blur*` | The liquid-glass recipe |
+| Focus | `--paper`, `--ring-w`, `--ring-offset` | Ring is always paper-white |
 
 Rules:
 
-- Minimum 16 CSS px for any essential text in TV mode.
-- Line height generous enough for dark-room reading; avoid dense blocks.
-- Do not truncate every title. Truncate only where overflow would break layout,
-  and always provide the full title on the details screen.
-- Numerals tabular where times and counts align.
+- Normal text meets WCAG AA against its rendered surface; secondary ink is
+  `--paper-54` or lighter.
+- Gradients exist to protect copy over unknown artwork, never as decoration.
+- The accent is white. Do not add a second accent colour.
+
+## Typography
+
+| Token | Use |
+|---|---|
+| `--font-display` (Space Grotesk) | Hero, page titles, section headings |
+| `--font-condensed` (Roboto Condensed) | Wordmark and condensed labels |
+| `--text-hero` … `--text-micro` | One responsive ramp, TV-scaled |
+| `--tracking-display/title/tight/wide/wordmark` | Untracked body, tight display |
+| `--leading-hero/title/body/copy` | Four line-heights only |
+| `--measure-copy`, `--measure-hero` | Line-length caps |
+
+Rules: tabular numerals for time and counts; no essential text below
+`--text-micro`; truncation only where overflow would break layout.
 
 ## Spacing and layout
 
-`--space-1` … `--space-12` on a single scale. Horizontal shelf gutters use one
-consistent step. Section rhythm uses one of two steps, not arbitrary values.
+- `--s-0` … `--s-12` is the only spacing scale.
+- `--safe-x`, `--safe-y`, `--safe-top` are the TV safe areas (80 pt sides at
+  large sizes, collapsing on laptops).
+- `--card-w`, `--card-w-wide`, `--card-gap`, `--row-gap` govern shelves; grid
+  columns use `em` breakpoints, never device widths.
+- `--hero-min-h`, `--backdrop-h`, `--sheet-lift`, `--sheet-pad` shape the
+  cinematic surfaces.
+- Vertical scroll contains horizontal shelves. Narrow windows keep the same
+  hierarchy rather than becoming a dashboard.
 
-- Edge-to-edge canvas; safe margins preserve artwork bleed.
-- Vertical scroll contains horizontally scrolling shelves.
-- Laptop: reduced hero height and card size, same hierarchy.
-- Narrow window: shelves scroll, navigation collapses to labelled icons. Never
-  become a cramped desktop dashboard.
-- Full-screen supported; survives resolution and monitor changes.
+## Radii, glass, layers
 
-## Radii, elevation, layers
-
-- `--radius-card`, `--radius-sheet`, `--radius-pill` — three radii, no more.
-- `--shadow-card`, `--shadow-overlay` — elevation communicates stacking, not
-  decoration.
-- `--z-nav`, `--z-overlay`, `--z-player`, `--z-toast` — explicit layers. No
-  `z-index: 9999`.
+- Three radii: `--r-sm`, `--r-card`, `--r-lg`/`--r-sheet`, and `--r-pill`.
+- `.glass` in `base.css` is the shared glass surface: layered gradient, edge,
+  inner specular line, blur and float shadow.
+- Layers are named (`--z-nav`, `--z-sheet`, `--z-player`, `--z-dialog`,
+  `--z-toast`). No numeric `z-index`.
 
 ## Focus
 
-The most important token in the product.
-
-- `--focus-ring-width` thick enough to identify at TV distance.
-- `--focus-ring-offset` so the ring never merges with artwork edges.
-- Focus is visible on bright and dark artwork, and remains visible when the last
-  input was a mouse.
-- Focused cards scale `1.03`–`1.06` with a shadow. **Scaling must not reflow
-  neighbours** — transform only, never layout.
-- Focus is never conveyed by colour alone.
+- `useSpatialFocus` moves real DOM focus by geometry, so Enter/Space and screen
+  readers work without a parallel state machine.
+- `--ring-w` and `--ring-offset` keep the ring clear of artwork edges.
+- Focused cards scale with `transform` only; neighbours never reflow.
+- Arrow keys are owned by the player while it is open (`data-player="active"`
+  on the root element).
 
 ## Motion
 
 | Token | Use |
 |---|---|
-| `--motion-fast` | Focus change, hover (≈140 ms) |
-| `--motion-base` | Overlay/panel open, controls fade (≈180 ms) |
-| `--motion-slow` | Hero transition, large surface change (≈240 ms) |
-| `--ease-out` / `--ease-in-out` | Two curves only |
+| `--t-fast` | Hover and focus colour |
+| `--t-base` | Controls, chips, chrome fade |
+| `--t-slow` | Sheets and dialogs |
+| `--t-reveal` | Page rise on entry |
+| `--ease-out`, `--ease-in-out`, `--ease-spring` | Three curves only |
 
-Rules:
-
-- Durations tuned after profiling, not guessed at in review.
-- No parallax, no constant background animation, no expensive blur stacks.
-- `prefers-reduced-motion: reduce` zeroes non-essential motion (transforms,
-  parallax, overshoot) but never removes state changes.
-- Nothing autoplays on focus: no trailers, no audio.
+`prefers-reduced-motion: reduce` and the in-app Reduce motion preference zero
+non-essential motion (page rise, hero drift, spinner) without removing state.
 
 ## Component inventory
 
-From `Development.md` §7.4.10. Each is a token-consuming, data-agnostic unit:
+`Nav` · `Hero` · `Shelf` · `MediaCard` · `ActionButton` · `Chip` ·
+`ProgressBar` · `Toggle` · `Segmented` · `Icon` (authored SVG set) ·
+`PageHeader` · `Panel` · `EmptyState` · `FieldRow` · `CategoryTile` ·
+`BrowseView` · `Toast` (in `App`) · `PlayerPage` chrome.
 
-`AppShell`, `PrimaryNavigation`, `PageHeader`, `HeroFeature`, `MediaShelf`,
-`MediaCard`, `EpisodeCard`, `CollectionCard`, `ProgressBar`, `StatusPill`,
-`Artwork`, `SkeletonCard`, `MediaDetails`, `SeasonPicker`, `EpisodeList`,
-`PlayerControls`, `PlaybackOverlay`, `UpNextPrompt`, `SearchInput`, `FilterBar`,
-`EmptyState`, `ConfirmDialog`, `Toast`, `FocusManager`.
+Every card handles missing artwork (deterministic local still), every list
+handles empty, and every backend call handles failure with a retry or an
+explicit message. Controls are token-consuming and data-agnostic.
 
-Rules:
+## Data rules
 
-- No hard-coded titles, poster URLs or episode data in production components.
-- Every card handles: loading, loaded, missing artwork, error.
-- Every list handles: empty, loading, offline, error.
-- Every icon-only control has an accessible name.
+- No fixture catalogue, no mock transport. Screens read the `mediahaven-core`
+  API through `src/services/api.ts`; `src/state/AppState.tsx` holds only the
+  fetched snapshot and local UI preferences.
+- Artwork falls back to `public/artwork` until a metadata provider supplies
+  posters (ADR-0011). The fallback is deterministic per title.
+- No invented ratings, match scores or taglines: fields the backend does not
+  return are hidden.
 
 ## Enforcement
 
-- A CI check greps for colour/spacing literals outside the token files (P4-01).
-- Contrast pairs are computed in a test, not eyeballed.
-- The impeccable design-detector hooks run on UI edits and flag drift at Stop.
+- `node scripts/check-tokens.mjs` rejects hex/rgba/hsl and bare `px` in
+  `src/**` outside `styles/tokens.css` (53 files, 0 violations at the time of
+  writing).
+- `npm run typecheck`, `npm run lint`, `npm run test` and `npm run build` gate
+  the UI. Rust gates are `cargo test`, `cargo clippy` and `cargo fmt --check`.

@@ -1,0 +1,221 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  min-height: var(--btn-h);
+  padding: 0 var(--btn-pad-x);
+  border-radius: var(--r-pill);
+  font-family: var(--font-ui);
+  font-size: var(--text-small);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  border: var(--hairline) solid transparent;
+  transition:
+    transform var(--t-base) var(--ease-out),
+    background var(--t-base) var(--ease-out),
+    border-color var(--t-base) var(--ease-out),
+    box-shadow var(--t-base) var(--ease-out);
+}
+
+.glyph {
+  font-size: var(--text-heading);
+}
+
+.solid {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-solid);
+}
+
+.solid:hover {
+  background: var(--accent-hover);
+}
+
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-color: var(--glass-edge);
+  color: var(--paper);
+  box-shadow: var(--glass-inner);
+}
+
+.glass:hover {
+  background: var(--nav-hover);
+  border-color: var(--glass-edge-bright);
+}
+
+.quiet {
+  color: var(--paper-72);
+  border-color: var(--glass-edge-soft);
+  background: transparent;
+}
+
+.quiet:hover {
+  color: var(--paper);
+  background: var(--nav-hover);
+}
+
+.button:focus-visible {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.button:focus {
+  transform: scale(1.035);
+}
+
+.button:active {
+  transform: scale(0.98);
+}
+
+.button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: calc(var(--field-h) * 0.72);
+  padding: 0 var(--s-5);
+  border-radius: var(--r-pill);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  background: var(--glass-bg-quiet);
+  color: var(--paper-72);
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition:
+    background var(--t-base) var(--ease-out),
+    color var(--t-base) var(--ease-out),
+    border-color var(--t-base) var(--ease-out),
+    transform var(--t-base) var(--ease-out);
+}
+
+.chipGlyph {
+  font-size: var(--text-small);
+  opacity: 0.8;
+}
+
+.chip:hover {
+  color: var(--paper);
+  border-color: var(--glass-edge);
+}
+
+.chip:focus {
+  transform: scale(1.04);
+  border-color: var(--paper);
+}
+
+.chipActive {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: var(--weight-semibold);
+}
+
+.chipActive:hover {
+  color: var(--accent-ink);
+  background: var(--accent-hover);
+}
+
+.progress {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: var(--progress-h);
+  border-radius: var(--r-pill);
+  background: var(--fill-22);
+  overflow: hidden;
+}
+
+.progressLarge {
+  height: var(--progress-h-lg);
+}
+
+.progressFill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+}
+
+.toggle {
+  position: relative;
+  width: calc(var(--field-h) * 1.12);
+  height: calc(var(--field-h) * 0.62);
+  border-radius: var(--r-pill);
+  border: var(--hairline) solid var(--glass-edge);
+  background: var(--fill-12);
+  transition:
+    background var(--t-base) var(--ease-out),
+    border-color var(--t-base) var(--ease-out);
+}
+
+.toggleOn {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggleKnob {
+  position: absolute;
+  top: 50%;
+  left: var(--s-1);
+  width: calc(var(--field-h) * 0.4);
+  height: calc(var(--field-h) * 0.4);
+  border-radius: var(--r-pill);
+  background: var(--paper);
+  transform: translateY(-50%);
+  transition:
+    left var(--t-base) var(--ease-spring),
+    background var(--t-base) var(--ease-out);
+}
+
+.toggleOn .toggleKnob {
+  left: calc(100% - (var(--field-h) * 0.4) - var(--s-1));
+  background: var(--accent-ink);
+}
+
+.toggle:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.segmented {
+  display: inline-flex;
+  gap: var(--s-1);
+  padding: var(--s-1);
+  border-radius: var(--r-pill);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  background: var(--fill-5);
+}
+
+.segment {
+  padding: var(--s-2) var(--s-4);
+  border-radius: var(--r-pill);
+  font-size: var(--text-small);
+  color: var(--paper-54);
+  transition:
+    background var(--t-base) var(--ease-out),
+    color var(--t-base) var(--ease-out);
+}
+
+.segment:hover {
+  color: var(--paper);
+}
+
+.segmentActive {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: var(--weight-semibold);
+}
+
+.segment:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}

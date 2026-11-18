@@ -1,73 +1,49 @@
-/**
- * The transport seam.
- *
- * Exactly one file decides where commands go. Today that is the development
- * mock; later it is the Tauri host, which forwards to the containerised
- * backend over the authenticated loopback API (ADR-0005, ADR-0009).
- *
- * Nothing above this file knows the difference.
- */
+/* The renderer transport. In the shipped desktop host every call goes through
+ * the Tauri named-command bridge; the signed HTTP client is a dev-only fallback
+ * reached through a DEV-guarded dynamic import. */
 
-import type { Commands } from "@/types/media";
+import { ApiFailure } from "./errors";
 
-export interface Transport {
-  invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: {
+      invoke: (
+        cmd: string,
+        args?: Record<string, unknown> | undefined,
+      ) => Promise<unknown>;
+    };
+  }
 }
 
-/**
- * The Tauri host transport.
- *
- * It talks to `window.__TAURI_INTERNALS__.invoke`, which is the IPC entry
- * point Tauri's own `@tauri-apps/api` package wraps. Using the global
- * directly keeps the frontend free of a runtime dependency on the Rust
- * shell, which does not exist yet — see roadmap P1-08.
- */
-export function createHostTransport(): Transport {
-  return {
-    async invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-      const internals = (
-        window as unknown as {
-          __TAURI_INTERNALS__?: {
-            invoke: (cmd: string, args?: unknown, options?: unknown) => Promise<unknown>;
-          };
-        }
-      ).__TAURI_INTERNALS__;
-
-      if (!internals) {
-        throw new Error(
-          `Command "${command}" was sent to the desktop host, but the host is not available.`,
-        );
-      }
-
-      return (await internals.invoke(command, args ?? {})) as T;
-    },
-  };
+function mapHostError(error: unknown): unknown {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    "message" in error &&
+    typeof error.code === "string" &&
+    typeof error.message === "string"
+  ) {
+    return new ApiFailure(error.message, 0, error.code);
+  }
+  return error;
 }
 
-export type TransportKind = "mock" | "host" | "http";
-
-/**
- * Chooses the transport.
- *
- * The mock is imported dynamically and only in development, so the
- * production bundle never contains it. `npm run check:tokens` asserts the
- * bundle contains no mock code.
- */
-export async function createTransport(): Promise<{
-  transport: Transport;
-  kind: TransportKind;
-}> {
-  const backendUrl = import.meta.env.VITE_BACKEND_URL;
-  if (backendUrl) {
-    const { createHttpTransport } = await import("./httpTransport");
-    const token = import.meta.env.VITE_BACKEND_TOKEN ?? "";
-    return { transport: createHttpTransport(backendUrl, token), kind: "http" };
+export async function call<T = unknown>(
+  command: string,
+  args?: Record<string, unknown> | undefined,
+): Promise<T> {
+  const internals =
+    typeof window !== "undefined" ? window.__TAURI_INTERNALS__ : undefined;
+  if (internals?.invoke) {
+    try {
+      return (await internals.invoke(command, args)) as T;
+    } catch (error) {
+      throw mapHostError(error);
+    }
   }
   if (import.meta.env.DEV) {
-    const { createMockTransport } = await import("./mock/handler");
-    return { transport: createMockTransport(), kind: "mock" };
+    return (await import("./devClient")).devCall(command, args) as Promise<T>;
   }
-  return { transport: createHostTransport(), kind: "host" };
+  throw new ApiFailure("The desktop host is not available.", 0, "backend_unreachable");
 }
-
-export type { Commands };

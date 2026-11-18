@@ -1,369 +1,199 @@
-import type { AppSettings, SettingsPatch } from "@/types/media";
-import { getCommands } from "@/services/commands";
-import { useCommand } from "@/hooks/useCommand";
-import { PageHeader, ErrorState } from "@/components/feedback/States";
-import { StatusPill } from "@/components/cards/ProgressBar";
-import styles from "./SettingsPage.module.css";
+import { Link } from "react-router-dom";
 
-const SECTIONS = [
-  { id: "general", label: "General" },
-  { id: "library", label: "Library folders" },
-  { id: "playback", label: "Playback" },
-  { id: "storage", label: "Storage" },
-  { id: "services", label: "Optional services" },
-  { id: "diagnostics", label: "Diagnostics" },
-  { id: "about", label: "About" },
-] as const;
+import { Segmented, Toggle, buttonClass } from "@/components/ui/Controls";
+import { FieldRow, PageHeader, Panel } from "@/components/ui/Surfaces";
+import type { RuntimeStatus } from "@/services/types";
+import type { SubtitleSize } from "@/state/AppState";
+import { useAppState } from "@/state/AppState";
+import styles from "./settings.module.css";
 
-function formatBytes(bytes: number | null): string {
-  if (bytes === null) return "No limit";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
+const subtitleOptions: { value: SubtitleSize; label: string }[] = [
+  { value: "small", label: "Small" },
+  { value: "medium", label: "Medium" },
+  { value: "large", label: "Large" },
+];
+
+const runtimeLabel = (status: RuntimeStatus): string => {
+  if (status.state === "unhealthy") return `Unhealthy · ${status.message}`;
+  switch (status.state) {
+    case "ready":
+      return "Ready";
+    case "starting":
+      return "Starting";
+    case "stopped":
+      return "Stopped";
+    case "absent":
+      return "Not installed";
+    default:
+      return "Unknown";
   }
-  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
-}
-
-function Toggle({
-  checked,
-  onChange,
-  label,
-}: {
-  readonly checked: boolean;
-  readonly onChange: (next: boolean) => void;
-  readonly label: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      className={`${styles.toggle} ${checked ? styles.toggleOn : ""}`}
-      onClick={() => onChange(!checked)}
-    >
-      <span className={styles.toggleKnob} />
-    </button>
-  );
-}
+};
 
 export function SettingsPage() {
-  const settings = useCommand<AppSettings>(
-    async () => (await getCommands()).settings_get(),
-    [],
-  );
+  const { data, activeProfile, preferences, updatePreference } = useAppState();
+  if (!data) return null;
 
-  const apply = async (patch: SettingsPatch) => {
-    const commands = await getCommands();
-    await commands.settings_set(patch);
-  };
-
-  if (settings.status === "error") {
-    return <ErrorState error={settings.error} onRetry={settings.reload} />;
-  }
-
-  if (settings.status === "loading") {
-    return <PageHeader title="Settings" subtitle="Loading…" />;
-  }
-
-  const data = settings.data;
-  const runtime = data.diagnostics.runtimeStatus;
-  const backend = data.diagnostics.backendStatus;
-
-  const runtimeTone =
-    runtime.state === "ready"
-      ? "available"
-      : runtime.state === "unhealthy" || runtime.state === "absent"
-        ? "missing"
-        : "neutral";
-
-  const backendTone =
-    backend.state === "ready"
-      ? "available"
-      : backend.state === "unhealthy" || backend.state === "absent"
-        ? "missing"
-        : "neutral";
+  const { settings, roots } = data;
+  const totalItems =
+    roots.counts.movies + roots.counts.shows + roots.counts.episodes;
 
   return (
-    <>
+    <div className={`page ${styles.page}`}>
       <PageHeader
         title="Settings"
-        subtitle="Everything here is stored on this machine."
+        description="Playback, appearance and the folders this appliance is allowed to read. Everything is stored in the local database."
       />
-      <div className={styles.layout}>
-        <nav className={styles.nav} aria-label="Settings sections">
-          {SECTIONS.map((section) => (
-            <a
-              key={section.id}
-              className={styles.navItem}
-              href={`#${section.id}`}
+
+      <div className={styles.body}>
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Playback</h2>
+          <Panel>
+            <FieldRow
+              label="Autoplay next episode"
+              hint="Stored by the backend and applied by the player."
             >
-              {section.label}
-            </a>
-          ))}
-        </nav>
+              <Toggle
+                label="Autoplay next episode"
+                checked={preferences.autoplayNext}
+                onChange={(next) => void updatePreference("autoplayNext", next)}
+              />
+            </FieldRow>
+            <FieldRow
+              label="Offer Skip Intro"
+              hint="Show a Skip Intro control during opening titles. A local preference."
+            >
+              <Toggle
+                label="Offer Skip Intro"
+                checked={preferences.skipIntro}
+                onChange={(next) => void updatePreference("skipIntro", next)}
+              />
+            </FieldRow>
+            <FieldRow label="Subtitle size" hint="Stored by the backend for every title.">
+              <Segmented
+                label="Subtitle size"
+                options={subtitleOptions}
+                value={preferences.subtitleSize}
+                onChange={(next) => void updatePreference("subtitleSize", next)}
+              />
+            </FieldRow>
+          </Panel>
+        </section>
 
-        <div className={styles.panels}>
-          <section className={styles.panel} id="general">
-            <h2 className={styles.panelTitle}>General</h2>
-            <p className={styles.panelBody}>
-              MEDIA_HAVEN has no account, no subscription and no telemetry. It
-              never uploads your library, and it never deletes your original
-              media.
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Appearance</h2>
+          <Panel>
+            <FieldRow
+              label="Reduce motion"
+              hint="Turn off artwork drift, focus scaling and page transitions."
+            >
+              <Toggle
+                label="Reduce motion"
+                checked={preferences.reduceMotion}
+                onChange={(next) => void updatePreference("reduceMotion", next)}
+              />
+            </FieldRow>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Library</h2>
+          <Panel>
+            <FieldRow
+              label="Media folders"
+              hint={`${roots.roots.length} folders · ${totalItems} items indexed · files are never moved`}
+            >
+              <Link to="/library" className={buttonClass("glass")} data-focusable="true">
+                Review folders
+              </Link>
+            </FieldRow>
+            <FieldRow
+              label="Downloads"
+              hint={
+                settings.optionalServices.downloadsEnabled
+                  ? "The download service is enabled."
+                  : "The download service is disabled in this build."
+              }
+            >
+              <Link to="/downloads" className={buttonClass("glass")} data-focusable="true">
+                Open downloads
+              </Link>
+            </FieldRow>
+            <FieldRow
+              label="Add a folder"
+              hint="Point the scanner at another folder. It only reads."
+            >
+              <Link to="/setup" className={buttonClass("glass")} data-focusable="true">
+                Run setup
+              </Link>
+            </FieldRow>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Profile</h2>
+          <Panel>
+            <FieldRow
+              label={activeProfile ? activeProfile.name : "No profile selected"}
+              hint="Profiles are stored in the backend settings document."
+            >
+              <Link to="/profiles" className={buttonClass("glass")} data-focusable="true">
+                Switch profile
+              </Link>
+            </FieldRow>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Diagnostics</h2>
+          <Panel>
+            <FieldRow label="Library service" hint={runtimeLabel(settings.diagnostics.backendStatus)}>
+              <span>{runtimeLabel(settings.diagnostics.backendStatus)}</span>
+            </FieldRow>
+            <FieldRow label="Playback runtime" hint={runtimeLabel(settings.diagnostics.runtimeStatus)}>
+              <span>{runtimeLabel(settings.diagnostics.runtimeStatus)}</span>
+            </FieldRow>
+            <FieldRow label="Metadata provider" hint="Artwork falls back to the bundled local set.">
+              <span>{settings.optionalServices.metadataProvider ?? "None configured"}</span>
+            </FieldRow>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Remote & keyboard</h2>
+          <Panel tone="quiet">
+            <dl className={styles.keys}>
+              <div>
+                <dt>Arrow keys</dt>
+                <dd>Move focus between titles, rows and controls.</dd>
+              </div>
+              <div>
+                <dt>Enter</dt>
+                <dd>Open the focused title or press the focused button.</dd>
+              </div>
+              <div>
+                <dt>Space</dt>
+                <dd>Play or pause while a title is playing.</dd>
+              </div>
+              <div>
+                <dt>/</dt>
+                <dd>Jump to search from anywhere in the app.</dd>
+              </div>
+            </dl>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>About</h2>
+          <Panel tone="quiet">
+            <p className={styles.about}>
+              MEDIA HAVEN runs on this machine and nowhere else. The interface
+              talks to the local service over a signed loopback connection.
+              There is no account, no subscription and no telemetry.
             </p>
-            <div className={styles.rows}>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Network access</div>
-                  <div className={styles.rowHint}>
-                    Optional metadata providers are the only outbound requests.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <StatusPill tone="offline">Local only</StatusPill>
-                </div>
-              </div>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Metadata provider</div>
-                  <div className={styles.rowHint}>
-                    Optional. The library works fully without one.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <span className={styles.value}>
-                    {data.optionalServices.metadataProvider ?? "None configured"}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.panel} id="library">
-            <h2 className={styles.panelTitle}>Library folders</h2>
-            <p className={styles.panelBody}>
-              Folders you have chosen to read. They are mounted read-only, so
-              MEDIA_HAVEN cannot change the files inside them.
-            </p>
-            <div className={styles.rows}>
-              {data.libraryRoots.map((root) => (
-                <div className={styles.row} key={root.id}>
-                  <div>
-                    <div className={styles.rowLabel}>{root.displayName}</div>
-                    <div className={styles.rowHint}>
-                      {root.itemCount.toLocaleString()} items
-                    </div>
-                  </div>
-                  <div className={styles.rowControl}>
-                    <StatusPill
-                      tone={
-                        root.status === "ok"
-                          ? "available"
-                          : root.status === "offline"
-                            ? "offline"
-                            : "missing"
-                      }
-                    >
-                      {root.status === "ok"
-                        ? "Available"
-                        : root.status === "scanning"
-                          ? "Scanning"
-                          : root.status === "offline"
-                            ? "Offline"
-                            : "Error"}
-                    </StatusPill>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className={styles.panel} id="playback">
-            <h2 className={styles.panelTitle}>Playback</h2>
-            <div className={styles.rows}>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Preferred language</div>
-                  <div className={styles.rowHint}>
-                    Used to pick audio and subtitle tracks automatically.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <select
-                    className={styles.select}
-                    aria-label="Preferred language"
-                    value={data.playback.preferredLanguage}
-                    onChange={(event) =>
-                      void apply({
-                        playback: { preferredLanguage: event.target.value },
-                      })
-                    }
-                  >
-                    <option value="en">English</option>
-                    <option value="de">German</option>
-                    <option value="fr">French</option>
-                    <option value="es">Spanish</option>
-                    <option value="it">Italian</option>
-                  </select>
-                </div>
-              </div>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Subtitle size</div>
-                  <div className={styles.rowHint}>
-                    Subtitles never render below 16 px in TV mode.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <select
-                    className={styles.select}
-                    aria-label="Subtitle size"
-                    value={data.playback.subtitleSize}
-                    onChange={(event) =>
-                      void apply({
-                        playback: {
-                          subtitleSize: event.target.value as AppSettings["playback"]["subtitleSize"],
-                        },
-                      })
-                    }
-                  >
-                    <option value="small">Small</option>
-                    <option value="medium">Medium</option>
-                    <option value="large">Large</option>
-                  </select>
-                </div>
-              </div>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Autoplay next episode</div>
-                  <div className={styles.rowHint}>
-                    Off by default. A prompt appears first when it is on.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <Toggle
-                    label="Autoplay next episode"
-                    checked={data.playback.autoplayNext}
-                    onChange={(next) =>
-                      void apply({ playback: { autoplayNext: next } })
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.panel} id="storage">
-            <h2 className={styles.panelTitle}>Storage</h2>
-            <div className={styles.rows}>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Managed media location</div>
-                  <div className={styles.rowHint}>
-                    Only used by optional features that download.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <span className={styles.value}>
-                    {data.storage.rootDisplayName}
-                  </span>
-                </div>
-              </div>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Storage limit</div>
-                  <div className={styles.rowHint}>
-                    Nothing is deleted automatically. Cleanup always asks
-                    first.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <span className={styles.value}>
-                    {formatBytes(data.storage.limitBytes)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.panel} id="services">
-            <h2 className={styles.panelTitle}>Optional services</h2>
-            <p className={styles.panelBody}>
-              These are separate, opt-in integrations. MEDIA_HAVEN ships no
-              content sources and works without any of them.
-            </p>
-            <div className={styles.rows}>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Download provider</div>
-                  <div className={styles.rowHint}>
-                    Requires your own lawful provider configuration.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <StatusPill
-                    tone={data.optionalServices.downloadsEnabled ? "available" : "offline"}
-                  >
-                    {data.optionalServices.downloadsEnabled
-                      ? "Enabled"
-                      : "Disabled"}
-                  </StatusPill>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.panel} id="diagnostics">
-            <h2 className={styles.panelTitle}>Diagnostics</h2>
-            <div className={styles.rows}>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Container runtime</div>
-                  <div className={styles.rowHint}>
-                    The isolated workspace the backend runs in.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <StatusPill tone={runtimeTone}>{runtime.state}</StatusPill>
-                </div>
-              </div>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Backend</div>
-                  <div className={styles.rowHint}>
-                    The service that holds your library and watch history.
-                  </div>
-                </div>
-                <div className={styles.rowControl}>
-                  <StatusPill tone={backendTone}>{backend.state}</StatusPill>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className={styles.panel} id="about">
-            <h2 className={styles.panelTitle}>About</h2>
-            <p className={styles.panelBody}>
-              MEDIA_HAVEN is free and open source. Third-party licences for
-              everything bundled with the installer are listed here and are
-              bundled with the release.
-            </p>
-            <div className={styles.rows}>
-              <div className={styles.row}>
-                <div>
-                  <div className={styles.rowLabel}>Version</div>
-                </div>
-                <div className={styles.rowControl}>
-                  <span className={styles.value}>0.0.0 (pre-implementation)</span>
-                </div>
-              </div>
-            </div>
-          </section>
-        </div>
+            <p className={styles.version}>Version 0.0.0 · Local-first build</p>
+          </Panel>
+        </section>
       </div>
-    </>
+    </div>
   );
 }

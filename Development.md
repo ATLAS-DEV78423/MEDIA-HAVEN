@@ -6,8 +6,8 @@
 > **Audience:** AI coding agents, maintainers, testers, and
 > contributors\
 > **Primary platform:** Windows 11 x64\
-> **Secondary platform:** Windows 10 x64 only where the host OS and
-> required virtualization features remain supported\
+> **Support claim (O-02, decided 2026-11-18):** Windows 11 x64 only for v1.
+> Windows 10 is not a supported target.\
 > **Product principle:** A free, local-first media appliance with one unified TV-first application, a Docker-managed backend and media-inspection boundary, and no AI runtime dependency.
 
 ------------------------------------------------------------------------

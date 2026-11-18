@@ -1,0 +1,211 @@
+.wash {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: calc(var(--z-nav) - 1);
+  height: calc(var(--nav-top) * 2 + var(--nav-h) + var(--s-8));
+  background: linear-gradient(
+    180deg,
+    var(--black-72) 0%,
+    var(--black-38) 46%,
+    var(--scrim-0) 100%
+  );
+  pointer-events: none;
+}
+
+.header {
+  position: fixed;
+  inset-block-start: var(--nav-top);
+  inset-inline: var(--safe-x);
+  z-index: var(--z-nav);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  pointer-events: none;
+}
+
+.header > * {
+  pointer-events: auto;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--s-2) var(--s-2);
+  border-radius: var(--r-pill);
+  transition: opacity var(--t-base) var(--ease-out);
+}
+
+.brand:hover {
+  opacity: 0.7;
+}
+
+.brandMark {
+  font-family: var(--font-display);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wordmark);
+  color: var(--paper-72);
+  white-space: nowrap;
+}
+
+.pill {
+  position: absolute;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  width: max-content;
+  max-width: calc(100vw - (var(--safe-x) * 2));
+  padding: var(--nav-pad);
+  border-radius: var(--r-pill);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--hairline) solid var(--glass-edge);
+  box-shadow: var(--shadow-nav), var(--glass-inner);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.link {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: var(--nav-item-y) var(--nav-item-x);
+  border-radius: var(--r-pill);
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  color: var(--paper-72);
+  white-space: nowrap;
+  transition:
+    background var(--t-base) var(--ease-out),
+    color var(--t-base) var(--ease-out),
+    transform var(--t-base) var(--ease-out);
+}
+
+.link:hover {
+  background: var(--nav-hover);
+  color: var(--paper);
+}
+
+.link:focus {
+  transform: scale(1.02);
+  color: var(--paper);
+  background: var(--nav-hover);
+}
+
+.linkActive {
+  background: var(--nav-active-bg);
+  color: var(--nav-active-ink);
+  font-weight: var(--weight-semibold);
+}
+
+.linkActive:hover,
+.linkActive:focus {
+  background: var(--nav-active-bg);
+  color: var(--nav-active-ink);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.action {
+  display: grid;
+  place-items: center;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  border-radius: var(--r-pill);
+  font-size: var(--icon-size);
+  color: var(--paper-80);
+  background: var(--glass-bg-quiet);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  box-shadow: var(--glass-inner-quiet);
+  transition:
+    background var(--t-base) var(--ease-out),
+    color var(--t-base) var(--ease-out),
+    transform var(--t-base) var(--ease-out);
+}
+
+.action:hover {
+  background: var(--nav-hover);
+  color: var(--paper);
+}
+
+.action:focus {
+  transform: scale(1.06);
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: var(--avatar-sm);
+  height: var(--avatar-sm);
+  border-radius: var(--r-pill);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.04em;
+  color: var(--paper);
+  border: var(--hairline) solid var(--glass-edge-bright);
+  box-shadow: var(--glass-inner-quiet);
+  transition: transform var(--t-base) var(--ease-out);
+}
+
+.avatar:hover {
+  transform: scale(1.05);
+}
+
+.avatar:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+  transform: scale(1.06);
+}
+
+.tone1 {
+  background: var(--tone-1);
+}
+
+.tone2 {
+  background: var(--tone-2);
+}
+
+.tone3 {
+  background: var(--tone-3);
+}
+
+.tone4 {
+  background: var(--tone-4);
+}
+
+@media (max-width: 78em) {
+  .brand {
+    display: none;
+  }
+
+  .header {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 46em) {
+  .pill {
+    inset-inline-start: 0;
+    transform: none;
+    max-width: calc(100vw - var(--icon-btn) * 2 - var(--safe-x) * 2 - var(--s-6));
+  }
+
+  .link {
+    font-size: var(--text-small);
+    padding-inline: var(--s-3);
+  }
+}

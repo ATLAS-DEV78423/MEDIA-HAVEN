@@ -1,0 +1,49 @@
+.shelf {
+  display: flex;
+  flex-direction: column;
+  gap: var(--shelf-head-gap);
+}
+
+.shelf + .shelf {
+  margin-top: var(--row-gap);
+}
+
+.head {
+  padding-inline: var(--safe-x);
+  text-align: center;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: var(--text-title);
+  line-height: var(--leading-title);
+  letter-spacing: var(--tracking-title);
+  font-weight: var(--weight-semibold);
+  color: var(--paper);
+  text-wrap: balance;
+}
+
+.caption {
+  margin-top: var(--s-2);
+  font-size: var(--text-small);
+  color: var(--paper-54);
+}
+
+.track {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--card-gap);
+  padding-inline: var(--safe-x);
+  padding-block: var(--s-3) var(--s-4);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-padding-inline: var(--safe-x);
+  scroll-behavior: smooth;
+}
+
+.empty {
+  padding-inline: var(--safe-x);
+  text-align: center;
+  font-size: var(--text-small);
+  color: var(--paper-54);
+}

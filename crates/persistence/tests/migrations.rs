@@ -16,12 +16,11 @@ async fn migrations_create_schema_and_enable_foreign_keys() {
 
     let pool = pool::connect_path(&db).await.expect("connect and migrate");
 
-    let media_items = sqlx::query(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'media_items'",
-    )
-    .fetch_optional(&pool)
-    .await
-    .expect("query sqlite_master");
+    let media_items =
+        sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'media_items'")
+            .fetch_optional(&pool)
+            .await
+            .expect("query sqlite_master");
     assert!(media_items.is_some(), "media_items table was not created");
 
     for table in [
@@ -31,13 +30,11 @@ async fn migrations_create_schema_and_enable_foreign_keys() {
         "queue_items",
         "settings",
     ] {
-        let found = sqlx::query(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        )
-        .bind(table)
-        .fetch_optional(&pool)
-        .await
-        .expect("query sqlite_master");
+        let found = sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .bind(table)
+            .fetch_optional(&pool)
+            .await
+            .expect("query sqlite_master");
         assert!(found.is_some(), "{table} table was not created");
     }
 
@@ -71,7 +68,7 @@ async fn migrations_are_idempotent() {
         .fetch_one(&second)
         .await
         .expect("read migration bookkeeping");
-    assert_eq!(applied, 1, "migrations were re-applied instead of skipped");
+    assert_eq!(applied, 2, "migrations were re-applied instead of skipped");
 
     let kind_column: String =
         sqlx::query("SELECT type FROM pragma_table_info('media_items') WHERE name = 'kind'")

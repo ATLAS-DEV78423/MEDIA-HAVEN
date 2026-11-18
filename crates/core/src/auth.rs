@@ -54,17 +54,14 @@ pub fn body_digest(body: &[u8]) -> String {
 
 /// The exact string that is signed for a request.
 pub fn canonical_message(timestamp: &str, method: &str, path: &str, body: &[u8]) -> String {
-    format!(
-        "{timestamp}\n{method}\n{path}\n{}",
-        body_digest(body)
-    )
+    format!("{timestamp}\n{method}\n{path}\n{}", body_digest(body))
 }
 
 /// Lowercase hex HMAC-SHA256 of the canonical message, keyed with the token.
 pub fn sign(token: &str, timestamp: &str, method: &str, path: &str, body: &[u8]) -> String {
     // HMAC accepts keys of any length, so this cannot fail.
-    let mut mac = HmacSha256::new_from_slice(token.as_bytes())
-        .expect("HMAC-SHA256 accepts any key length");
+    let mut mac =
+        HmacSha256::new_from_slice(token.as_bytes()).expect("HMAC-SHA256 accepts any key length");
     mac.update(canonical_message(timestamp, method, path, body).as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
@@ -103,7 +100,11 @@ fn unix_now() -> Result<i64, AppError> {
         })?
         .as_secs();
     i64::try_from(seconds).map_err(|_| {
-        AppError::new(AppErrorCode::Internal, "System clock is out of range.", true)
+        AppError::new(
+            AppErrorCode::Internal,
+            "System clock is out of range.",
+            true,
+        )
     })
 }
 
@@ -112,11 +113,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 }
 
 /// Authenticate the request, then hand the untouched body to the handler.
-pub async fn require_auth(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Response {
+pub async fn require_auth(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
 
     let result = authorize(
@@ -170,7 +167,10 @@ async fn authorize(
     })?;
 
     let expected = sign(token, timestamp, method, path, &bytes);
-    if !constant_time_eq(expected.as_bytes(), signature.trim().to_ascii_lowercase().as_bytes()) {
+    if !constant_time_eq(
+        expected.as_bytes(),
+        signature.trim().to_ascii_lowercase().as_bytes(),
+    ) {
         return Err(unauthorized());
     }
 

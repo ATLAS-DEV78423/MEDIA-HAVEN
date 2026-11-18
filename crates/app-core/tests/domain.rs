@@ -9,7 +9,10 @@ fn app_error_code_serializes_to_frontend_strings() {
         (AppErrorCode::BackendUnreachable, "backend_unreachable"),
         (AppErrorCode::CredentialMismatch, "credential_mismatch"),
         (AppErrorCode::LibraryRootOffline, "library_root_offline"),
-        (AppErrorCode::LibraryRootUnreadable, "library_root_unreadable"),
+        (
+            AppErrorCode::LibraryRootUnreadable,
+            "library_root_unreadable",
+        ),
         (AppErrorCode::MediaUnsupported, "media_unsupported"),
         (AppErrorCode::MediaMissing, "media_missing"),
         (AppErrorCode::StorageFull, "storage_full"),
@@ -32,9 +35,7 @@ fn media_availability_missing_file_carries_last_seen_at() {
     assert_eq!(v["state"], "missing-file");
     assert_eq!(v["lastSeenAt"], "2026-01-01T00:00:00Z");
 
-    let av2 = MediaAvailability::MissingFile {
-        last_seen_at: None,
-    };
+    let av2 = MediaAvailability::MissingFile { last_seen_at: None };
     let v2 = serde_json::to_value(&av2).unwrap();
     assert_eq!(v2["state"], "missing-file");
     assert!(v2["lastSeenAt"].is_null());

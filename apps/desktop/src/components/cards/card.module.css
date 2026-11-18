@@ -1,0 +1,169 @@
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  width: var(--card-w);
+  flex: 0 0 auto;
+  border-radius: var(--r-card);
+  transition:
+    transform var(--t-base) var(--ease-out),
+    opacity var(--t-base) var(--ease-out);
+}
+
+.wide {
+  width: var(--card-w-wide);
+}
+
+.fill {
+  width: 100%;
+}
+
+.artWrap {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--ink-700);
+  box-shadow: var(--shadow-card);
+  transition:
+    transform var(--t-base) var(--ease-out),
+    box-shadow var(--t-base) var(--ease-out);
+}
+
+.art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--t-slow) var(--ease-out);
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim-card);
+  opacity: 0.55;
+  transition: opacity var(--t-base) var(--ease-out);
+}
+
+.badge {
+  position: absolute;
+  inset-block-start: var(--s-3);
+  inset-inline-start: var(--s-3);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-xs);
+  background: var(--black-52);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-90);
+}
+
+.play {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  display: grid;
+  place-items: center;
+  width: calc(var(--icon-btn) * 1.16);
+  height: calc(var(--icon-btn) * 1.16);
+  border-radius: var(--r-pill);
+  background: var(--black-42);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: var(--hairline) solid var(--glass-edge);
+  color: var(--paper);
+  font-size: var(--icon-size);
+  opacity: 0;
+  transform: scale(0.86);
+  transition:
+    opacity var(--t-base) var(--ease-out),
+    transform var(--t-base) var(--ease-spring);
+}
+
+.progressWrap {
+  position: absolute;
+  inset-inline: var(--s-3);
+  inset-block-end: var(--s-3);
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding-inline: var(--s-1);
+}
+
+.title {
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  color: var(--paper-90);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--t-base) var(--ease-out);
+}
+
+.sub {
+  font-size: var(--text-small);
+  color: var(--paper-54);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card:hover .artWrap {
+  transform: translateY(calc(var(--focus-lift) * -0.4)) scale(1.012);
+  box-shadow: var(--shadow-card-focus);
+}
+
+.card:hover .art {
+  transform: scale(1.04);
+}
+
+.card:hover .scrim {
+  opacity: 0.35;
+}
+
+.card:hover .play {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.card:focus {
+  z-index: 3;
+}
+
+.card:focus .artWrap {
+  transform: scale(var(--focus-scale));
+  box-shadow:
+    0 0 0 var(--ring-w) var(--paper),
+    var(--shadow-card-focus);
+}
+
+.card:focus .art {
+  transform: scale(1.05);
+}
+
+.card:focus .scrim {
+  opacity: 0.3;
+}
+
+.card:focus .play {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.card:focus .title {
+  color: var(--paper);
+}
+
+.card:active .artWrap {
+  transform: scale(1.01);
+}

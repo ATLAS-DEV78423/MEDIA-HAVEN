@@ -17,6 +17,11 @@ const MEDIA_COLUMNS: &str = "id, kind, title, year, synopsis, runtime_minutes, g
 
 const MAX_LIMIT: i64 = 200;
 
+/// Muted profile palette. Mirrors the `--tone-*` presentation tokens so a
+/// profile keeps the same colour whichever layer supplies it, but the stored
+/// value is a real hex colour rather than a CSS variable.
+const PROFILE_PALETTE: [&str; 4] = ["#5f7183", "#7d6a7a", "#63786c", "#82755f"];
+
 pub struct SqliteLibraryRepository {
     pool: SqlitePool,
 }
@@ -306,17 +311,17 @@ impl LibraryRepository for SqliteLibraryRepository {
             .iter()
             .map(|row| EpisodeSummary {
                 id: row.id.clone(),
-                series_id: row.series_id.clone().unwrap_or_else(|| series_id.to_string()),
+                series_id: row
+                    .series_id
+                    .clone()
+                    .unwrap_or_else(|| series_id.to_string()),
                 series_title: series.title.clone(),
                 season_number: row.season_number.unwrap_or(season_number),
                 episode_number: row.episode_number.unwrap_or(0),
                 title: row.title.clone(),
                 runtime_minutes: row.runtime_minutes,
                 artwork: vec![],
-                availability: availability(
-                    &row.availability_state,
-                    &row.availability_last_seen,
-                ),
+                availability: availability(&row.availability_state, &row.availability_last_seen),
                 progress: progress(row),
                 next_up: row.next_up != 0,
             })
@@ -334,7 +339,8 @@ impl LibraryRepository for SqliteLibraryRepository {
             });
         }
 
-        let mut sql = format!("SELECT {MEDIA_COLUMNS} FROM media_items WHERE title LIKE ? ESCAPE '\\'");
+        let mut sql =
+            format!("SELECT {MEDIA_COLUMNS} FROM media_items WHERE title LIKE ? ESCAPE '\\'");
         if !query.kinds.is_empty() {
             let placeholders = vec!["?"; query.kinds.len()];
             sql.push_str(&format!(" AND kind IN ({})", placeholders.join(",")));
@@ -376,6 +382,174 @@ impl LibraryRepository for SqliteLibraryRepository {
         })
     }
 
+    async fn root_add(&self, display_name: &str, path: &str) -> Result<LibraryRoot, AppError> {
+        let id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO library_roots (id, display_name, path, item_count, status) VALUES (?, ?, ?, 0, 'ok')",
+        )
+        .bind(&id)
+        .bind(display_name)
+        .bind(path)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(LibraryRoot {
+            id,
+            display_name: display_name.to_string(),
+            item_count: 0,
+            status: LibraryRootStatus::Ok,
+            last_scan_at: None,
+            error_message: None,
+            path: Some(path.to_string()),
+        })
+    }
+
+    async fn root_remove(&self, id: &str) -> Result<(), AppError> {
+        // Remove root + its media items (cascade via root_id SET NULL keeps
+        // media rows but detaches them; we explicitly delete to keep tidy).
+        sqlx::query("DELETE FROM media_items WHERE root_id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(Self::internal)?;
+        sqlx::query("DELETE FROM library_roots WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(Self::internal)?;
+        Ok(())
+    }
+
+    async fn root_update(
+        &self,
+        id: &str,
+        item_count: i64,
+        status: LibraryRootStatus,
+        last_scan_at: Option<&str>,
+        error_message: Option<&str>,
+    ) -> Result<(), AppError> {
+        let status_str = root_status_to_str(status);
+        sqlx::query(
+            "UPDATE library_roots SET item_count = ?, status = ?, last_scan_at = ?, error_message = ? WHERE id = ?",
+        )
+        .bind(item_count)
+        .bind(status_str)
+        .bind(last_scan_at)
+        .bind(error_message)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(())
+    }
+
+    async fn media_replace_for_root(
+        &self,
+        root_id: &str,
+        items: &[MediaUpsert],
+    ) -> Result<(), AppError> {
+        // An id-less item would create a duplicate row on every scan, so reject
+        // the batch before anything is written.
+        if let Some(item) = items.iter().find(|item| item.id.is_empty()) {
+            return Err(AppError::new(
+                AppErrorCode::InvalidRequest,
+                format!("media item {:?} has no stable id", item.title),
+                false,
+            ));
+        }
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+
+        // Drop the previous file rows for this root in one pass; they are
+        // rewritten below, so rescans do not accumulate duplicates.
+        sqlx::query(
+            "DELETE FROM media_files \
+             WHERE media_id IN (SELECT id FROM media_items WHERE root_id = ?)",
+        )
+        .bind(root_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+
+        for item in items {
+            let metadata = item.metadata.as_ref();
+            let genres = metadata
+                .map(|m| serde_json::to_string(&m.genres).unwrap_or_else(|_| "[]".to_string()))
+                .unwrap_or_else(|| "[]".to_string());
+            // COALESCE keeps what a previous scan or the user already supplied:
+            // a file with no sidecar must not blank its own metadata on rescan.
+            sqlx::query(
+                "INSERT INTO media_items \
+                 (id, kind, title, year, synopsis, runtime_minutes, genres, root_id, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                 ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, title = excluded.title, \
+                 year = COALESCE(excluded.year, media_items.year), \
+                 synopsis = COALESCE(excluded.synopsis, media_items.synopsis), \
+                 runtime_minutes = COALESCE(excluded.runtime_minutes, media_items.runtime_minutes), \
+                 genres = CASE WHEN excluded.genres = '[]' THEN media_items.genres \
+                 ELSE excluded.genres END, \
+                 root_id = excluded.root_id, updated_at = excluded.updated_at",
+            )
+            .bind(&item.id)
+            .bind(kind_str(item.kind))
+            .bind(&item.title)
+            .bind(metadata.and_then(|m| m.year))
+            .bind(metadata.and_then(|m| m.synopsis.clone()))
+            .bind(metadata.and_then(|m| m.runtime_minutes))
+            .bind(&genres)
+            .bind(root_id)
+            .bind(&now)
+            .bind(&now)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::internal)?;
+
+            if let Some(path) = &item.path {
+                sqlx::query(
+                    "INSERT INTO media_files (id, media_id, size_bytes, hash, path, created_at) \
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&item.id)
+                .bind(item.size_bytes)
+                .bind(&item.hash)
+                .bind(path)
+                .bind(&now)
+                .execute(&mut *tx)
+                .await
+                .map_err(Self::internal)?;
+            }
+        }
+
+        // Rows for this root that the scan no longer sees.
+        let incoming: std::collections::HashSet<&str> =
+            items.iter().map(|item| item.id.as_str()).collect();
+        let existing: Vec<String> = sqlx::query("SELECT id FROM media_items WHERE root_id = ?")
+            .bind(root_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(Self::internal)?
+            .iter()
+            .map(|row| row.get("id"))
+            .collect();
+        let stale: Vec<&String> = existing
+            .iter()
+            .filter(|id| !incoming.contains(id.as_str()))
+            .collect();
+        for chunk in stale.chunks(500) {
+            let placeholders = vec!["?"; chunk.len()].join(",");
+            let sql = format!("DELETE FROM media_items WHERE id IN ({placeholders})");
+            let mut query = sqlx::query(&sql);
+            for id in chunk {
+                query = query.bind(*id);
+            }
+            query.execute(&mut *tx).await.map_err(Self::internal)?;
+        }
+
+        tx.commit().await.map_err(Self::internal)
+    }
+
     async fn watchlist(&self) -> Result<WatchlistScreen, AppError> {
         let rows = sqlx::query(
             "SELECT id, media_id, position, added_at FROM watchlist_items ORDER BY position ASC",
@@ -400,11 +574,12 @@ impl LibraryRepository for SqliteLibraryRepository {
     }
 
     async fn queue(&self) -> Result<QueueScreen, AppError> {
-        let rows =
-            sqlx::query("SELECT id, media_id, position, state FROM queue_items ORDER BY position ASC")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(Self::internal)?;
+        let rows = sqlx::query(
+            "SELECT id, media_id, position, state FROM queue_items ORDER BY position ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Self::internal)?;
 
         let mut entries = Vec::with_capacity(rows.len());
         for row in &rows {
@@ -444,6 +619,18 @@ impl LibraryRepository for SqliteLibraryRepository {
             .and_then(|data| serde_json::from_str::<AppSettings>(&data).ok())
             .unwrap_or_else(default_settings);
 
+        if settings.profiles.is_empty() {
+            settings.profiles = vec![Profile {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "You".to_string(),
+                avatar_color: "#E50914".to_string(),
+                created_at: now_iso(),
+            }];
+        }
+        // Rows written before colours were normalised may hold non-colour
+        // values; repair them on read so the API only returns hex colours.
+        normalise_profiles(&mut settings.profiles);
+
         // Roots are derived from the roots table so settings and the library
         // screen cannot disagree.
         settings.library_roots = self.load_roots().await?;
@@ -472,9 +659,17 @@ impl LibraryRepository for SqliteLibraryRepository {
                 settings.storage.limit_bytes = Some(value);
             }
         }
+        if let Some(profiles) = &patch.profiles {
+            settings.profiles = profiles.clone();
+        }
+        normalise_profiles(&mut settings.profiles);
 
         let encoded = serde_json::to_string(&settings).map_err(|e| {
-            AppError::new(AppErrorCode::Internal, format!("settings encode failed: {e}"), false)
+            AppError::new(
+                AppErrorCode::Internal,
+                format!("settings encode failed: {e}"),
+                false,
+            )
         })?;
         sqlx::query(
             "INSERT INTO settings (id, data) VALUES (1, ?) \
@@ -498,17 +693,23 @@ impl LibraryRepository for SqliteLibraryRepository {
             .await?
             .ok_or_else(|| AppError::new(AppErrorCode::NotFound, "media not found", false))?;
 
-        if let MediaAvailability::Available = availability(
-            &row.availability_state,
-            &row.availability_last_seen,
-        ) {
+        if let MediaAvailability::Available =
+            availability(&row.availability_state, &row.availability_last_seen)
+        {
             // Recording the start position is what makes Continue Watching
             // populate; it is not a "completed" signal.
             let duration = row
                 .progress_duration
                 .or_else(|| row.runtime_minutes.map(|m| m as f64 * 60.0))
                 .unwrap_or(0.0);
-            let start = request.start_position_seconds.unwrap_or(0.0).max(0.0);
+            // With no explicit start, continue from the stored checkpoint. A
+            // null start used to reset a resume position to zero, which made
+            // every Play from a shelf lose its place.
+            let start = request
+                .start_position_seconds
+                .or(row.progress_position)
+                .unwrap_or(0.0)
+                .max(0.0);
             sqlx::query(
                 "UPDATE media_items SET progress_position = ?, progress_duration = ?, \
                  progress_updated_at = ?, progress_completed = 0, updated_at = ? WHERE id = ?",
@@ -546,14 +747,49 @@ impl LibraryRepository for SqliteLibraryRepository {
         Ok(())
     }
 
+    async fn playback_checkpoint(
+        &self,
+        request: &PlaybackCheckpointRequest,
+    ) -> Result<(), AppError> {
+        let row = self.fetch_row(&request.media_id).await?;
+        if row.is_none() {
+            return Err(AppError::new(
+                AppErrorCode::MediaMissing,
+                "media not found",
+                false,
+            ));
+        }
+        let position = request.position_seconds.max(0.0);
+        let duration = request.duration_seconds.unwrap_or(0.0).max(0.0);
+        let now = now_iso();
+        sqlx::query(
+            "UPDATE media_items SET progress_position = ?, progress_duration = ?, \
+             progress_updated_at = ?, progress_completed = 0, updated_at = ? WHERE id = ?",
+        )
+        .bind(position)
+        .bind(duration)
+        .bind(&now)
+        .bind(&now)
+        .bind(&request.media_id)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(())
+    }
+
     async fn watchlist_add(&self, media_id: &str) -> Result<(), AppError> {
         if self.fetch_row(media_id).await?.is_none() {
-            return Err(AppError::new(AppErrorCode::NotFound, "media not found", false));
+            return Err(AppError::new(
+                AppErrorCode::NotFound,
+                "media not found",
+                false,
+            ));
         }
-        let next: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position), 0) + 1 FROM watchlist_items")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(Self::internal)?;
+        let next: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(position), 0) + 1 FROM watchlist_items")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(Self::internal)?;
         sqlx::query(
             "INSERT INTO watchlist_items (id, media_id, position, added_at) VALUES (?, ?, ?, ?) \
              ON CONFLICT(media_id) DO NOTHING",
@@ -593,12 +829,17 @@ impl LibraryRepository for SqliteLibraryRepository {
 
     async fn queue_add(&self, media_id: &str) -> Result<(), AppError> {
         if self.fetch_row(media_id).await?.is_none() {
-            return Err(AppError::new(AppErrorCode::NotFound, "media not found", false));
+            return Err(AppError::new(
+                AppErrorCode::NotFound,
+                "media not found",
+                false,
+            ));
         }
-        let next: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position), 0) + 1 FROM queue_items")
-            .fetch_one(&self.pool)
-            .await
-            .map_err(Self::internal)?;
+        let next: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(position), 0) + 1 FROM queue_items")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(Self::internal)?;
         sqlx::query(
             "INSERT INTO queue_items (id, media_id, position, state) VALUES (?, ?, ?, 'pending')",
         )
@@ -638,7 +879,7 @@ impl LibraryRepository for SqliteLibraryRepository {
 impl SqliteLibraryRepository {
     async fn load_roots(&self) -> Result<Vec<LibraryRoot>, AppError> {
         let rows = sqlx::query(
-            "SELECT id, display_name, item_count, status, last_scan_at, error_message \
+            "SELECT id, display_name, item_count, status, last_scan_at, error_message, path \
              FROM library_roots ORDER BY display_name COLLATE NOCASE ASC",
         )
         .fetch_all(&self.pool)
@@ -654,16 +895,16 @@ impl SqliteLibraryRepository {
                 status: root_status_from_str(&row.get::<String, _>("status")),
                 last_scan_at: row.get("last_scan_at"),
                 error_message: row.get("error_message"),
+                path: row.get("path"),
             })
             .collect())
     }
 
     async fn load_counts(&self) -> Result<LibraryCounts, AppError> {
-        let rows =
-            sqlx::query("SELECT kind, COUNT(*) AS total FROM media_items GROUP BY kind")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(Self::internal)?;
+        let rows = sqlx::query("SELECT kind, COUNT(*) AS total FROM media_items GROUP BY kind")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(Self::internal)?;
 
         let mut counts = LibraryCounts {
             movies: 0,
@@ -684,6 +925,24 @@ impl SqliteLibraryRepository {
 
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
+}
+
+/// Guarantees the settings document only stores real colours: accepted hex is
+/// lower-cased and anything else is assigned from the palette by position.
+fn normalise_profiles(profiles: &mut [Profile]) {
+    for (index, profile) in profiles.iter_mut().enumerate() {
+        let value = profile.avatar_color.trim();
+        profile.avatar_color = if is_hex_colour(value) {
+            value.to_ascii_lowercase()
+        } else {
+            PROFILE_PALETTE[index % PROFILE_PALETTE.len()].to_string()
+        };
+    }
+}
+
+fn is_hex_colour(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
 fn normalise_limit(limit: i64) -> i64 {
@@ -721,12 +980,14 @@ fn availability(state: &str, last_seen: &Option<String>) -> MediaAvailability {
 }
 
 fn progress(row: &MediaItemRow) -> Option<PlaybackProgress> {
-    row.progress_updated_at.as_ref().map(|updated_at| PlaybackProgress {
-        position_seconds: row.progress_position.unwrap_or(0.0),
-        duration_seconds: row.progress_duration.unwrap_or(0.0),
-        updated_at: updated_at.clone(),
-        completed: row.progress_completed != 0,
-    })
+    row.progress_updated_at
+        .as_ref()
+        .map(|updated_at| PlaybackProgress {
+            position_seconds: row.progress_position.unwrap_or(0.0),
+            duration_seconds: row.progress_duration.unwrap_or(0.0),
+            updated_at: updated_at.clone(),
+            completed: row.progress_completed != 0,
+        })
 }
 
 fn row_to_summary(row: &MediaItemRow) -> MediaSummary {
@@ -746,6 +1007,15 @@ fn row_to_summary(row: &MediaItemRow) -> MediaSummary {
 
 fn parse_list(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
+}
+
+fn root_status_to_str(value: LibraryRootStatus) -> &'static str {
+    match value {
+        LibraryRootStatus::Ok => "ok",
+        LibraryRootStatus::Scanning => "scanning",
+        LibraryRootStatus::Offline => "offline",
+        LibraryRootStatus::Error => "error",
+    }
 }
 
 fn root_status_from_str(value: &str) -> LibraryRootStatus {
@@ -803,5 +1073,11 @@ fn default_settings() -> AppSettings {
             runtime_status: RuntimeStatus::Unknown,
             backend_status: RuntimeStatus::Ready,
         },
+        profiles: vec![Profile {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: "You".to_string(),
+            avatar_color: "#E50914".to_string(),
+            created_at: now_iso(),
+        }],
     }
 }

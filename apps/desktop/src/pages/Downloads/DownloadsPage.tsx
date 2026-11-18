@@ -1,120 +1,156 @@
-import type { DownloadsScreen } from "@/types/media";
-import { getCommands } from "@/services/commands";
-import { useCommand } from "@/hooks/useCommand";
-import { PageHeader, EmptyState, ErrorState } from "@/components/feedback/States";
-import { ProgressBar, StatusPill } from "@/components/cards/ProgressBar";
-import styles from "@/components/feedback/page.module.css";
+import { Link } from "react-router-dom";
+
+import { ProgressBar, buttonClass } from "@/components/ui/Controls";
+import { EmptyState, PageHeader, Panel } from "@/components/ui/Surfaces";
+import { artFor } from "@/data/catalog";
+import { useAppState } from "@/state/AppState";
+import styles from "./downloads.module.css";
+
+const bytes = (value: number): string => {
+  if (value <= 0) return "0 GB";
+  const gigabytes = value / 1_000_000_000;
+  if (gigabytes >= 1000) return `${(gigabytes / 1000).toFixed(1)} TB`;
+  return `${gigabytes.toFixed(1)} GB`;
+};
+
+const stateLabel = (state: string): string => {
+  switch (state) {
+    case "available":
+      return "On this device";
+    case "downloading":
+      return "Downloading";
+    case "queued":
+      return "Queued";
+    case "paused":
+      return "Paused";
+    case "verifying":
+      return "Verifying";
+    default:
+      return "Failed";
+  }
+};
 
 export function DownloadsPage() {
-  const downloads = useCommand<DownloadsScreen>(
-    async () => (await getCommands()).downloads_list(),
-    [],
-  );
+  const { data } = useAppState();
+  if (!data) return null;
 
-  if (downloads.status === "error") {
-    return <ErrorState error={downloads.error} onRetry={downloads.reload} />;
-  }
-
-  if (downloads.status === "loading") {
-    return <PageHeader title="Downloads" subtitle="Loading…" />;
-  }
-
-  const data = downloads.data;
-
-  if (!data.enabled) {
-    return (
-      <>
-        <PageHeader
-          title="Downloads"
-          subtitle="Optional, separate, opt-in."
-        />
-        <EmptyState
-          title="Downloads are not enabled"
-          body="MEDIA_HAVEN does not ship any content sources. Downloads are an optional integration you configure yourself, and only after a separate legal and security review. Nothing is downloaded unless you explicitly set up a provider."
-        />
-      </>
-    );
-  }
+  const { downloads } = data;
+  const limit = downloads.storageLimitBytes;
+  const used = downloads.storageUsedBytes;
+  const ratio = limit && limit > 0 ? Math.min(1, used / limit) : null;
 
   return (
-    <>
+    <div className={`page ${styles.page}`}>
       <PageHeader
         title="Downloads"
-        subtitle={`${data.tasks.length} task${data.tasks.length === 1 ? "" : "s"}`}
+        description="Titles kept on this machine so they play with the network down. A download is a second copy; the file in your library is never modified."
       />
 
-      {data.storageLimitBytes !== null ? (
-        <div className={styles.banner}>
-          <div>
-            <span className={styles.bannerTitle}>Storage</span>
-            <span>
-              {formatBytes(data.storageUsedBytes)} of {formatBytes(data.storageLimitBytes)} used.
-            </span>
-          </div>
-        </div>
-      ) : null}
-
-      {data.tasks.length === 0 ? (
-        <EmptyState
-          title="No downloads"
-          body="When a provider is configured, active and queued downloads appear here."
-        />
-      ) : (
-        <div className={styles.section}>
-          <div
-            style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}
-          >
-            {data.tasks.map((task) => (
-              <div
-                key={task.id}
-                style={{
-                  padding: "var(--space-5)",
-                  borderRadius: "var(--radius-card)",
-                  backgroundColor: "var(--surface-hover)",
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-4)", alignItems: "center" }}>
-                  <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
-                    {task.title}
-                  </span>
-                  <StatusPill
-                    tone={
-                      task.state === "available"
-                        ? "available"
-                        : task.state === "failed"
-                          ? "missing"
-                          : "neutral"
-                    }
-                  >
-                    {task.state}
-                  </StatusPill>
+      <div className={styles.body}>
+        {!downloads.enabled ? (
+          <EmptyState
+            title="Downloads are switched off"
+            body="The backend reports the download service as disabled, so there is no offline copy to manage. Your library files are untouched and still play locally."
+            action={
+              <Link to="/settings" className={buttonClass("solid")} data-focusable="true">
+                Open settings
+              </Link>
+            }
+          />
+        ) : (
+          <>
+            <Panel>
+              <div className={styles.storageHead}>
+                <div>
+                  <h2 className={styles.storageTitle}>This device</h2>
+                  <p className={styles.storageSub}>
+                    {bytes(used)} used{limit ? ` of ${bytes(limit)}` : " · no limit set"}
+                  </p>
                 </div>
-                {task.state === "downloading" || task.state === "verifying" ? (
-                  <div style={{ marginTop: "var(--space-3)" }}>
-                    <ProgressBar value={task.progress} label={task.title} />
-                  </div>
-                ) : null}
-                {task.errorMessage ? (
-                  <div style={{ marginTop: "var(--space-2)", fontSize: "var(--text-meta)", color: "var(--text-tertiary)" }}>
-                    {task.errorMessage}
-                  </div>
-                ) : null}
+                <span className={styles.storagePill}>
+                  {downloads.tasks.length}{" "}
+                  {downloads.tasks.length === 1 ? "download" : "downloads"}
+                </span>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
-  );
-}
+              {ratio !== null ? <ProgressBar value={ratio} large /> : null}
+              <dl className={styles.stats}>
+                <div>
+                  <dt>Downloads</dt>
+                  <dd>{bytes(used)}</dd>
+                </div>
+                <div>
+                  <dt>Limit</dt>
+                  <dd>{limit ? bytes(limit) : "None"}</dd>
+                </div>
+                <div>
+                  <dt>Tasks</dt>
+                  <dd>{downloads.tasks.length}</dd>
+                </div>
+              </dl>
+              <p className={styles.note}>
+                Figures come from the local backend. Nothing is uploaded.
+              </p>
+            </Panel>
 
-function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+            <section className={styles.listSection} aria-labelledby="offline-title">
+              <h2 id="offline-title" className={styles.listTitle}>
+                Available offline
+              </h2>
+
+              {downloads.tasks.length === 0 ? (
+                <EmptyState
+                  title="No downloads on this device"
+                  body="The download service is enabled but the queue is empty."
+                />
+              ) : (
+                <ul className={styles.list}>
+                  {downloads.tasks.map((task) => (
+                    <li key={task.id} className={styles.item}>
+                      <span className={styles.thumb}>
+                        <img src={artFor(task.id, task.title).still} alt="" loading="lazy" />
+                      </span>
+
+                      <div className={styles.itemCopy}>
+                        <span className={styles.itemTitle}>{task.title}</span>
+                        <span className={styles.itemMeta}>
+                          {stateLabel(task.state)} · {Math.round(task.progress * 100)}%
+                        </span>
+                      </div>
+
+                      <span className={styles.state}>{task.state}</span>
+                      {task.errorMessage ? (
+                        <span className={styles.itemMeta}>{task.errorMessage}</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </>
+        )}
+
+        <section className={styles.listSection} aria-labelledby="policy-title">
+          <h2 id="policy-title" className={styles.listTitle}>
+            How downloads work
+          </h2>
+          <Panel tone="quiet">
+            <ul className={styles.policy}>
+              <li>
+                A download is stored in MEDIA HAVEN&apos;s own folder. Your
+                library file stays where it is, untouched.
+              </li>
+              <li>
+                Removing a download frees that copy only. The title remains in
+                the library if the source file is still present.
+              </li>
+              <li>
+                Nothing is uploaded. Downloads never contact a catalogue or a
+                content service.
+              </li>
+            </ul>
+          </Panel>
+        </section>
+      </div>
+    </div>
+  );
 }

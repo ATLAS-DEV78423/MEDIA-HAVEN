@@ -1,0 +1,23 @@
+.page {
+  padding-bottom: var(--s-12);
+}
+
+.shelves {
+  display: flex;
+  flex-direction: column;
+  padding-block-start: var(--s-9);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding-inline: var(--safe-x);
+  padding-block-start: var(--s-12);
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-38);
+}
