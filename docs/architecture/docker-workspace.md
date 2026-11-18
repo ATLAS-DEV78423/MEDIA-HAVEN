@@ -213,6 +213,41 @@ Consequence worth stating plainly: because media mounts are read-only, a path-tr
 bug in the backend cannot damage the user's library. It can only disclose files inside a
 root the user already chose to share. That is the design working as intended.
 
+### 4.1 Implemented mount rendering (Task A9)
+
+The lexical/containment layer above is implemented in the host crate as
+`apps/desktop/src-tauri/src/mounts.rs`. It is pure data — it never starts a process.
+
+- **One root, one mount.** `render_mounts(&[RootSpec])` assigns container paths by
+  position: `/media/root-0`, `/media/root-1`, … Each becomes one `:ro` bind entry
+  under `services.core.volumes`. Removing a root and rendering again yields a
+  fragment without it, so the next `up` drops that mount — an existing mount is
+  never silently widened.
+- **Refusals before any bind is emitted.** A root is rejected if it has no parent
+  (a drive root such as `C:\` or `/` — risk R-24), is a reparse point (junction,
+  symlink or mount point, detected from the raw file attributes of the link
+  itself), is not an existing directory, or canonicalises to a path nested
+  inside another root (or an exact duplicate). Canonicalisation is the second
+  containment check; the read-only mount remains the backstop.
+- **Atomic override rewrite.** `write_atomic` writes a sibling `.tmp` file and
+  renames it over the override, so an interrupted write cannot leave a partial
+  (and possibly wider) mount set on disk.
+- **Data only.** `render_mounts` returns the YAML fragment and a serialisable
+  container→host `mounts` map (via `host_path_map()`). The map is what playback
+  (B2) resolves a container path through to a host path; it never reaches the
+  renderer. The `docker compose up` call stays in the supervisor and is wired
+  to this renderer in a later integration task.
+- Paths are quoted as single YAML double-quoted scalars (via JSON string
+  encoding), so backslashes, quotes and colons in a host path cannot break out
+  of the fragment.
+
+**Verification status.** Unit tests cover mount scope, nested-root refusal,
+root removal across renders, filesystem-root refusal, non-directory/missing
+paths and atomic replacement. The engine-dependent acceptance checks — `docker
+inspect` showing exactly the two declared mounts with two roots, a removed root
+disappearing from the next inspect — are **NOT RUN**: no Docker engine consent
+was available for this task. They remain a gate for the integration task.
+
 ---
 
 ## 5. Resource limits

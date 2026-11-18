@@ -5,12 +5,14 @@
 //! (ADR-0005); there is no generic passthrough command.
 
 mod commands;
+mod mounts;
 mod secret;
 mod supervisor;
 mod wsl;
 
 use serde::Serialize;
 
+pub use mounts::{render_mounts, write_atomic, MountError, RenderOutput, RenderedMount, RootSpec};
 pub use secret::{blob_path, load_or_create_token, SecretError, SecretToken};
 pub use supervisor::{Supervisor, SupervisorStatus};
 pub use wsl::Wsl;
