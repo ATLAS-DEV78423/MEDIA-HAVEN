@@ -853,16 +853,82 @@ impl LibraryRepository for SqliteLibraryRepository {
     }
 
     async fn queue_remove(&self, queue_id: &str) -> Result<(), AppError> {
-        sqlx::query("DELETE FROM queue_items WHERE id = ?")
+        // Archive before deleting so a removed (or already completed) entry is
+        // never silently lost. Insert + delete share one transaction: a crash
+        // leaves either the queue row or its history row, never neither.
+        let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+        let row = sqlx::query(
+            "SELECT q.media_id, q.state, q.position, m.title \
+             FROM queue_items q LEFT JOIN media_items m ON m.id = q.media_id \
+             WHERE q.id = ?",
+        )
+        .bind(queue_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+
+        if let Some(row) = row {
+            sqlx::query(
+                "INSERT INTO queue_history (queue_id, media_id, title, state, position, recorded_at) \
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
             .bind(queue_id)
-            .execute(&self.pool)
+            .bind(row.get::<String, _>("media_id"))
+            .bind(row.get::<Option<String>, _>("title"))
+            .bind(row.get::<String, _>("state"))
+            .bind(row.get::<i64, _>("position"))
+            .bind(now_iso())
+            .execute(&mut *tx)
             .await
             .map_err(Self::internal)?;
-        Ok(())
+
+            sqlx::query("DELETE FROM queue_items WHERE id = ?")
+                .bind(queue_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(Self::internal)?;
+        }
+        tx.commit().await.map_err(Self::internal)
     }
 
     async fn queue_reorder(&self, ordered_queue_ids: &[String]) -> Result<(), AppError> {
+        // Pure rule first: a duplicated id is never a valid order.
+        validate_queue_order(ordered_queue_ids)?;
+
         let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+        let existing: Vec<String> = sqlx::query("SELECT id FROM queue_items")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(Self::internal)?
+            .iter()
+            .map(|row| row.get("id"))
+            .collect();
+
+        // A reorder must be an exact permutation of the current queue. Unknown
+        // ids or a partial list would leave entries stranded on stale positions
+        // and break dense renumbering, so reject instead of guessing.
+        if ordered_queue_ids.len() != existing.len() {
+            return Err(AppError::new(
+                AppErrorCode::InvalidRequest,
+                "reorder must include every queue entry exactly once",
+                false,
+            ));
+        }
+        let known: std::collections::HashSet<&str> = existing.iter().map(String::as_str).collect();
+        if ordered_queue_ids
+            .iter()
+            .any(|id| !known.contains(id.as_str()))
+        {
+            return Err(AppError::new(
+                AppErrorCode::InvalidRequest,
+                "unknown queue id in reorder",
+                false,
+            ));
+        }
+
+        // Single transaction: positions are renumbered densely (0..n-1) and
+        // only `position` changes — never `state`, so nothing advances on its
+        // own. A crash mid-loop rolls the whole reorder back.
         for (position, queue_id) in ordered_queue_ids.iter().enumerate() {
             sqlx::query("UPDATE queue_items SET position = ? WHERE id = ?")
                 .bind(position as i64)
@@ -871,8 +937,7 @@ impl LibraryRepository for SqliteLibraryRepository {
                 .await
                 .map_err(Self::internal)?;
         }
-        tx.commit().await.map_err(Self::internal)?;
-        Ok(())
+        tx.commit().await.map_err(Self::internal)
     }
 }
 

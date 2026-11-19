@@ -866,3 +866,154 @@ async fn scanned_sidecar_metadata_is_stored_and_survives_a_bare_rescan() {
         MediaDetail::Series(_) => panic!("m-nfo must be a movie"),
     }
 }
+
+// --- C2: durable queue semantics -------------------------------------------
+
+async fn seed_queue(fixture: &Fixture, media_ids: &[&str]) -> Vec<String> {
+    for id in media_ids {
+        fixture.repo.queue_add(id).await.expect("queue add");
+    }
+    fixture
+        .repo
+        .queue()
+        .await
+        .expect("queue list")
+        .entries
+        .iter()
+        .map(|e| e.id.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn queue_reorder_is_atomic_and_renumbers_densely() {
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let ids = seed_queue(&fixture, &["m1", "s1", "e1"]).await;
+    let reversed: Vec<String> = ids.iter().rev().cloned().collect();
+
+    fixture
+        .repo
+        .queue_reorder(&reversed)
+        .await
+        .expect("queue reorder");
+
+    let after = fixture.repo.queue().await.expect("queue list");
+    assert_eq!(after.entries.len(), 3, "reorder dropped an entry");
+    for (i, entry) in after.entries.iter().enumerate() {
+        assert_eq!(entry.position, i as i64, "positions are not dense");
+        assert_eq!(entry.id, reversed[i], "order not applied");
+        // A reorder never advances state on its own.
+        assert_eq!(entry.state, QueueEntryState::Pending);
+    }
+}
+
+#[tokio::test]
+async fn queue_reorder_rejects_unknown_duplicate_and_incomplete_orders() {
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let ids = seed_queue(&fixture, &["m1", "s1"]).await;
+    let before = fixture.repo.queue().await.expect("queue list");
+
+    let duplicate = vec![ids[0].clone(), ids[0].clone()];
+    assert_eq!(
+        fixture
+            .repo
+            .queue_reorder(&duplicate)
+            .await
+            .expect_err("duplicate id")
+            .code,
+        AppErrorCode::InvalidRequest
+    );
+
+    let unknown = vec![ids[0].clone(), "ghost".to_string()];
+    assert_eq!(
+        fixture
+            .repo
+            .queue_reorder(&unknown)
+            .await
+            .expect_err("unknown id")
+            .code,
+        AppErrorCode::InvalidRequest
+    );
+
+    let incomplete = &ids[..1];
+    assert_eq!(
+        fixture
+            .repo
+            .queue_reorder(incomplete)
+            .await
+            .expect_err("partial order")
+            .code,
+        AppErrorCode::InvalidRequest
+    );
+
+    // Every rejected reorder must leave the queue exactly as it was.
+    let after = fixture.repo.queue().await.expect("queue list");
+    assert_eq!(after.entries.len(), before.entries.len());
+    for (a, b) in after.entries.iter().zip(before.entries.iter()) {
+        assert_eq!(a.id, b.id);
+        assert_eq!(a.position, b.position);
+        assert_eq!(a.state, b.state);
+    }
+}
+
+#[tokio::test]
+async fn forced_kill_before_commit_leaves_order_consistent() {
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let ids = seed_queue(&fixture, &["m1", "s1", "e1"]).await;
+    let before = fixture.repo.queue().await.expect("queue list");
+
+    // Emulate a forced kill mid-reorder: write new positions inside a
+    // transaction that is dropped before commit. SQLite must roll it back.
+    {
+        let mut tx = fixture.repo.pool().begin().await.expect("begin");
+        for (position, id) in ids.iter().rev().enumerate() {
+            sqlx::query("UPDATE queue_items SET position = ? WHERE id = ?")
+                .bind(position as i64)
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .expect("write");
+        }
+        // No commit: dropping the transaction rolls it back, like a crash.
+    }
+
+    let after = fixture.repo.queue().await.expect("queue list");
+    assert_eq!(after.entries.len(), 3);
+    for (a, b) in after.entries.iter().zip(before.entries.iter()) {
+        assert_eq!(a.id, b.id, "order changed after rolled-back reorder");
+        assert_eq!(a.position, b.position);
+        assert_eq!(a.state, b.state);
+    }
+}
+
+#[tokio::test]
+async fn queue_remove_archives_to_history_without_advancing() {
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let ids = seed_queue(&fixture, &["m1", "s1"]).await;
+
+    fixture
+        .repo
+        .queue_remove(&ids[0])
+        .await
+        .expect("queue remove");
+
+    let remaining = fixture.repo.queue().await.expect("queue list");
+    assert_eq!(remaining.entries.len(), 1);
+    assert_eq!(remaining.entries[0].id, ids[1]);
+    assert_eq!(remaining.entries[0].state, QueueEntryState::Pending);
+    // queue_add seeds 1-based positions; remove must not silently renumber.
+    assert_eq!(remaining.entries[0].position, 2);
+
+    let (media_id, state, position): (String, String, i64) =
+        sqlx::query_as("SELECT media_id, state, position FROM queue_history WHERE queue_id = ?")
+            .bind(&ids[0])
+            .fetch_one(fixture.repo.pool())
+            .await
+            .expect("history row");
+    assert_eq!(media_id, "m1");
+    assert_eq!(state, "pending");
+    assert_eq!(position, 1);
+}
