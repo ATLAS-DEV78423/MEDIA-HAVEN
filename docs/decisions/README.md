@@ -21,7 +21,7 @@ Never rewrite an accepted ADR's decision.
 | [0011](0011-metadata-provider-selection.md) | Metadata provider selection | **Accepted** (2026-11-18) — TMDB primary, local NFO offline fallback, network opt-in | P2-06, O-04 |
 | [0013](0013-backend-completion-sequencing.md) | Containerise the backend before the remaining features | **Accepted** (2026-11-18) | P1-08, P4-08 |
 | [0014](0014-host-token-storage.md) | Host token storage uses DPAPI | **Accepted** (2026-11-18) — amends ADR-0007 for the API token | P1-08, O-07 |
-| [0015](0015-playback-descriptor.md) | Playback source is an opaque token resolved host-side, never a path in the renderer | **Proposed** — recommendation only, not accepted | P3-01, P4-06 |
+| [0015](0015-playback-descriptor.md) | Playback source resolved host-side from the media id — no path or token in the renderer | **Proposed** — recommendation only, not accepted | P3-01, P4-06 |
 
 **Two decisions are already binding and are not reopened by Phase 0:**
 
