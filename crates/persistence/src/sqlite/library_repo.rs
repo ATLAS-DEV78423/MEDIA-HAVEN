@@ -853,6 +853,8 @@ impl LibraryRepository for SqliteLibraryRepository {
     }
 
     async fn queue_remove(&self, queue_id: &str) -> Result<(), AppError> {
+        // C2: history is written on removal only; completion-history is deferred to
+        // the playback B workstream, where a completion event exists.
         // Archive before deleting so a removed (or already completed) entry is
         // never silently lost. Insert + delete share one transaction: a crash
         // leaves either the queue row or its history row, never neither.

@@ -963,26 +963,37 @@ async fn forced_kill_before_commit_leaves_order_consistent() {
     fixture.seed().await;
     let ids = seed_queue(&fixture, &["m1", "s1", "e1"]).await;
     let before = fixture.repo.queue().await.expect("queue list");
+    let reversed: Vec<String> = ids.iter().rev().cloned().collect();
 
-    // Emulate a forced kill mid-reorder: write new positions inside a
-    // transaction that is dropped before commit. SQLite must roll it back.
-    {
-        let mut tx = fixture.repo.pool().begin().await.expect("begin");
-        for (position, id) in ids.iter().rev().enumerate() {
-            sqlx::query("UPDATE queue_items SET position = ? WHERE id = ?")
-                .bind(position as i64)
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .expect("write");
-        }
-        // No commit: dropping the transaction rolls it back, like a crash.
-    }
+    // Abort the second position write *inside queue_reorder's own transaction*.
+    // The first write (position 0) succeeds first, so this only leaves the data
+    // untouched if the real reorder is atomic. A failure here surfaces as an
+    // Internal error — which also proves the trigger actually fired.
+    sqlx::query(
+        "CREATE TRIGGER abort_mid_reorder BEFORE UPDATE ON queue_items \
+         WHEN NEW.position = 1 \
+         BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    )
+    .execute(fixture.repo.pool())
+    .await
+    .expect("create trigger");
+
+    let err = fixture
+        .repo
+        .queue_reorder(&reversed)
+        .await
+        .expect_err("trigger must abort the reorder");
+    assert_eq!(err.code, AppErrorCode::Internal);
+
+    sqlx::query("DROP TRIGGER abort_mid_reorder")
+        .execute(fixture.repo.pool())
+        .await
+        .expect("drop trigger");
 
     let after = fixture.repo.queue().await.expect("queue list");
     assert_eq!(after.entries.len(), 3);
     for (a, b) in after.entries.iter().zip(before.entries.iter()) {
-        assert_eq!(a.id, b.id, "order changed after rolled-back reorder");
+        assert_eq!(a.id, b.id, "order changed after aborted reorder");
         assert_eq!(a.position, b.position);
         assert_eq!(a.state, b.state);
     }
