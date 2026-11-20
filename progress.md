@@ -1703,3 +1703,42 @@ path stays in the persisted map for `resolve_source` containment. Added
 `cargo test -p mediahaven-desktop` 0 (31 tests, incl. the new one). This closes
 the main A9 integration risk; the live override had used the prefix-free form,
 so this makes the generated form match what was verified.
+
+## 2026-11-21 â€” release blockers + IMDb + installer (parallel SDD wave)
+
+Two plans written with writing-plans and executed with subagent-driven parallel
+agents (disjoint file ownership): docs/superpowers/plans/2026-11-21-release-blockers.md
+and 2026-11-21-imdb-metadata.md. Rulings in the two SDD ledgers under
+.superpowers/sdd/2026-11-21-*.
+
+Built:
+- R-01 option A (operator-supplied source per item): item_sources migration 0007,
+  port/service/repo, validation, tie of download row media_id by torrent hash,
+  fail-closed NULL verification guard, source_for reads the store, Details UI
+  Sources field, and the controller-added source_set chain (core host route +
+  renderer forwarder + handler registration). Reviewed Approved (minors only).
+- Security wiring: probe gate (real -v .../downloads:ro bind, automatic trigger,
+  bridge to SQLite), Defender gate (argv MpCmdRun, fail-closed parser, detail()
+  + playback_start), all fail-closed. Previously reviewed SHIP WITH DISCLOSED RISKS.
+- IMDb provider: offline operator-TSV path (title.basics/ratings/age_ratings),
+  opt-in via MEDIAHAVEN_IMDB_DIR (zero reads when off), signed /host/imdb_lookup,
+  named command, additive display DTO fields, card + Details rendering with
+  attribution, opt-in privacy doc. Reviewed Approved. OMDb HTTP remains a seam
+  (new ADR needed) â€” not wired.
+- Packaging: unsigned per-user NSIS installer config + release workflow + licence
+  notice + checksums. Controller fixed tauri.conf.json (package ID
+  com.mediahaven.desktop, bundle.active true, NSIS target, version 0.1.0),
+  package-lock version, and the build.ps1 output path bug. REAL installer built
+  and verified: target/release/bundle/nsis/MEDIA_HAVEN_0.1.0_x64-setup.exe
+  (3.60 MiB) + SHA256SUMS.txt + THIRD_PARTY_NOTICES.md. build.ps1 gate exit 0.
+
+Verified (final gate, all exit 0): cargo fmt --check, clippy --workspace -D warnings,
+cargo test --workspace (260 passed, 2 ignored), frontend typecheck/lint/Vitest 27,
+check:tokens (72 files, 0), build, check:bundle, git diff --check.
+
+Disclosed risks: live IMDb/OMDb NOT RUN (no operator files/key); live qB acquisition
+and real-media cleanup NOT RUN (no lawful source); card-level IMDb fields remain
+None from list endpoints (Details works); opt-in is env-based not persisted;
+SBOM NOT RUN (no tool, documented); installer non-deterministic across builds
+(hash changed between runs, documented); second-machine LAN + TV hardware + CP
+sign-offs remain human gates. No checkpoint passed by an agent.

@@ -1,37 +1,58 @@
 # infrastructure/packaging/windows
 
-Windows installer and release packaging.
+Windows installer and release packaging for MEDIA HAVEN.
 
-**Status: not populated.** Packaging artifacts are created by `roadmap.md`
-P7-01, after CP-5 passes.
+**Status: config files authored; artifact build NOT RUN** (config preconditions
+in this checkout are not yet met, and no tooling was installed - see below).
 
-## What will live here
+## Files
 
-| Item | Purpose |
+| File | Purpose |
 |---|---|
-| Bundle configuration | Tauri bundler settings, per-user install where possible |
-| Version stamping | Single source of truth for the app version |
-| Checksum generation | Published alongside each artifact |
-| SBOM generation | Attached to the release |
-| Licence/notice collection | Third-party attributions bundled and shown in-app |
-| Build script | Reproducible build invoked by CI and by a human |
+| `build.ps1` | Reproducible unsigned, per-user NSIS build + SHA-256 checksums. Installs/fetches/publishes nothing. |
+| `collect_licenses.py` | Offline, deterministic licence inventory from `Cargo.lock` + `package-lock.json`. |
+| `THIRD_PARTY_NOTICES.md` | Generated notice (536 Rust crates, 343 npm packages; 177 Rust licences unresolved offline). Regenerate with the script; do not hand-edit. |
+| `sbom/README.md` | SBOM **NOT RUN** - tool probe and exact commands for an approved operator run. |
+| `../../.github/workflows/release.yml` | Runs after CI succeeds, builds, checksums and uploads artifacts. Never publishes a release. |
+| `../../docs/operations/release.md` | Build/checksum/verify runbook, SmartScreen caveat, known limitations. |
 
-## Constraints
+## Reproducible build
 
-- **Reproducible.** Two builds from the same commit must produce identical
-  checksums, or the non-determinism must be documented with its cause (P7-01).
-- **No admin by default.** The normal install path must not require elevation.
-- **No host mutation.** The installer does not enable Windows features, change
-  firewall rules or install runtimes. Anything optional is offered later, inside
-  the app, with consent (`docs/setup/first-run.md`).
-- **Data-safe uninstall.** Uninstall asks explicitly about app data and never
-  touches user source media (`docs/operations/backup-recovery-uninstall.md`).
-- **Signing is an open decision** (`roadmap.md` O-08) — an unsigned build will
-  trip SmartScreen, and that must be stated rather than hidden.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure\packaging\windows\build.ps1
+```
 
-## Decisions resolved (2026-11-20, ADR-0016 blanket human acceptance)
+The script verifies the Tauri config first and **fails** (exit 2) if it is not
+shaped for the decided packaging contract. It then runs `npm run build` and
+`npx --no-install tauri build --bundles nsis`, writes `SHA256SUMS.txt`, and
+copies `THIRD_PARTY_NOTICES.md` (and `sbom/bom.json` if present) beside the
+installer. No admin rights, no host mutation, no publishing.
 
-- O-01 residual: package/bundle ID = `com.mediahaven.desktop`. Project name is
-  MEDIA HAVEN. Apply at P7-01; reversible by the human.
-- O-08: v1 ships **unsigned**. Publish the SmartScreen caveat in release notes.
-  A signed build needs a future human budget decision + certificate (reopens O-08).
+## Controller action required (Task 3 has no write access to these files)
+
+`apps/desktop/src-tauri/tauri.conf.json` currently blocks a build:
+
+| Setting | Current | Required |
+|---|---|---|
+| `identifier` | `app.mediahaven.desktop` | `com.mediahaven.desktop` (O-01) |
+| `bundle.active` | `false` | `true` |
+| `bundle.targets` | `all` | `["nsis"]` (NSIS defaults to `currentUser` in Tauri CLI 2.12.5 - verified from local `config.schema.json`) |
+| version | `0.1.0` | single source; `package.json` is `0.0.0` and `Cargo.toml` is `0.1.0` - align before publishing |
+
+Task 3 did not edit these files; it gates on them instead of guessing.
+
+## Constraints honoured
+
+- **Reproducible.** The licence notice has no date stamp (verified byte-identical
+  across two runs). Installer reproducibility itself is **UNVERIFIED** - no build
+  was run, so two builds have not been compared.
+- **No admin by default.** NSIS `installMode` defaults to `currentUser`; the
+  script rejects any other explicit value.
+- **No host mutation.** No Windows feature, firewall, runtime or service change.
+- **Data-safe uninstall.** Uninstaller configuration is unchanged; app data is
+  separate from source media (`docs/operations/backup-recovery-uninstall.md`).
+- **Unsigned (O-08).** SmartScreen warning is expected and published in
+  `docs/operations/release.md`. No signing certificate is configured.
+- **SBOM NOT RUN**, third-party notices partial (177 Rust licences unresolved
+  offline), no live-media or hardware proof, no CP sign-offs. See the release
+  runbook.

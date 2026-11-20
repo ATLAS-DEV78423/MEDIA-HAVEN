@@ -7,12 +7,13 @@
 //! so the 24-command POST parity surface (renderer commands only) is unchanged.
 //! They still pass the signed auth middleware exactly like `/readyz`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use app_core::domain::{
-    AppError, AppErrorCode, BrowseQuery, BrowseSort, CleanupEntry, DownloadState, MediaAvailability,
+    AppError, AppErrorCode, BrowseQuery, BrowseSort, CleanupEntry, DownloadState,
+    MediaAvailability, MediaDetail,
 };
 use axum::extract::State;
 use axum::routing::post;
@@ -26,7 +27,7 @@ use media_acquisition::{
 use media_persistence::sqlite::{
     connect_path, CleanupRepository, ManagedFileRow, SqliteLibraryRepository,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::routes::{ApiError, ApiJson};
@@ -41,6 +42,8 @@ const BUFFER_STATUS_PATH: &str = "/host/acquisition_buffer_status";
 const CLEANUP_CONFIRM_PATH: &str = "/host/acquisition_cleanup_confirm";
 const CLEANUP_PASS_PATH: &str = "/host/acquisition_cleanup_pass";
 const INSPECT_PATH: &str = "/host/acquisition_inspect";
+const SOURCE_SET_PATH: &str = "/host/acquisition_source_set";
+const IMDB_LOOKUP_PATH: &str = "/host/imdb_lookup";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -52,6 +55,13 @@ struct AddArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RemoveArgs {
     id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SourceSetArgs {
+    media_id: String,
+    source: String,
 }
 
 /// Host-internal inspection trigger for a completed download. `containerPath`
@@ -88,6 +98,103 @@ pub fn host_router() -> Router<AppState> {
         .route(CLEANUP_CONFIRM_PATH, post(confirm_completion))
         .route(CLEANUP_PASS_PATH, post(cleanup_pass))
         .route(INSPECT_PATH, post(inspect))
+        .route(SOURCE_SET_PATH, post(source_set))
+        .route(IMDB_LOOKUP_PATH, post(imdb_lookup))
+}
+
+/// Attach an operator-supplied source to a library item (R-01 / ADR-0021).
+/// Host-internal: the renderer reaches it through a named command only. The
+/// source is validated again here (trust boundary) and never returned to a DTO.
+async fn source_set(
+    State(state): State<AppState>,
+    ApiJson(args): ApiJson<SourceSetArgs>,
+) -> Result<Json<Value>, ApiError> {
+    if args.media_id.trim().is_empty() || args.source.trim().is_empty() {
+        return Err(cleanup_invalid("mediaId and source are required."));
+    }
+    if args.source.len() > 4096 {
+        return Err(cleanup_invalid("source is too long."));
+    }
+    state
+        .service
+        .set_item_source(&args.media_id, &args.source)
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(Value::Null))
+}
+
+/// Display-only IMDb/OMDb fields returned to the renderer, keyed by media id.
+/// No dataset path, API key or token is ever part of this shape.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ImdbDisplay {
+    #[serde(default)]
+    pub imdb_rating: Option<f64>,
+    #[serde(default)]
+    pub vote_count: Option<i64>,
+    #[serde(default)]
+    pub age_rating: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImdbLookupArgs {
+    media_id: String,
+}
+
+/// Case/punctuation-insensitive key for matching library titles to the
+/// operator's offline `title.basics.tsv` listings.
+fn normalize_title(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Resolve a media id to its title/year from the library, then match those
+/// against the opt-in offline IMDb datasets. Every failure — disabled opt-in,
+/// unknown id, missing files, no match — degrades to an all-`None` display.
+async fn lookup_display(state: &AppState, media_id: &str) -> ImdbDisplay {
+    if media_id.trim().is_empty() || !state.imdb.options().enabled {
+        return ImdbDisplay::default();
+    }
+    let (title, year) = match state.service.detail(media_id).await {
+        Ok(MediaDetail::Movie(detail)) => (detail.title, detail.year),
+        Ok(MediaDetail::Series(detail)) => (detail.title, detail.year),
+        Err(_) => return ImdbDisplay::default(),
+    };
+    let Some(records) = state.imdb.records() else {
+        return ImdbDisplay::default();
+    };
+    let needle = normalize_title(&title);
+    let matched = records.into_iter().find(|record| {
+        normalize_title(&record.title) == needle
+            && year
+                .map(|wanted| Some(wanted) == record.year)
+                .unwrap_or(true)
+    });
+    matched
+        .map(|record| ImdbDisplay {
+            imdb_rating: record.rating,
+            vote_count: record.votes,
+            age_rating: record.age_rating,
+        })
+        .unwrap_or_default()
+}
+
+async fn imdb_lookup(
+    State(state): State<AppState>,
+    ApiJson(args): ApiJson<ImdbLookupArgs>,
+) -> Result<Json<Value>, ApiError> {
+    encode(lookup_display(&state, &args.media_id).await)
 }
 
 fn map_error(error: AcquireError) -> ApiError {
@@ -646,12 +753,17 @@ async fn ordering(state: &AppState) -> Result<Ordering, AppError> {
     Ok(Ordering { series, available })
 }
 
-/// This build maps no user-supplied source to an upcoming episode: the app
-/// bundles no trackers/indexers/catalogues (ADR-0018) and Task 4 accepts only
-/// sources the operator supplies. Returning `None` degrades honestly rather
-/// than inventing a source. Wiring through `acquire` is exercised in unit tests.
-fn source_for(_media_id: &str) -> Option<String> {
-    None
+/// Read the operator-supplied source from the library store (ADR-0021). The
+/// app bundles no trackers/indexers/catalogues (ADR-0018), so an absent source
+/// stays `None` — never an invented one. A store error is degraded to `None`
+/// so prefetch can never fail playback.
+async fn source_for(state: &AppState, media_id: &str) -> Option<String> {
+    state
+        .service
+        .source_for_media(media_id)
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Called from `playback_start` AFTER its policy checks. Never returns a
@@ -675,7 +787,15 @@ async fn run_prefetch(state: &AppState, media_id: &str) -> Result<(), AppError> 
     let (used, limit) = storage_usage(state).await?;
     let next = next_two_in_season(refs, media_id);
     let missing = missing_episodes(&next, &ordering.available);
-    if !missing.iter().any(|id| source_for(id).is_some()) {
+    // Snapshot the sources before leaving the async context: the scheduler
+    // closure runs on a blocking thread and cannot await the store.
+    let mut sources = HashMap::new();
+    for id in &missing {
+        if let Some(source) = source_for(state, id).await {
+            sources.insert(id.clone(), source);
+        }
+    }
+    if sources.is_empty() {
         tracing::info!(
             "prefetch: no lawful source mapped for upcoming episodes; buffer not filled"
         );
@@ -687,7 +807,10 @@ async fn run_prefetch(state: &AppState, media_id: &str) -> Result<(), AppError> 
     // scheduling + enqueue step onto the blocking pool (std/tokio only).
     let acquisition = state.acquisition.clone();
     let scheduler = PrefetchScheduler::new(move |id: &str| {
-        let source = source_for(id).ok_or(AcquireError::InvalidSource)?;
+        let source = sources
+            .get(id)
+            .cloned()
+            .ok_or(AcquireError::InvalidSource)?;
         acquisition.acquire(&source)
     })
     .with_limit(limit);
@@ -723,6 +846,8 @@ mod tests {
             CLEANUP_CONFIRM_PATH,
             CLEANUP_PASS_PATH,
             INSPECT_PATH,
+            SOURCE_SET_PATH,
+            IMDB_LOOKUP_PATH,
         ] {
             assert!(path.starts_with(HOST_PREFIX), "host-only path: {path}");
         }
@@ -766,9 +891,143 @@ mod tests {
         );
     }
 
-    #[test]
-    fn no_lawful_source_is_invented_for_prefetch() {
-        assert!(source_for("s1e2").is_none());
+    #[tokio::test]
+    async fn prefetch_reads_the_operator_source_from_the_store() {
+        use app_core::application::LibraryService;
+
+        let dir = std::env::temp_dir().join(format!("mh-r01-prefetch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let pool = connect_path(&dir.join("library.db"))
+            .await
+            .expect("connect and migrate");
+        let service = LibraryService::new(SqliteLibraryRepository::new(pool.clone()));
+        service
+            .set_item_source("s1e2", "magnet:?xt=urn:btih:ABC123&dn=ep")
+            .await
+            .expect("store operator source");
+        let state = AppState::new(service, "test-token");
+
+        assert_eq!(
+            source_for(&state, "s1e2").await.as_deref(),
+            Some("magnet:?xt=urn:btih:ABC123&dn=ep"),
+            "prefetch must use the source the operator supplied"
+        );
+        assert!(
+            source_for(&state, "s1e3").await.is_none(),
+            "no source is invented for an unmapped episode"
+        );
+
+        pool.close().await;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// End-to-end offline path: operator TSVs in a directory, a library item
+    /// with a matching title/year, and the opt-in on -> display fields populated.
+    /// Opt-in off or unknown media id degrades to all `None`. No network.
+    #[tokio::test]
+    async fn imdb_lookup_serves_offline_fields_only_when_enabled() {
+        use app_core::application::LibraryService;
+        use media_metadata::{FileImdbFetch, ImdbOptions, ImdbProvider};
+
+        let dir = std::env::temp_dir().join(format!("mh-imdb-route-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        std::fs::write(
+            dir.join("title.basics.tsv"),
+            "tconst\ttitleType\tprimaryTitle\toriginalTitle\tisAdult\tstartYear\tendYear\truntimeMinutes\tgenres\n\
+tt0111161\tmovie\tThe Shawshank Redemption\tThe Shawshank Redemption\t0\t1994\t\\N\t142\tDrama\n",
+        )
+        .expect("basics fixture");
+        std::fs::write(
+            dir.join("title.ratings.tsv"),
+            "tconst\taverageRating\tnumVotes\n\
+tt0111161\t9.3\t2500000\n",
+        )
+        .expect("ratings fixture");
+        std::fs::write(
+            dir.join("age_ratings.tsv"),
+            "tconst\tcertification\n\
+tt0111161\tR\n",
+        )
+        .expect("age ratings fixture");
+
+        let pool = connect_path(&dir.join("library.db"))
+            .await
+            .expect("connect and migrate");
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO media_items (id, kind, title, year, created_at, updated_at) \
+             VALUES ('m-imdb', 'movie', 'The Shawshank Redemption', 1994, ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .expect("insert media");
+        let service = || LibraryService::new(SqliteLibraryRepository::new(pool.clone()));
+
+        let enabled = AppState::new(service(), "test-token").with_imdb(ImdbProvider::with_fetch(
+            ImdbOptions { enabled: true },
+            Box::new(FileImdbFetch::new(&dir)),
+        ));
+        let display = lookup_display(&enabled, "m-imdb").await;
+        assert_eq!(display.imdb_rating, Some(9.3));
+        assert_eq!(display.vote_count, Some(2_500_000));
+        assert_eq!(display.age_rating.as_deref(), Some("R"));
+
+        // Opt-in off: no fields are served, even though the files exist.
+        let disabled = AppState::new(service(), "test-token");
+        let empty = lookup_display(&disabled, "m-imdb").await;
+        assert_eq!(empty.imdb_rating, None);
+        assert_eq!(empty.vote_count, None);
+        assert_eq!(empty.age_rating, None);
+
+        // Unknown media id also degrades to an empty display.
+        let unknown = lookup_display(&enabled, "m-missing").await;
+        assert_eq!(unknown.imdb_rating, None);
+
+        // The same fields travel through the signed host route the Tauri
+        // `imdb_lookup` command calls — display-only JSON, no path or token.
+        use axum::body::{to_bytes, Body};
+        use axum::http::{header, Request, StatusCode};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tower::ServiceExt;
+
+        const TOKEN: &str = "test-token"; // matches the AppState built above
+        let router = crate::server::build_router(enabled);
+        let body = serde_json::json!({ "mediaId": "m-imdb" }).to_string();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_secs()
+            .to_string();
+        let signature =
+            crate::auth::sign(TOKEN, &timestamp, "POST", IMDB_LOOKUP_PATH, body.as_bytes());
+        let request = Request::builder()
+            .method("POST")
+            .uri(IMDB_LOOKUP_PATH)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .header(crate::auth::HEADER_TIMESTAMP, &timestamp)
+            .header(crate::auth::HEADER_SIGNATURE, &signature)
+            .body(Body::from(body))
+            .expect("build signed request");
+        let response = router.oneshot(request).await.expect("route responds");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read body");
+        let wire: serde_json::Value = serde_json::from_slice(&bytes).expect("JSON body");
+        assert_eq!(wire["imdbRating"], serde_json::json!(9.3));
+        assert_eq!(wire["voteCount"], serde_json::json!(2_500_000));
+        assert_eq!(wire["ageRating"], serde_json::json!("R"));
+        let dir_text = dir.to_string_lossy();
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(dir_text.as_ref()),
+            "the dataset directory path must not reach the renderer"
+        );
+
+        pool.close().await;
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 

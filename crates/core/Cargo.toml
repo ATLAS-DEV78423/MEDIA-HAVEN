@@ -9,6 +9,7 @@ app-core = { path = "../app-core" }
 media-acquisition = { path = "../acquisition" }
 media-persistence = { path = "../persistence" }
 media-library = { path = "../media-library" }
+media-metadata = { path = "../metadata" }
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true

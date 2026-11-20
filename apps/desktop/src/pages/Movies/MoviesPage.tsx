@@ -13,7 +13,12 @@ export function MoviesPage() {
     <BrowseView
       title="Movies"
       description="Films indexed from the folders this machine is allowed to read. No rentals, no streaming queue, no account."
-      items={data.movies.map(toMedia)}
+      items={data.movies.map((summary) => ({
+        ...toMedia(summary),
+        imdbRating: summary.imdbRating,
+        voteCount: summary.voteCount,
+        ageRating: summary.ageRating,
+      }))}
       emptyTitle="No films in the library yet"
       emptyBody="Add a folder that holds your films, then scan it. MEDIA HAVEN indexes what is already on the disk and leaves the files where they are."
       emptyAction={

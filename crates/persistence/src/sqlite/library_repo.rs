@@ -90,6 +90,9 @@ impl SqliteLibraryRepository {
             genres: parse_list(&row.genres),
             artwork: vec![],
             seasons: self.seasons_for(&row.id).await?,
+            imdb_rating: None,
+            vote_count: None,
+            age_rating: None,
         })
     }
 
@@ -211,6 +214,9 @@ impl LibraryRepository for SqliteLibraryRepository {
                 artwork: vec![],
                 availability: availability(&row.availability_state, &row.availability_last_seen),
                 progress: None,
+                imdb_rating: None,
+                vote_count: None,
+                age_rating: None,
             },
             headline: row.title.clone(),
             actions: vec![
@@ -274,6 +280,9 @@ impl LibraryRepository for SqliteLibraryRepository {
                 progress: progress(&row),
                 director: row.director.clone(),
                 cast: parse_list(&row.cast_members),
+                imdb_rating: None,
+                vote_count: None,
+                age_rating: None,
             })),
             MediaKind::Series => Ok(MediaDetail::Series(self.series_detail(&row).await?)),
             // Episodes are reached through `library_episodes`; there is no
@@ -1149,6 +1158,62 @@ impl LibraryRepository for SqliteLibraryRepository {
             })
             .collect())
     }
+
+    async fn source_for_media(&self, media_id: &str) -> Result<Option<String>, AppError> {
+        sqlx::query_scalar::<_, String>("SELECT source FROM item_sources WHERE media_id = ?")
+            .bind(media_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(Self::internal)
+    }
+
+    async fn set_item_source(&self, media_id: &str, source: &str) -> Result<(), AppError> {
+        if media_id.trim().is_empty() {
+            return Err(AppError::new(
+                AppErrorCode::InvalidRequest,
+                "A media id is required.",
+                false,
+            ));
+        }
+        // Rust repeats the renderer's validation: this is the trust boundary.
+        let source = validate_item_source(source)?;
+        let name = item_source_name(&source);
+        let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+        sqlx::query(
+            "INSERT INTO item_sources (media_id, source, source_name) VALUES (?, ?, ?) \
+             ON CONFLICT(media_id) DO UPDATE SET source = excluded.source, \
+             source_name = excluded.source_name",
+        )
+        .bind(media_id)
+        .bind(&source)
+        .bind(&name)
+        .execute(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+        // Tie the source to any download already tracked for this hash, so the
+        // existing verification/cleanup gates can see the media id (R-01).
+        sqlx::query(
+            "UPDATE download_items SET media_id = ? WHERE torrent_hash IN \
+             (SELECT hash FROM torrent_tasks WHERE magnet_or_source = ?)",
+        )
+        .bind(media_id)
+        .bind(&source)
+        .execute(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+        if let Some(hash) = item_source_torrent_hash(&source) {
+            sqlx::query(
+                "UPDATE download_items SET media_id = ? WHERE lower(torrent_hash) = lower(?)",
+            )
+            .bind(media_id)
+            .bind(hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::internal)?;
+        }
+        tx.commit().await.map_err(Self::internal)?;
+        Ok(())
+    }
 }
 
 impl SqliteLibraryRepository {
@@ -1277,6 +1342,9 @@ fn row_to_summary(row: &MediaItemRow) -> MediaSummary {
         artwork: vec![],
         availability: availability(&row.availability_state, &row.availability_last_seen),
         progress: progress(row),
+        imdb_rating: None,
+        vote_count: None,
+        age_rating: None,
     }
 }
 
@@ -1403,8 +1471,9 @@ impl SqliteLibraryRepository {
         Ok(())
     }
 
-    /// Defender state for a media id. Absence (no row, no media id) fails
-    /// closed: the caller treats `None` as "not scanned", never as clean.
+    /// Defender state for a media id. `None` means no download row at all
+    /// (a library import). A download row with a NULL state is refused by
+    /// `refuse_unscanned_download`, not mistaken for a clean scan.
     pub async fn defender_state_for_media(
         &self,
         media_id: &str,
@@ -1424,6 +1493,8 @@ impl SqliteLibraryRepository {
     async fn refuse_unscanned_download(&self, media_id: &str) -> Result<(), AppError> {
         let state = self.defender_state_for_media(media_id).await?;
         let reason = match state.as_deref() {
+            // NULL on an existing download row is NOT a library import.
+            None if self.has_download_row(media_id).await? => "This file has not been scanned yet.",
             None | Some("clean") => return Ok(()),
             Some("threat") => "Windows Defender flagged this file.",
             Some("unavailable") => "Windows Defender could not scan this file.",
@@ -1563,8 +1634,8 @@ mod defender_tests {
 
 impl SqliteLibraryRepository {
     /// Verification state for the download that owns `media_id`. `None` means
-    /// the item is not a download (a library import) and is trusted by the
-    /// library scanner, not by the probe gate.
+    /// no download row is associated; `refuse_unverified` still refuses when a
+    /// download row exists with a NULL state.
     pub async fn verification_state_for_media(
         &self,
         media_id: &str,
@@ -1598,11 +1669,31 @@ impl SqliteLibraryRepository {
         Ok(())
     }
 
+    /// True only when a download row is associated with this media id. Used to
+    /// distinguish a library import (allowed) from a download with a NULL gate
+    /// state (refused).
+    pub async fn has_download_row(&self, media_id: &str) -> Result<bool, AppError> {
+        let found = sqlx::query("SELECT 1 FROM download_items WHERE media_id = ? LIMIT 1")
+            .bind(media_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(Self::internal)?;
+        Ok(found.is_some())
+    }
+
     /// Refuse a downloaded item until the probe has parsed it as media. The
     /// message is a fixed display string: no path reaches the renderer.
     async fn refuse_unverified(&self, media_id: &str) -> Result<(), AppError> {
         let state = self.verification_state_for_media(media_id).await?;
-        if let Some(reason) = playback_block_reason(state.as_deref()) {
+        let reason = match state.as_deref() {
+            // A NULL state on an existing download row is not a library import:
+            // it has no verification and must fail closed (R-01).
+            None if self.has_download_row(media_id).await? => {
+                Some("This download has not been verified yet.")
+            }
+            other => playback_block_reason(other),
+        };
+        if let Some(reason) = reason {
             return Err(AppError::new(AppErrorCode::MediaUnsupported, reason, false));
         }
         Ok(())
@@ -1610,8 +1701,9 @@ impl SqliteLibraryRepository {
 }
 
 /// Map a stored verification state to a display-only refusal reason. `None`
-/// means either a library import (no download row) or a verified-clean download;
-/// both are allowed. Every other state — including unknown values — fails closed.
+/// is allowed only for a library import (no download row) — callers must check
+/// `has_download_row` before treating it as clean. Every other unknown value
+/// fails closed.
 pub fn playback_block_reason(state: Option<&str>) -> Option<&'static str> {
     match state {
         None | Some("clean") => None,

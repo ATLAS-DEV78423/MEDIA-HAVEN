@@ -61,6 +61,10 @@ async fn migrations_are_idempotent() {
     let (dir, db) = temp_db_path();
 
     let first = pool::connect_path(&db).await.expect("first migrate");
+    let expected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(&first)
+        .await
+        .expect("read first migration bookkeeping");
     first.close().await;
 
     let second = pool::connect_path(&db).await.expect("second migrate");
@@ -68,7 +72,10 @@ async fn migrations_are_idempotent() {
         .fetch_one(&second)
         .await
         .expect("read migration bookkeeping");
-    assert_eq!(applied, 6, "migrations were re-applied instead of skipped");
+    assert_eq!(
+        applied, expected,
+        "migrations were re-applied instead of skipped"
+    );
 
     let kind_column: String =
         sqlx::query("SELECT type FROM pragma_table_info('media_items') WHERE name = 'kind'")

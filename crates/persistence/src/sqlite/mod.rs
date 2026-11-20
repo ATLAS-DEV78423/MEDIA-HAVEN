@@ -4,9 +4,11 @@
 //! policy decisions and no HTTP work, per ADR-0003 and the crate boundary.
 
 pub mod cleanup_repo;
+pub mod imdb_cache_repo;
 pub mod library_repo;
 pub mod pool;
 
 pub use cleanup_repo::{CleanupRepository, ManagedFileRow};
+pub use imdb_cache_repo::{ImdbCacheRepository, IMDB_CACHE_TTL_SECONDS};
 pub use library_repo::SqliteLibraryRepository;
 pub use pool::{connect, connect_path, run_migrations};

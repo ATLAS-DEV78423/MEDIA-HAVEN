@@ -166,6 +166,47 @@ export function SettingsPage() {
         </section>
 
         <section className={styles.group}>
+          <h2 className={styles.groupTitle}>IMDb &amp; OMDb (opt-in)</h2>
+          <Panel tone="quiet">
+            <FieldRow
+              label="IMDb ratings & listings"
+              hint="Off by default. When enabled, a title/year or IMDb id is sent only to IMDb dataset files you supply yourself."
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={false}
+                aria-label="IMDb ratings and listings"
+                disabled
+                className={styles.disabledSwitch}
+              >
+                Not available
+              </button>
+            </FieldRow>
+            <FieldRow
+              label="OMDb age ratings"
+              hint="Off by default. When enabled, an IMDb id is sent to OMDb with a key you supply from the secret store. No key is stored in the app."
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={false}
+                aria-label="OMDb age ratings"
+                disabled
+                className={styles.disabledSwitch}
+              >
+                Not available
+              </button>
+            </FieldRow>
+            <p className={styles.rootHint}>
+              Neither switch is wired to a backend command in this build, so both
+              stay off. Local NFO and TMDB metadata is unchanged. Ratings and age
+              ratings: IMDb / OMDb.
+            </p>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
           <h2 className={styles.groupTitle}>Acquisition</h2>
           <Panel>
             <FieldRow

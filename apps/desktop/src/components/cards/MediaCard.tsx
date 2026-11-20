@@ -4,6 +4,7 @@ import { ProgressBar } from "@/components/ui/Controls";
 import { Icon } from "@/components/ui/Icon";
 import type { Media } from "@/data/catalog";
 import styles from "./card.module.css";
+import { ImdbRating, type ImdbDisplayFields } from "./ImdbRating";
 
 export function MediaCard({
   media,
@@ -13,7 +14,7 @@ export function MediaCard({
   badge,
   fill = false,
 }: {
-  media: Media;
+  media: Media & ImdbDisplayFields;
   progress?: number;
   label?: string;
   variant?: "still" | "wide";
@@ -57,6 +58,12 @@ export function MediaCard({
       <span className={styles.meta}>
         <span className={styles.title}>{media.title}</span>
         <span className={styles.sub}>{label ?? fallback}</span>
+        <ImdbRating
+          compact
+          imdbRating={media.imdbRating}
+          voteCount={media.voteCount}
+          ageRating={media.ageRating}
+        />
       </span>
     </Link>
   );

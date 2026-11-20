@@ -1,6 +1,6 @@
 {
   "name": "@mediahaven/desktop",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "MEDIA_HAVEN desktop frontend — TV-style React UI for the Tauri host",

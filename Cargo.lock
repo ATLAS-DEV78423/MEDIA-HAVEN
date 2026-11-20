@@ -2255,6 +2255,7 @@ dependencies = [
  "hmac",
  "media-acquisition",
  "media-library",
+ "media-metadata",
  "media-persistence",
  "serde",
  "serde_json",

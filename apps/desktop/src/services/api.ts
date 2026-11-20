@@ -38,6 +38,14 @@ export interface QueueScreen {
   entries: QueueEntry[];
 }
 
+/* Display-only fields from the opt-in, offline IMDb/OMDb lookup. No dataset
+ * path, API key or token is part of this wire shape. */
+export interface ImdbLookup {
+  imdbRating?: number | null | undefined;
+  voteCount?: number | null | undefined;
+  ageRating?: string | null | undefined;
+}
+
 const NO_QUERY: BrowseQuery = { sort: "recent", genre: null, limit: 200, offset: 0 };
 
 export const api = {
@@ -51,7 +59,17 @@ export const api = {
   shows: (query: BrowseQuery = NO_QUERY) =>
     call<SeriesDetail[]>("library_shows", { query }),
 
-  detail: (id: string) => call<MediaDetail>("library_detail", { id }),
+  detail: async (id: string): Promise<MediaDetail> => {
+    const base = await call<MediaDetail>("library_detail", { id });
+    try {
+      const imdb = await call<ImdbLookup>("imdb_lookup", { media_id: id });
+      return { ...base, ...imdb } as MediaDetail;
+    } catch {
+      // The offline opt-in lookup is additive: a failure (including opt-in off
+      // on the backend) must never break the local detail view.
+      return base;
+    }
+  },
 
   episodes: (seriesId: string, seasonNumber: number) =>
     call<EpisodeSummary[]>("library_episodes", {
@@ -106,4 +124,8 @@ export const api = {
     call<null>("playback_checkpoint", {
       request: { mediaId, positionSeconds, durationSeconds },
     }),
+
+  /** Attach an operator-supplied source to one item (R-01 / ADR-0021). */
+  sourceSet: (mediaId: string, source: string) =>
+    call<null>("source_set", { media_id: mediaId, source }),
 };

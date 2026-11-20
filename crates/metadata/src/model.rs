@@ -11,6 +11,8 @@ pub(crate) const MAX_TITLE_CHARS: usize = 512;
 pub(crate) const MAX_SYNOPSIS_CHARS: usize = 4000;
 pub(crate) const MAX_GENRE_CHARS: usize = 64;
 pub(crate) const MAX_GENRES: usize = 32;
+/// Certification strings are short ("PG-13", "R"); anything longer is hostile.
+pub(crate) const MAX_AGE_RATING_CHARS: usize = 32;
 
 /// Why a sidecar was not used. Every variant is a refusal, not a fallback the
 /// caller may ignore silently: the scanner reports it against the file.
@@ -51,6 +53,31 @@ impl NfoDocument {
             genres: self.genres,
         }
     }
+}
+
+/// One IMDb listing, merged from `title.basics` + `title.ratings`.
+///
+/// Display-only. `age_rating` is filled by the opt-in OMDb seam (Task 1); the
+/// official IMDb datasets carry no certification, so it stays `None` here.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ImdbRecord {
+    pub imdb_id: String,
+    pub title: String,
+    pub year: Option<i64>,
+    pub genres: Vec<String>,
+    pub rating: Option<f64>,
+    pub votes: Option<i64>,
+    pub age_rating: Option<String>,
+}
+
+/// Why an IMDb dataset could not be used. Every variant refuses the dataset;
+/// the caller degrades to local data rather than showing a partial record.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ImdbError {
+    #[error("imdb dataset is not valid UTF-8")]
+    NotUtf8,
+    #[error("imdb dataset could not be read: {0}")]
+    Unreadable(String),
 }
 
 /// Paths checked for a sidecar, most specific first.

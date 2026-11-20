@@ -5,12 +5,22 @@
 //! only behind an explicit, off-by-default opt-in.
 
 pub mod cache;
+pub mod imdb;
 pub mod model;
 pub mod nfo;
+pub mod omdb;
 pub mod tmdb;
 
-pub use model::{NfoDocument, NfoError, MAX_NFO_BYTES};
+pub use cache::{RatingCache, CACHE_TTL, DEFAULT_IMDB_CACHE_MAX_BYTES};
+pub use imdb::{
+    merge, parse_age_ratings, parse_basics, parse_ratings, FileImdbFetch, ImdbFetch, ImdbOptions,
+    ImdbProvider, MemoryFetch, IMDB_ATTRIBUTION,
+};
+pub use model::{ImdbError, ImdbRecord, NfoDocument, NfoError, MAX_NFO_BYTES};
 pub use nfo::{parse, read_beside};
+pub use omdb::{
+    api_key_from_env, MemoryOmdbFetch, OmdbError, OmdbFetch, OmdbOptions, OmdbProvider, API_KEY_ENV,
+};
 pub use tmdb::{TmdbLookup, TmdbOptions, TmdbProvider, TMDB_ATTRIBUTION};
 
 use app_core::domain::{AppError, AppErrorCode, MetadataRecord};

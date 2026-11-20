@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
+import { ImdbRating } from "@/components/cards/ImdbRating";
 import { MediaCard } from "@/components/cards/MediaCard";
 import { Shelf } from "@/components/shelf/Shelf";
 import { ActionButton, Chip, ProgressBar, buttonClass } from "@/components/ui/Controls";
@@ -18,6 +19,39 @@ import type { EpisodeSummary, MediaDetail } from "@/services/types";
 import { useAppState } from "@/state/AppState";
 import styles from "./details.module.css";
 
+/* Mirrors the Rust trust boundary for R-01 (ADR-0021). The backend repeats
+ * this validation; the UI only avoids sending a source it already knows is
+ * invalid. Rejections never echo the input, so no path reaches the screen. */
+const MAX_SOURCE_LEN = 2048;
+const MAGNET_PREFIX = "magnet:?xt=urn:btih:";
+
+function hasControl(value: string): boolean {
+  return Array.from(value).some((ch) => {
+    const code = ch.codePointAt(0) ?? 0;
+    return code <= 0x1f || code === 0x7f;
+  });
+}
+
+function sourceProblem(raw: string): string | null {
+  const source = raw.trim();
+  if (!source) return "Enter a magnet link or a .torrent file name.";
+  if (source.length > MAX_SOURCE_LEN || hasControl(source)) {
+    return "That source is too long or contains invalid characters.";
+  }
+  const lower = source.toLowerCase();
+  if (lower.startsWith(MAGNET_PREFIX)) return null;
+  if (
+    lower.endsWith(".torrent") &&
+    source.length > ".torrent".length &&
+    !/[\\/:]/.test(source) &&
+    !source.includes("..") &&
+    !source.startsWith(".")
+  ) {
+    return null;
+  }
+  return "Use a magnet link or a bare .torrent file name — no paths.";
+}
+
 export function MediaDetailsPage() {
   const { mediaId } = useParams();
   const navigate = useNavigate();
@@ -28,6 +62,10 @@ export function MediaDetailsPage() {
   const [seasonNumber, setSeasonNumber] = useState<number | null>(null);
   const [episodes, setEpisodes] = useState<EpisodeSummary[]>([]);
   const [episodeError, setEpisodeError] = useState<string | null>(null);
+  const [source, setSource] = useState("");
+  const [sourceError, setSourceError] = useState<string | null>(null);
+  const [sourceSaved, setSourceSaved] = useState(false);
+  const [savingSource, setSavingSource] = useState(false);
 
   const loadDetail = useCallback(async () => {
     if (!mediaId) return;
@@ -35,6 +73,9 @@ export function MediaDetailsPage() {
     setDetailError(null);
     setEpisodes([]);
     setSeasonNumber(null);
+    setSource("");
+    setSourceError(null);
+    setSourceSaved(false);
     try {
       setDetail(await api.detail(mediaId));
     } catch (error) {
@@ -48,6 +89,27 @@ export function MediaDetailsPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadDetail]);
+
+  const saveSource = useCallback(async () => {
+    if (!mediaId) return;
+    const problem = sourceProblem(source);
+    if (problem) {
+      setSourceError(problem);
+      setSourceSaved(false);
+      return;
+    }
+    setSourceError(null);
+    setSavingSource(true);
+    try {
+      await api.sourceSet(mediaId, source.trim());
+      setSourceSaved(true);
+    } catch (error) {
+      setSourceError(describeError(error));
+      setSourceSaved(false);
+    } finally {
+      setSavingSource(false);
+    }
+  }, [mediaId, source]);
 
   const activeSeason =
     detail?.kind === "series"
@@ -244,7 +306,56 @@ export function MediaDetailsPage() {
               </div>
             ))}
           </dl>
+
+          <ImdbRating
+            imdbRating={detail?.imdbRating}
+            voteCount={detail?.voteCount}
+            ageRating={detail?.ageRating}
+          />
         </div>
+
+        <section className={styles.sourceSection} aria-label="Acquisition source">
+          <label className={styles.sourceLabel} htmlFor="item-source">
+            Source
+          </label>
+          <p className={styles.sourceHint}>
+            Attach a magnet link or a bare <code>.torrent</code> file name you
+            already hold. Nothing is discovered or downloaded by this field.
+          </p>
+          <div className={styles.sourceRow}>
+            <input
+              id="item-source"
+              className={styles.sourceInput}
+              type="text"
+              value={source}
+              onChange={(event) => {
+                setSource(event.target.value);
+                setSourceSaved(false);
+              }}
+              placeholder="magnet:?xt=urn:btih:… or episode.torrent"
+              aria-invalid={sourceError !== null}
+              disabled={savingSource}
+              data-focusable="true"
+            />
+            <ActionButton
+              variant="glass"
+              onClick={() => void saveSource()}
+              disabled={savingSource}
+            >
+              Save source
+            </ActionButton>
+          </div>
+          {sourceError ? (
+            <p className={styles.sourceError} role="alert">
+              {sourceError}
+            </p>
+          ) : null}
+          {sourceSaved ? (
+            <p className={styles.sourceSaved} role="status">
+              Source saved for this item.
+            </p>
+          ) : null}
+        </section>
 
         {detail?.kind === "movie" && detail.cast.length > 0 ? (
           <p className={styles.synopsis} style={{ marginTop: "var(--s-6)" }}>

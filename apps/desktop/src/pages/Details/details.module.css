@@ -194,6 +194,74 @@
   color: var(--paper-90);
 }
 
+/* R-01 source field (ADR-0021): host-internal value, never a path in a DTO. */
+.sourceSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  margin-top: var(--s-7);
+  padding-block-start: var(--s-6);
+  border-top: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.sourceLabel {
+  font-size: var(--text-micro);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--paper-38);
+}
+
+.sourceHint {
+  max-width: var(--measure-copy);
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: var(--leading-copy);
+  color: var(--paper-72);
+}
+
+.sourceRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+
+.sourceInput {
+  flex: 1;
+  min-width: 0;
+  height: var(--field-h);
+  padding-inline: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--fill-6);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  color: var(--paper);
+  font-size: var(--text-body);
+}
+
+.sourceInput:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.sourceInput[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.sourceError,
+.sourceSaved {
+  margin: var(--s-1) 0 0;
+  font-size: var(--text-small);
+}
+
+.sourceError {
+  color: var(--danger);
+}
+
+.sourceSaved {
+  color: var(--success);
+}
+
 .episodes {
   margin-top: var(--s-9);
   padding-block-start: var(--s-7);

@@ -5,6 +5,7 @@
 //! byte cap. No network, no logging of keys (they may contain search terms).
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -88,5 +89,69 @@ impl Cache {
             }
         }
         Ok(())
+    }
+}
+
+/// Age-rating cache size cap. Certifications are a few bytes; 1 MiB is ample
+/// and keeps a hostile dataset from growing the cache without bound.
+pub const DEFAULT_IMDB_CACHE_MAX_BYTES: u64 = 1024 * 1024;
+
+/// In-memory twin of the SQLite `imdb_cache` table, used by the OMDb provider.
+/// Same contract: 30-day TTL, byte cap, oldest-first eviction. No network, no
+/// file I/O; the durable adapter lives in `media-persistence`.
+#[derive(Debug)]
+pub struct RatingCache {
+    entries: HashMap<String, (String, SystemTime)>,
+    max_bytes: u64,
+}
+
+impl RatingCache {
+    pub fn new(max_bytes: u64) -> Self {
+        Self {
+            entries: HashMap::new(),
+            max_bytes,
+        }
+    }
+
+    /// Fresh payload for `id`, or `None` on a miss or stale entry.
+    pub fn get(&self, id: &str) -> Option<String> {
+        let (payload, stored_at) = self.entries.get(id)?;
+        if stored_at.elapsed().unwrap_or(CACHE_TTL) >= CACHE_TTL {
+            return None;
+        }
+        Some(payload.clone())
+    }
+
+    pub fn put(&mut self, id: &str, payload: &str) {
+        self.put_at(id, payload, SystemTime::now());
+    }
+
+    /// Seeding seam for restoring a durable entry and for freshness tests.
+    pub fn put_at(&mut self, id: &str, payload: &str, stored_at: SystemTime) {
+        self.entries
+            .insert(id.to_string(), (payload.to_string(), stored_at));
+        self.enforce_cap();
+    }
+
+    fn enforce_cap(&mut self) {
+        let total: u64 = self.entries.values().map(|(p, _)| p.len() as u64).sum();
+        if total <= self.max_bytes {
+            return;
+        }
+        let mut excess = total - self.max_bytes;
+        let mut oldest: Vec<(String, SystemTime)> = self
+            .entries
+            .iter()
+            .map(|(id, (_, at))| (id.clone(), *at))
+            .collect();
+        oldest.sort_by_key(|(_, at)| *at);
+        for (id, _) in oldest {
+            if excess == 0 {
+                break;
+            }
+            if let Some((payload, _)) = self.entries.remove(&id) {
+                excess = excess.saturating_sub(payload.len() as u64);
+            }
+        }
     }
 }

@@ -442,6 +442,24 @@ pub fn download_add(source: String) -> Result<Value, CommandError> {
     post_internal("host/acquisition_add", json!({ "source": source }))
 }
 
+/// Attach an operator-supplied source to an item (R-01 / ADR-0021). Forwarded to
+/// the host-internal core route; the renderer never sees a path or credential.
+#[tauri::command]
+pub fn source_set(media_id: String, source: String) -> Result<Value, CommandError> {
+    post_internal(
+        "host/acquisition_source_set",
+        json!({ "mediaId": media_id, "source": source }),
+    )
+}
+
+/// Display-only IMDb/OMDb fields for a media id, from the opt-in offline TSV
+/// datasets on the backend. A host-internal route, not a renderer POST command,
+/// so the 24-command parity surface is unchanged (ADR-0018).
+#[tauri::command]
+pub fn imdb_lookup(media_id: String) -> Result<Value, CommandError> {
+    post_internal("host/imdb_lookup", json!({ "mediaId": media_id }))
+}
+
 /// Current acquisition rows (path-free identities) from the host-internal route.
 #[tauri::command]
 pub fn download_status() -> Result<Value, CommandError> {

@@ -1,0 +1,46 @@
+/* Token-only styling (Development.md §7.3). No literal colours or px. */
+
+.root {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2);
+  padding: var(--s-1) var(--s-2);
+  border-radius: var(--r-xs);
+  background: var(--black-42);
+  border: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.score {
+  font-size: var(--text-small);
+  font-weight: var(--weight-semibold);
+  color: var(--paper);
+  white-space: nowrap;
+}
+
+.votes {
+  font-size: var(--text-micro);
+  font-weight: var(--weight-medium);
+  color: var(--paper-54);
+}
+
+.cert {
+  padding-inline: var(--s-2);
+  border-inline: var(--hairline) solid var(--glass-edge-soft);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-semibold);
+  color: var(--paper-90);
+  letter-spacing: var(--tracking-wide);
+}
+
+.attribution {
+  font-size: var(--text-micro);
+  color: var(--paper-38);
+}
+
+.compact {
+  gap: var(--s-1);
+  background: none;
+  border: none;
+  padding: 0;
+}

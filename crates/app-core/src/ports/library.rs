@@ -69,4 +69,9 @@ pub trait LibraryRepository: Send + Sync {
     async fn download_remove(&self, id: &str) -> Result<(), AppError>;
     async fn prefetch_upsert(&self, entry: &PrefetchEntry) -> Result<(), AppError>;
     async fn cleanup_eligible(&self) -> Result<Vec<CleanupEntry>, AppError>;
+
+    // R-01 per-item sources (ADR-0021). Operator-supplied only; no path in a
+    // renderer DTO and no source is discovered or invented.
+    async fn source_for_media(&self, media_id: &str) -> Result<Option<String>, AppError>;
+    async fn set_item_source(&self, media_id: &str, source: &str) -> Result<(), AppError>;
 }

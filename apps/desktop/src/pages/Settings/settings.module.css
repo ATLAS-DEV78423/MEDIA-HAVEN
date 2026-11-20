@@ -50,6 +50,16 @@
   color: var(--paper-54);
 }
 
+.disabledSwitch {
+  padding: var(--s-1) var(--s-3);
+  border-radius: var(--r-pill);
+  border: var(--hairline) solid var(--glass-edge-soft);
+  background: var(--glass-bg-quiet);
+  font-size: var(--text-micro);
+  color: var(--paper-38);
+  cursor: not-allowed;
+}
+
 .about {
   max-width: var(--measure-copy);
   font-size: var(--text-small);

@@ -139,4 +139,11 @@ impl<R: LibraryRepository> LibraryService<R> {
     pub async fn cleanup_eligible(&self) -> Result<Vec<CleanupEntry>, AppError> {
         self.repo.cleanup_eligible().await
     }
+    /// Operator-supplied source for an item, if one was attached (ADR-0021).
+    pub async fn source_for_media(&self, media_id: &str) -> Result<Option<String>, AppError> {
+        self.repo.source_for_media(media_id).await
+    }
+    pub async fn set_item_source(&self, media_id: &str, source: &str) -> Result<(), AppError> {
+        self.repo.set_item_source(media_id, source).await
+    }
 }

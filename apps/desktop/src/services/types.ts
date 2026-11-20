@@ -32,6 +32,10 @@ export interface MediaSummary {
   artwork: ArtworkRef[];
   availability: MediaAvailability;
   progress: PlaybackProgress | null;
+  /** Display-only IMDb data. Absent/null until opted in and cached. */
+  imdbRating?: number | null;
+  voteCount?: number | null;
+  ageRating?: string | null;
 }
 
 export interface MovieDetail {
@@ -47,6 +51,10 @@ export interface MovieDetail {
   progress: PlaybackProgress | null;
   director: string | null;
   cast: string[];
+  /** Display-only IMDb data. Absent/null until opted in and cached. */
+  imdbRating?: number | null;
+  voteCount?: number | null;
+  ageRating?: string | null;
 }
 
 export interface SeasonSummary {
@@ -64,6 +72,10 @@ export interface SeriesDetail {
   genres: string[];
   artwork: ArtworkRef[];
   seasons: SeasonSummary[];
+  /** Display-only IMDb data. Absent/null until opted in and cached. */
+  imdbRating?: number | null;
+  voteCount?: number | null;
+  ageRating?: string | null;
 }
 
 export type MediaDetail = MovieDetail | SeriesDetail;
@@ -264,4 +276,10 @@ export interface BrowseQuery {
   genre: string | null;
   limit: number;
   offset: number;
+}
+
+/** Named `source_set` command payload. Operator-supplied, never a path. */
+export interface SourceSetRequest {
+  media_id: string;
+  source: string;
 }
