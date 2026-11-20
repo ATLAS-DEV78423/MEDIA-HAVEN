@@ -71,3 +71,38 @@
   gap: var(--s-3);
   margin-top: var(--s-5);
 }
+
+.rootRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.rootInput {
+  flex: 1;
+  min-width: 0;
+  padding: var(--s-2) var(--s-3);
+  border: var(--hairline) solid var(--glass-edge);
+  border-radius: var(--r-sm);
+  background: var(--ink-700);
+  color: var(--paper-90);
+  font-size: var(--text-small);
+}
+
+.rootInput:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.rootHint {
+  margin-top: var(--s-3);
+  font-size: var(--text-small);
+  color: var(--paper-54);
+}
+
+.rootError {
+  margin-top: var(--s-3);
+  font-size: var(--text-small);
+  color: var(--danger);
+}

@@ -96,10 +96,14 @@ pub fn default_data_dir() -> PathBuf {
 
 /// Assemble the full route table.
 pub fn build_router(state: AppState) -> Router {
-    let protected = protected_router().layer(middleware::from_fn_with_state(
-        state.clone(),
-        auth::require_auth,
-    ));
+    // Host-internal acquisition routes share the signed auth middleware but
+    // stay outside the renderer command surface (see acquisition.rs).
+    let protected = protected_router()
+        .merge(crate::acquisition::host_router())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_auth,
+        ));
 
     public_router()
         .merge(protected)
@@ -156,6 +160,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         .with_context(|| format!("could not open {}", database.display()))?;
     crate::seed::seed_if_requested(&pool).await?;
     let service = LibraryService::new(SqliteLibraryRepository::new(pool));
+    let recovered = service.recover_interrupted_scans().await?;
+    if recovered > 0 {
+        tracing::warn!(recovered, "marked interrupted library scans as errors");
+    }
     let state = AppState::new(service, config.token);
 
     let app = build_router(state);

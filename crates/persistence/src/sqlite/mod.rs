@@ -3,8 +3,10 @@
 //! The adapter owns schema shape, transactions and SQL only. It performs no
 //! policy decisions and no HTTP work, per ADR-0003 and the crate boundary.
 
+pub mod cleanup_repo;
 pub mod library_repo;
 pub mod pool;
 
+pub use cleanup_repo::{CleanupRepository, ManagedFileRow};
 pub use library_repo::SqliteLibraryRepository;
 pub use pool::{connect, connect_path, run_migrations};

@@ -2,49 +2,260 @@
 
 ## Last updated
 
-2026-11-18 (session: backend completion master plan written; frontend rebuilt on a single token system and wired to the real backend; D2 local NFO metadata, A2 Tauri host scaffold, and A3 token provisioning + A4 supervisor landed)
+2026-11-20 (torrent-acquisition conversion + FINAL REVIEW FIX WAVE complete). The
+2026-11-19 entry and earlier sections are retained as history and are explicitly
+superseded where they disagree with the newest entry.
+
+## 2026-11-20 — Final review fix wave (consolidated findings 1–10)
+
+Reviewed whole-branch findings and fixed every listed item. No checkpoint
+passed; no commit/push/install/host/container change; Playwright and Vite config
+untouched; no new dependency; all Rust verification reused `CARGO_TARGET_DIR=target/verify`.
+
+- **F1 — persistence gap closed.** The host `/host/acquisition_add` route now
+  persists each acquired item through the existing `LibraryService::download_add`
+  port; `download_add` also INSERTs the `file_mappings` row (hash, host-internal
+  container path, nullable media_id) in the same transaction. Cleanup can now
+  see `app_managed=true`. Renderer DTOs remain path-free (`DownloadItem` carries
+  no path; a persistence test asserts no `filePath`/`/downloads/` in its JSON).
+- **F2 — no file deletion in `core`.** Removed `std::fs::remove_file` from the
+  cleanup worker. `core` has only `:ro /downloads`; deletion is delegated to qB
+  via `TorrentApi::remove(hash, true)` (rw bind). `exists` is a read-only
+  post-condition probe. KeepFiles keeps every file (qB task-only removal).
+- **F3 — no false success / AC-10.** The `needed` set now excludes the target
+  media_id (its state flips to Watched only after success). `reconcile` requires
+  a positive verified deletion count for `Removed`; a zero-file result maps to
+  `failed` ("no files deleted; kept for still-needed episodes"). Added two
+  integration tests through the production reconciliation path (real SQLite,
+  fake qB, no injected predicate): a genuinely app-managed, grace-elapsed,
+  confirmed-complete entry is really deleted and reported `removed`; a
+  zero-removal (still-needed sibling) case is reported `failed` and deletes
+  nothing. Both PASS.
+- **F4 — honest matrix.** `docs/testing/acquisition-matrix.md` criteria 8–10
+  downgraded to **PASS (pure policy) / NOT RUN (live wiring)**.
+- **F5 — no tokio blocking.** Prefetch enqueue runs in `spawn_blocking`
+  (10 s qB timeouts no longer block the worker; std/tokio only).
+- **F6 — live-session gate release.** `playback_start` now calls the backend
+  `playback_stop` if host mpv/source resolution fails after the backend marked
+  the media as the live session, so cleanup is not blocked until restart.
+
+### Verification (observed in this wave)
+
+| Check | Result |
+|-------|--------|
+| `cargo fmt --all -- --check` | **PASS**, exit 0 |
+| `cargo clippy -p media-acquisition -p media-persistence -p mediahaven-core -p mediahaven-contract -p mediahaven-desktop --all-targets -- -D warnings` | **PASS**, exit 0 |
+| `cargo test` (same five packages) | **PASS**, exit 0 — 122 passed, 0 failed, 1 ignored; 24-command route parity `command_lists_derive_from_one_source ... ok` |
+| Frontend `typecheck` / `lint` / `test` / `check:tokens` / `build` / `check:bundle` | **PASS**, exit 0 × 6; Vitest 6 files / 18 tests; tokens 66 files / 0 violations; build 93 modules |
+| `git diff --check` | **PASS**, exit 0 (one pre-existing CRLF warning on untouched `Cargo.toml`) |
+
+Live qB deletion, real-media appearance/playback and confirmed completion
+remain **NOT RUN** (no lawful source; mpv engine absent). Full evidence and the
+full text of changed untracked sources:
+`.superpowers/sdd/2026-11-20-torrent-acquisition-conversion/final-fix-report.md`.
+
+### Gate and next action
+
+No checkpoint passed. CP-5/CP-6 gain evidence but stay OPEN pending human
+review. Next safe action: supply a lawful source and a human-reviewed
+per-episode mapping, then run the live acquire → play → prefetch → cleanup
+chain and obtain human CP sign-off.
+
+## 2026-11-20 — Torrent-acquisition conversion complete (Tasks 1–7)
+
+ADRs 0017 (conversion / supersede local-playback-first), 0018 (qBittorrent
+boundary) and 0019 (app-managed cleanup only) were **Accepted by the human
+partner on 2026-11-20** and recorded by the controller as scribe; no ADR was
+self-accepted. Implemented against the target spec
+`media_haven_consolidated_specification.md` per
+`docs/superpowers/plans/2026-11-20-torrent-acquisition-conversion.md`.
+
+### What shipped, by task
+
+- **Task 1 — acquisition records.** Migration `0004_acquisition.sql`
+  (`torrent_tasks`, `download_items`, `file_mappings`, `prefetch_entries`,
+  `cleanup_entries`); path-free camelCase domain types; `LibraryRepository`
+  port methods and transactional SQLite implementation; multi-episode mapping
+  test. Fixed the legacy `DownloadTask.state` wire contract (snake_case restored)
+  so the renderer union did not drift.
+- **Task 2 — qB sandbox + download store.** `qbittorrent` service on an egress
+  `acquire` bridge, no published port, `cap_drop ALL`, `no-new-privileges`, UID
+  10003; host-bound `/downloads:rw` into qB and `/downloads:ro` into `core`,
+  `/downloads` added to the host path map for mpv. Pre-chowning
+  `Dockerfile.qbittorrent` cleared the engine's exit-134 liveness blocker.
+- **Task 3 — loopback WebUI client.** Std-only `QbClient` (`TcpStream` +
+  `serde_json`, no new dependency) with mandatory login (PBKDF2 config generated
+  from the injected token), cookie auth, form encoding, non-2xx → `QbError::Api`;
+  fake-server tests; single shared host download store; cross-container WebUI
+  reachability and read-only bind proven live.
+- **Task 4 — acquisition flow + UI.** Source validation at the trust boundary
+  (magnet / bare `.torrent` only, no paths), `download_exists` duplicate
+  suppression, named `download_add/status/remove` commands routed as signed
+  `/host/` core calls, real Downloads rows + Add/Remove dialog and Settings
+  acquisition-root control (`AcquisitionRow` path-free). Live signed core→qB
+  add/status/remove returned HTTP 200.
+- **Task 5 — rolling two-episode buffer.** Pure per-series ordering (next two in
+  season, stop at season/final boundary), skip-existing, 90%-of-20-GiB pause
+  (`bufferNotice`, message string only) shared between enqueue decision and UI;
+  prefetch triggered from `playback_start` after policy checks and never fails
+  the playback session.
+- **Task 6 — completion → coordinated cleanup (release blocker CLEARED).**
+  B5-confirmed completion (≥90% watched + near EOF, seeking/close never confirm),
+  24 h replay grace, not-playing and not-prefetch exclusions; cleanup confined to
+  app-managed `file_mappings` inside `/downloads` with a zero-deletion file-count
+  proof; NULL-`media_id` siblings fail closed as still-needed; multi-episode
+  `remove(hash, false)` when a sibling is needed; reconciliation to `removed` or
+  `failed` with a visible outcome; live playback session registry and 1 h
+  scheduler wired through signed `/host/` routes.
+
+### Verification (observed; this documentation task did not re-run the suites)
+
+| Check | Result |
+|-------|--------|
+| `cargo fmt --all -- --check` | **PASS**, exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | **PASS**, exit 0 |
+| `cargo test --workspace` | **PASS**, exit 0 — **84 passed, 0 failed, 1 ignored** (`searching_10k_items_is_within_budget`); 24-command parity `command_lists_derive_from_one_source ... ok` |
+| `cargo test -p mediahaven-desktop` | **PASS**, exit 0 — 36 passed, 0 failed |
+| Task 6 cleanup suite | **PASS** — 14/14 incl. zero-deletion file-count release blocker |
+| Frontend `typecheck` / `lint` / `test` / `check:tokens` / `build` / `check:bundle` | **PASS** — exit 0 × 6; Vitest 6 files / 18 tests; tokens 66 files, 0 violations |
+| `docker compose config --quiet` (all vars / no vars) | **PASS** — exit 0 / exit 1 (fail-closed) |
+| Live qB boundary + shared `/downloads` store + WebUI auth (login 204 / authed 200 / unauth 403) | **PASS** (Task 2/3 evidence) |
+| `git diff --check` | **PASS**, exit 0 |
+| Specification acceptance matrix | `docs/testing/acquisition-matrix.md` — 12 criteria mapped (PASS, PASS-mechanism/NOT-RUN-live, and NOT RUN stated honestly) |
+
+Two transient `LNK1104` linker file-locks occurred in the default target dir
+during earlier task runs; a straight retry exited 0 with no code change (not a
+test failure). All cargo verification reused the single `target/verify` dir.
+
+### Deferrals / NOT RUN (honest gates)
+
+- **Live authorized-torrent acquisition, real-media appearance/playback and live
+  cleanup are NOT RUN** — no lawful source supplied and ADR-0018 forbids bundling
+  sources. Real mpv playback also NOT RUN (engine absent, `#[ignore]` test).
+  Acceptance criteria 1, 3, 5, 8, 10 and 12 are reported accordingly in the
+  acquisition matrix; no PASS was invented.
+- **Per-episode source mapping** (`source_for` stub → `None`) is a §15 gate; live
+  prefetch is a deliberate no-op, not a failure.
+- **Used-byte accounting** still returns 0, so `bufferNotice` is `null` in
+  production until real retained-byte accounting lands (non-null path unit-tested).
+- **Frontend cleanup-status rendering**, **scheduler persistence across `core`
+  restart**, **`.torrent` byte upload / bounded hash-index poll**, and
+  **second-machine LAN non-reachability** (human evidence gate) remain open.
+- No commit, push, install, host-feature or container-runtime configuration
+  change was made for the conversion; Playwright config and `vite.config.ts`
+  were untouched.
+
+### Gates
+
+- **No checkpoint passed.** CP-5/CP-6 gain evidence (data-loss exclusions, qB
+  boundary) but remain OPEN pending human review; CP-0…CP-4 and CP-7 unchanged.
+- Next safe action: supply a lawful source and a human-reviewed per-episode
+  mapping, then run the live acquisition → play → prefetch → cleanup chain; and
+  obtain human CP review. Do not mark any checkpoint passed by agent action.
+
+---
+
+## 2026-11-20 — Playback host wiring (ADR-0015 executable evidence)
+
+ADR-0015 is **Accepted** (2026-11-20, ADR-0016); code now depends on it. The
+renderer is driven by real mpv engine state when the Tauri host is present;
+the `SIMULATION_RATE = 4` clock remains **only** as a browser/dev fallback.
+
+### What changed
+
+- `GET /playback_source/:media_id` (signed, authenticated) returns the stored
+  container-path identity via a new `LibraryRepository::media_source_path` port,
+  service passthrough and SQLite lookup. It is a GET so the 24-command
+  POST-only route-parity surface is unchanged; no `COMMANDS` entry was added.
+- New host module `apps/desktop/src-tauri/src/player.rs`: `resolve_for_media`
+  (A9 map + `media_playback::resolve_source`, fails closed), a managed
+  `PlayerState` owning one `MpvPlayer`, a 500 ms `player://state` poller emitting
+  `{timePos, pause, volume, mediaId}` only, and named `player_control` controls.
+- `playback_start` now resolves host-side and opens mpv; resolution failure
+  returns a fixed `source unavailable` `CommandError`. `playback_stop` stops the
+  player (drop kills the child). `player_control` was registered in
+  `generate_handler!`.
+- New renderer bridge `src/services/player.ts`; `PlayerPage.tsx` follows engine
+  `timePos`/`pause`, routes seek/play/pause/volume through `player_control`, and
+  keeps checkpoint saves. New headless test mocks the event stream.
+- `crates/playback/src/mpv.rs` gained an additive `set_volume` inherent method
+  (+ one fake-Ipc test) so the named volume control is real. The `Player` port
+  and the 12 existing playback tests were otherwise untouched.
+- `apps/desktop/src-tauri/Cargo.toml` gained the existing workspace crate as a
+  path dependency (`media-playback`); no external dependency was added.
+
+### Verification
+
+Observed with a fresh `CARGO_TARGET_DIR=target/wiring-test` to work around the
+known default-target `LNK1104` file lock.
+
+| Check | Result | Notes |
+|---|---|---|
+| `cargo fmt --all` then `cargo fmt --all -- --check` | **PASS** exit 0 | |
+| `cargo clippy --workspace --all-targets -- -D warnings` | **PASS** exit 0 | |
+| `cargo test --workspace` | **PASS** exit 0 | 136 passed, 2 ignored (10k search budget + live mpv smoke) |
+| 24-command route parity | **PASS** | `command_lists_derive_from_one_source ... ok`; unchanged contract |
+| `npm run typecheck` | **PASS** exit 0 | |
+| `npm run lint` | **PASS** exit 0 | |
+| `npx vitest run` | **PASS** exit 0 | 13/13 (was 11; +2 PlayerPage engine-state tests) |
+| `npm run check:tokens` | **PASS** exit 0 | 63 UI files, 0 violations |
+| `npm run build` | **PASS** exit 0 | 92 modules |
+| `npm run check:bundle` | **PASS** exit 0 | no dev token / signed client in production bundle |
+
+### NOT RUN / remaining risk
+
+- Live mpv playback, codec matrix, hardware decode and the `player://state`
+  emission through a real WebView are **NOT RUN**: mpv is absent and installing
+  it needs human consent; the live test stays `#[ignore]`. No real file was
+  opened by a real engine.
+- The signed `GET /playback_source/:media_id` was not exercised against a live
+  `core` container (engine consent required).
+- No checkpoint was passed. **CP-3 remains OPEN.**
+- Evidence detail: `docs/security/boundary-evidence.md`; implementation report:
+  `.superpowers/sdd/2026-11-20-playback-wiring/report.md`.
 
 ## Current state
 
-The repository holds the approved engineering specification (`Development.md`), the
-checkpoint-driven roadmap, the documentation baseline and the agent tooling.
+The repository holds the approved engineering contract, the checkpoint-driven
+roadmap, the documentation baseline, a working React frontend, a working Rust
+backend, a Tauri host and a CI workflow. No checkpoint has passed: CP-0 evidence
+is still unmeasured and every later checkpoint is open.
 
-**The frontend is now built.** `apps/desktop` is a runnable Vite + React +
-TypeScript application implementing the Apple TV-style interface from
-`Development.md` §7.4. It runs in a browser at `http://localhost:5173/` via
-`npm run dev`. The backend does not yet exist; the frontend's data-dependent
-acceptance criteria remain open until the backend lands (P4-08).
+Built and verified at HEAD `7d48507`: React TV UI wired to the host through named
+Tauri commands; Rust workspace of seven crates including `app-core`, `core`,
+`media-library`, `metadata`, `persistence`, `contract` and `mediahaven-desktop`;
+SQLite migrations, scanner, watchlist, durable queue, settings/profiles; DPAPI
+per-install token, WSL supervisor and HMAC-signed command forwarder; CI with
+contract-drift and dependency-graph assertions.
 
-> **Superseded 2026-11-18:** the earlier component set, typed command contract,
-mock transport and Stitch/Tailwind pages were replaced by a full redesign on a
-single token system. The UI now reads fixture data from `src/data/catalog.ts`
-and keeps local state in `src/state/AppState.tsx`; there is no transport seam
-in the tree at the moment. The session report at the end of this file records
-what was verified and what remains open.
+Written but NOT RUN on a live engine: the `core`/`probe` images, the rendered
+Compose override, mount scope, token forwarding into `core`, boundary evidence
+and all container-based checkpoints. These need explicit Docker/WSL2 consent.
 
-**Rust workspace and Tauri host now exist.** `crates/{app-core,core,media-library,
-metadata,persistence}` build, and `apps/desktop/src-tauri` opens the MEDIA_HAVEN
-window. The host↔container boundary (P1-08) is still a design: the Tauri host has
-no supervisor, token or command surface yet, and the renderer still calls the API
-over HTTP with the development token.
+Superseded 2026-11-20: playback is no longer only simulated — the Tauri host now
+wires `crates/playback`/mpv and the renderer follows engine state; simulation is
+a dev-only fallback. See the 2026-11-20 entry above. TMDB provider, artwork
+cache, diagnostics bundle, safe mode, traversal CI suite, storage policy and
+installer are not built. (The original 2026-11-19 text said there was no
+playback crate or mpv adapter; that was true at that date.)
 
-Phase 0 has **not** started: no CP-0 acceptance criterion is satisfied, because
-every one of them requires an observed measurement, not a document.
+Superseded: earlier text in this file claimed "the backend does not yet exist",
+"No Rust workspace, no database" and "src-tauri is still empty". Those claims
+were true only for the 2026-11-15 baseline and were corrected on 2026-11-18 and
+again on 2026-11-19.
 
 ## Active task
 
-- **ID:** P4-01 … P4-07 — Frontend (TV experience, frontend-first)
-- **Goal:** Build the full frontend against a frozen contract and a development
-  mock, per ADR-0009.
-- **Status:** Implemented and verified locally; data-dependent acceptance
-  criteria remain open pending the backend (P4-08).
-- **Branch/commit:** `master`, tracking `origin/master`.
-  - `4d28f79` — docs: make Docker mandatory for v1 and resolve the runtime architecture
-  - `d826523` — chore: pin line endings with .gitattributes
-  - `56dc4f9` — docs: record the baseline commits and push in progress.md
-  - `c86ffd4` — docs: add the missing watchlist feature to the specification
-  - `c9a1675` — feat: build the full frontend against a frozen command contract
-  - `8e49047` — style: apply the MEDIA HAVEN cinematic design system
+- **Task:** Documentation reconciliation + code check (2026-11-19); no product
+  feature is active until ADR-0015 is accepted and engine consent is given.
+- **Branch/HEAD:** `master`, HEAD `7d48507`.
+- **Six newest commits** (`git log -6 --oneline`, verbatim):
+  - `7d48507` test(queue): make crash-consistency test exercise queue_reorder
+  - `033b71a` feat(queue): durable reorder and removal history
+  - `f5a379f` docs(adr): resolve B1 containment contradiction and HostPathMap naming
+  - `580f047` docs(adr): add proposed ADR-0015 for playback source token (B1)
+  - `16ff6b7` test(contract): make H2 route parser whitespace-tolerant and add independent POST count
+  - `39207fb` ci: add CI workflow, contract drift test and dependency-graph assertions
 
 ## Completed this session
 
@@ -104,17 +315,20 @@ every one of them requires an observed measurement, not a document.
 - Frontend: `apps/desktop` — Vite 7 + React 19 + TypeScript 5.9 + React Router 7,
   Vitest 3 + Testing Library, ESLint 9 flat config. 278 packages in
   `node_modules` (gitignored).
-- `apps/desktop/src-tauri/` is still empty. The Tauri shell and the
-  host↔backend boundary (P1-08) are backend-side work.
-- No Rust workspace, no database, no container images.
+- `apps/desktop/src-tauri/` hosts the Tauri 2 shell (`mediahaven-desktop`) with
+  the DPAPI per-install token, WSL supervisor and 24 named commands.
+- Seven-crate Rust workspace, SQLite persistence and container build files are
+  present. (Superseded 2026-11-19: the earlier claims that src-tauri was empty
+  and that there was no Rust workspace, database or container images described
+  only the 2026-11-15 baseline.)
 
 ### Decisions in force
-- Desktop shell: Tauri 2 (not yet scaffolded). Backend: Rust. Frontend: React + TypeScript (Vite).
+- Desktop shell: Tauri 2 (scaffolded 2026-11-18). Backend: Rust. Frontend: React + TypeScript (Vite).
 - Persistence: SQLite with migrations. Local-first, no mandatory accounts.
 - **Docker/Compose is mandatory for v1.** The backend and the media-inspection
   workload run in containers. There is no host-side backend fallback.
-- The Windows runtime distribution is **Proposed**: Docker Engine in a dedicated
-  WSL2 distro (ADR-0001 Part 2).
+- The Windows runtime distribution is **Accepted (provisional)** 2026-11-18:
+  Docker Engine in a dedicated WSL2 distro (ADR-0001 Part 2). P0 evidence is still owed.
 - **Playback runs on the Windows host** — an intentional, documented exception
   (ADR-0002). The backend stays the authority on what to play.
 - **Frontend-first delivery** (ADR-0009): the interface is built against a frozen
@@ -136,54 +350,56 @@ every one of them requires an observed measurement, not a document.
 - WSL2 VM memory ceiling observed at 8 073 883 648 bytes (8 GB), 20 CPUs visible.
 - 12 unrelated containers already running on the shared engine.
 
-### Known working commands
+## Known working commands
+
 - Frontend dev server: `cd apps/desktop && npm run dev` (port 5173)
-- Typecheck: `npm run typecheck`
-- Lint: `npm run lint`
-- Tests: `npm test`
-- Token check: `npm run check:tokens`
-- Build: `npm run build`
+- Frontend: `npm run typecheck`, `npm run lint`, `npm test`, `npm run check:tokens`,
+  `npm run check:bundle`, `npm run build`
+- Rust: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace`
+- Dependency graph (read-only): `bash tests/dependency_graph.sh`
+- Compose parse (no daemon): `docker compose config --quiet` — exits 1 with four
+  "required variable" errors when the token/digest env is absent (fail-closed)
 - Preflight (read-only): `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/preflight.ps1`
-- Compose parse check: see `docs/security/compose-security-checklist.md`
-- Nothing else. No Rust or Tauri build yet.
+- Dev backend: `MEDIAHAVEN_DEV=1 MEDIAHAVEN_SEED=1 MEDIAHAVEN_DATA_DIR="$PWD/.mediahaven-dev" cargo run -p mediahaven-core`
+- NOT available yet: any live `docker build` / `docker compose up` / installer command.
 
 ## Verification
 
+Live results observed at HEAD `7d48507` on 2026-11-19 (exit code 0 for every
+command):
+
 | Check | Result | Notes |
 |---|---|---|
-| Rust formatting | NOT RUN | No Rust code exists yet |
-| Rust tests | NOT RUN | No Rust code exists yet |
-| Frontend typecheck | **PASS** | Strict mode, `noUncheckedIndexedAccess` on |
-| Frontend lint | **PASS** | `--max-warnings 0` |
-| Frontend tests | **PASS** | 8/8 — focus navigation and overlay restoration |
-| Token discipline | **PASS** | 48 UI files, 0 violations |
-| Frontend build | **PASS** | 80 modules, 318 KB JS / 36 KB CSS |
-| Dev server render | **PASS** | Home renders with nav rail, hero and shelves; no console errors |
-| Mock excluded from production bundle | **PASS** | `createMockTransport` absent from `dist/` |
-| Compose file resolves | **PASS** | `docker compose config --quiet` → exit 0 |
-| Compose security posture | **PASS** | `read_only`, `cap_drop`, `no-new-privileges`, limits, `host_ip: 127.0.0.1`, `internal: true` |
-| Compose fails closed without a digest | **PASS** | exit 1 with a clear "required variable" error |
-| Compose static greps | **PASS** | No `privileged` / socket / `network_mode` findings; all images pinned |
-| Documentation consistency | **PASS** | 55 tasks, 8 phases, 8 checkpoints cross-checked; no dangling task refs |
-| Reference-machine runtime facts | **PASS** (read-only) | OS/RAM/CPU/GPU, `wsl -l -v`, `docker context ls`, `docker info`, `docker ps`, `docker images` |
-| Upstream documentation research | **PASS** (read-only) | Docker Desktop licensing and WSL2 backend docs, Microsoft WSL networking and GPU-compute docs, mpv manual and README |
-| Contrast ratios | NOT RUN | No automated check wired yet (P4-01) |
-| Dropped-frame numbers | NOT RUN | No profiling run (P4-05) |
-| Keyboard walkthrough of every screen | NOT RUN | P4-03 |
-| CP-0 evidence items | **NOT RUN** | 0 of the CP-0 criteria are satisfied by this session |
+| `git status --short` | **PASS** | Empty (clean tree) at the start of the run |
+| `cargo fmt --all -- --check` | **PASS** | exit 0 |
+| `cargo clippy --workspace --all-targets -- -D warnings` | **PASS** | exit 0 |
+| `cargo test --workspace` | **PASS** | 107 passed, 1 ignored (pre-existing `searching_10k_items_is_within_budget`) |
+| Frontend typecheck (`npm run typecheck`) | **PASS** | exit 0 |
+| Frontend lint (`npm run lint`) | **PASS** | exit 0 |
+| Vitest (`npx vitest run`) | **PASS** | 11/11 across `App.test.tsx` (2), `transport.test.ts` (4), `QueuePage.test.tsx` (5) |
+| Token check (`npm run check:tokens`) | **PASS** | 61 files, 0 violations |
+| Build (`npm run build`) | **PASS** | 91 modules, exit 0 |
+| Engine-backed evidence (Docker/WSL2) | **NOT RUN** | Needs explicit engine consent |
+| Hardware playback matrix | **NOT RUN** | No media engine / hardware run |
+| TV-distance review | **NOT RUN** | Not performed |
+| GitHub Actions green run | **NOT RUN** | CI workflow added; no green run observed |
+| Installer lifecycle | **NOT RUN** | Installer not built |
+| CP-0 evidence items | **NOT RUN** | 0 of the CP-0 criteria satisfied; no checkpoint passed |
 
 ## Blockers and failures
 
-- **No blocker to the frontend work.** The frontend is built and verified.
-- **CP-0 is not passed and must not be treated as passed.** Every criterion requires
-  a measurement or a human sign-off.
-- **The dev server is running** at `http://localhost:5173/`. Stop it with Ctrl+C in
-  that terminal when you are done testing.
-- **The frontend's data-dependent acceptance criteria are open** (P4-08): they need
-  the real backend, which does not exist yet.
-- **`apps/desktop/src-tauri/` is empty.** The Tauri shell and the host↔backend
-  boundary (P1-08) are backend-side work. The frontend's transport seam is already
-  shaped so the swap is a one-file change.
+- **No blocker to the local build/test gates.** All local gates are green at HEAD
+  `7d48507` (see Verification).
+- **Engine consent is required** for any Docker/WSL2 build, `docker compose up`,
+  digest recording, `docker inspect`, probe smoke or live token forwarding. None
+  of these has been run.
+- **ADR-0015 (playback source token, B1) is Proposed** and must be accepted by the
+  human partner before playback B2/B3 work starts.
+- **O-08 / package ID** and the remaining ADR acceptances are open human
+  decisions. An agent may not accept an ADR or pass a checkpoint.
+- **No checkpoint has passed.** CP-0 evidence is still unmeasured; CP-1..CP-7 are
+  open.
 
 ## Known risks / regressions
 
@@ -203,18 +419,16 @@ every one of them requires an observed measurement, not a document.
 
 ## Next actions
 
-1. **Test the frontend in the browser** at `http://localhost:5173/`. Walk the nav
-   rail, the hero, the shelves, the details overlay, the player, search, watchlist,
-   library, settings and setup. Check keyboard-only navigation and the focus ring.
-2. **Accept or revise ADR-0009** (frontend-first, contract-driven), plus ADRs 0002,
-   0005, 0006, 0007 and 0008.
-3. **Start Phase 0** with P0-10 (measure the runtime distributions) and P0-13
-   (prove LAN non-reachability) — these two unblock the runtime decision and the
-   security claim respectively.
-4. Acceptance criteria: an ADR records the runtime distribution with the human's
-   acceptance; the compose file and its checklist pass; and the CP-0 evidence list
-   in `roadmap.md` has observed values behind each box.
-5. Tests to run: the frontend suite (already green) plus the Phase 0 measurements.
+1. With explicit engine consent: A6 engine build (Docker/WSL2) → A8 boundary
+   evidence. A9 (mount override) already landed at `c23b06f`; its mount-scope
+   proof and live token forwarding remain NOT RUN. This is the critical path to
+   the container checkpoints.
+2. After the human partner accepts ADR-0015: playback B2/B3 (engine + stream
+   route). The B1 code path is proposed, not accepted.
+3. Resolve O-08 / package ID and accept the remaining Proposed ADRs — human
+   decisions only.
+4. Do not mark any checkpoint (CP-0..CP-7) passed; each needs observed evidence
+   and, where required, human sign-off.
 
 ## Decisions made
 
@@ -252,32 +466,25 @@ every one of them requires an observed measurement, not a document.
 
 ## Agent handover
 
-- **Task:** Frontend build — complete. Dev server running at
-  `http://localhost:5173/`.
-- **Current state:** Frontend implemented and verified (typecheck, lint, 8/8 tests,
-  token check, build, dev-server render). Backend does not exist; P4-08 open. Phase 0
-  not started; CP-0 not satisfied.
-- **Files changed:** see the commit `c86ffd4` and this session's uncommitted
-  frontend work, now committed.
-- **Commands run:** `npm install` (278 packages), `npm run typecheck` (pass),
-  `npm run lint` (pass), `npm test` (8/8 pass), `npm run check:tokens` (0
-  violations), `npm run build` (pass, 80 modules), `npm run dev` (running on 5173),
-  browser tab opened and verified (no console errors, nav rail + hero + shelves
-  render).
-- **Tests:** PASS for typecheck, lint, 8/8 frontend tests, token check, build.
-  **NOT RUN:** Rust, Tauri, E2E, contrast, dropped frames, keyboard walkthrough.
-- **Uncommitted changes:** none — committed and pushed.
-- **Known hazards:** the dev server is still running (stop with Ctrl+C). The
-  frontend's data-dependent acceptance criteria are open until the backend lands.
-  Inline styles in `WatchlistPage` and `DownloadsPage` should move into CSS modules
-  in a follow-up.
+- **HEAD:** `7d48507`.
+- **Tree:** clean (`git status --short` empty) at the start of the verified run.
+- **Local gates:** all green — `cargo fmt --all -- --check`, `cargo clippy
+  --workspace --all-targets -- -D warnings`, `cargo test --workspace` (107 passed,
+  1 ignored), `npm run typecheck`, `npm run lint`, `npx vitest run` (11/11), `npm
+  run check:tokens` (61 files, 0 violations), `npm run build` (91 modules).
+- **NOT RUN:** Docker/WSL2 engine evidence, live token forwarding, hardware
+  playback matrix, TV-distance review, GitHub Actions green run, installer
+  lifecycle, CP-0 evidence. No checkpoint passed; no ADR self-accepted.
 - **Do not repeat:** `pids_limit` next to `deploy.resources.limits` (Compose v2
-  rejects it); claiming WSL2 has no GPU access (it has compute access and `nvdec`
-  works on NVIDIA); claiming a named volume is unreachable from Windows (it is
-  reachable via the WSL share); treating mirrored networking mode as a harmless
-  fallback (it exposes the published port to the LAN).
-- **Next safe action:** test the frontend in the browser, then accept or revise
-  ADR-0009 and the other Proposed ADRs, then start Phase 0 with P0-10 and P0-13.
+  rejects it); claiming WSL2 has no GPU access (it has compute access); claiming a
+  named volume is unreachable from Windows (it is reachable via the WSL share);
+  treating mirrored networking mode as a harmless fallback (it exposes the
+  published port to the LAN).
+- **Next safe action:** obtain engine consent, then A6 engine build → A8 boundary
+  evidence (A9 mount override landed at `c23b06f`; live forwarding and mount-scope
+  proof still NOT RUN), or playback B2/B3 after ADR-0015 acceptance.
+- **Do not:** commit, push, accept an ADR, pass a checkpoint, or start the engine
+  without the human partner's explicit consent.
 
 ---
 
@@ -1241,5 +1448,258 @@ overrides the injected one — must be checked before relying on it.
 
 ### Next
 
-A6 engine build (needs explicit consent) → A8 boundary evidence → A9 mount
-rendering. The code path is complete; only the live engine validation remains.
+A6 engine build (needs explicit consent) → A8 boundary evidence. A9 media-root
+read-only mount rendering already landed (`c23b06f`). The code path is complete;
+only live engine validation (build, digests, probe smoke, token forwarding,
+mount-scope proof) remains NOT RUN.
+
+---
+
+## 2026-11-19 — documentation reconciliation and live verification
+
+Four parallel read-only audits (code state, document state, governance/consent,
+test/evidence gaps) were run, plus a live verification pass at HEAD `7d48507`.
+
+Observed live results (exit code 0 for every command): `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
+(107 passed, 1 ignored), `npm run typecheck`, `npm run lint`, `npx vitest run`
+(11/11), `npm run check:tokens` (61 files, 0 violations), `npm run build`
+(91 modules). `git status --short` was empty when the run began.
+
+Rulings made by the controller: no worktree was created for this docs-only change
+because merging it back would need consent the current instruction does not give;
+parallel agents were used because each owns disjoint files, which satisfies the
+conflict-avoidance purpose of the one-agent-per-task rule; no ADR was self-accepted
+and no checkpoint was marked passed.
+
+NOT RUN and still blocking: Docker/WSL2 engine evidence, live token forwarding,
+hardware playback matrix, TV-distance review, GitHub Actions run, installer matrix.
+
+**Superseded / current state:** the three "A6 → A8 → A9" sequences above
+(`## Next actions`, `## Agent handover`, and the older A5/C1 `### Next`) predate
+commit `c23b06f`. A9 — the media-root read-only mount override — **landed** at that
+commit. Only A6 (image builds, digests, probe smoke) and A8 (boundary evidence)
+remain to be built, plus live `wsl.exe` token forwarding (C1) and mount-scope
+proof, all still **NOT RUN** pending engine consent. No ADR or checkpoint status
+is changed by this note.
+
+## 2026-11-19 — scan-recovery slice (code change, verified)
+
+Implemented F1 interrupted-scan recovery, planned in
+`docs/superpowers/plans/2026-11-19-scan-recovery.md`:
+- New `LibraryRepository::recover_interrupted_scans()` and a `LibraryService`
+  wrapper; `core::server::run` calls it once at startup before serving.
+- SQL updates only roots stuck in `scanning` → `error` with message
+  "Scan interrupted by restart." It never deletes rows or media; it is idempotent.
+- Regression test `interrupted_scan_is_marked_error_without_touching_media`
+  confirms status and message, a no-op second pass, and an unchanged media row count.
+
+Verified at this commit: `cargo fmt --all` 0; `cargo clippy --workspace
+--all-targets -- -D warnings` 0; targeted test 1/1; full `cargo test --workspace`
+0 with 108 passed and 1 ignored (the pre-existing 10k search budget test). The
+first full-suite attempt hit the documented Windows LNK1104 file lock in
+`target/debug`; a rerun with `CARGO_TARGET_DIR=target/verify-slice` passed clean.
+Frontend was unchanged by this slice (last observed green at this commit:
+typecheck, lint, Vitest 11/11, token check, bundle check, build).
+
+Code check (`code-check-report.md`): no Critical/Important findings in the six
+newest commits. One pre-existing Minor: `LibraryRoot.path` and
+`ScanOutcome.duplicates[].paths` carry raw paths to the renderer — display-only,
+not a playback source handle; recorded against ADR-0015's "no path in a DTO" wording.
+
+NOT DONE: no commit (AGENTS.md requires permission), no engine/host action, no
+Playwright change. Checkpoints and ADR statuses unchanged.
+
+## 2026-11-19 — remaining-development plan, Docker build, parallel Lane C
+
+Plan: `docs/superpowers/plans/2026-11-19-remaining-development.md` (Lane A
+container boundary, Lane B playback behind the ADR-0015 human gate, Lane C
+reliability/security/packaging). Subagent-driven development with parallel
+execution was used; each agent owned disjoint files.
+
+Lane A — **engine online, consent granted in-task**:
+- `core` image built (exit 0), ID `sha256:3d773f6f…`, 146 MB. `probe` image built,
+  ID `sha256:a0f3da2c…`, 390 MB. Two real defects found by running them and
+  fixed: probe's `*.so*` copy missed `libpulsecommon`/`libblas` (replaced with an
+  ldd-resolved `/libs` copy + `LD_LIBRARY_PATH`); core's root-owned volumes
+  blocked UID 10001 (fixed with image-level `chown`); probe's bare ffprobe
+  entrypoint caused a restart loop (now `/bin/sleep infinity` idle, ffprobe on
+  PATH for exec). Full commands/output in `docs/security/boundary-evidence.md`.
+- Live `docker compose up -d --wait` → exit 0, both healthy. Auth matrix: 9/9
+  cases as designed (6 attacks → 401, 3 valid → 200). `docker inspect`: non-root,
+  read-only rootfs, cap_drop ALL, no-new-privileges, resource limits, no Docker
+  socket, loopback-only published port, probe internal-only with no gateway.
+  `docker exec ffprobe -version` works. `docker compose down` → 0 orphans.
+  A9 live mount-scope proof remains NOT RUN.
+
+Lane C (parallel agents, disjoint files):
+- C1/F3: `tests/security/traversal.rs` (10 tests, deliberate-red verified), CI
+  step added (`.github/workflows/ci.yml`). Note: symlink vector not exercised on
+  Windows; no GitHub Actions run.
+- C3/F5: new `crates/diagnostics` with redaction bundle (3 tests). Fixed
+  `.gitignore` so the crate is not swallowed by the `diagnostics/` export rule.
+- C4/F4: `docs/security/socket-inventory.md` — read-only baseline; during/after
+  app-session rows are NOT RUN.
+- Playwright: no runner installed; installed-run needs consent. Wrote
+  `tests/e2e/README.md` procedure; smoke NOT RUN. Plugin/config untouched.
+
+Final verification (all exit 0): `cargo fmt --all -- --check`, `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo test --workspace` (121 passed,
+1 ignored), frontend typecheck/lint/Vitest 11-11/token check (61 files, 0)/build,
+`git diff --check`, `bash tests/dependency_graph.sh`. Used
+`CARGO_TARGET_DIR=target/verify-final` to dodge the known LNK1104 lock.
+
+NOT DONE / gates: no commit; ADR-0015 acceptance (blocks Lane B/playback);
+O-08 signing cert + package ID (block packaging); ADRs 0004/0005/0008/0010;
+O-03 offline guarantee; CP sign-offs; A9 live mount proof; TMDB key + egress
+consent; Playwright install consent. No checkpoint passed, no ADR self-accepted.
+
+## 2026-11-20 — blanket human acceptance recorded (ADR-0016)
+
+The human partner wrote, verbatim, "i accept whatever you need me to accept".
+This was recorded **specifically and reversibly** in `docs/decisions/0016-blanket-acceptance-2026-11-20.md`
+with each decision named, so any single item can be revoked. Applied and attributed:
+
+- ADR-0004, 0005, 0008, 0010, 0015 → **Accepted** (status lines updated in each
+  ADR and the index). ADR-0015's internal "Proposed" body text was corrected so
+  code may depend on it. ADR-0009 body corrected to match its already-Accepted
+  index row; ADR-0012 (profiles, already implemented) accepted.
+- O-03 → fully offline after install (local playback/browsing never need a network).
+- O-08 → ship **unsigned** in v1, publish the SmartScreen caveat; signed build
+  needs a future human budget decision.
+- O-01 residual → package ID `com.mediahaven.desktop`.
+
+`roadmap.md` O-01/O-03/O-08 rows and the packaging README updated to match.
+No checkpoint was passed by this (a human still reviews each CP summary).
+
+With ADR-0015 accepted, Lane B playback is unblocked. mpv is NOT installed on
+this host and installing it needs explicit consent (`AGENTS.md`), so the adapter
+is being built and tested headlessly against a fake IPC transport; the live
+"a real file plays" smoke remains **NOT RUN** until an mpv binary is available.
+
+## 2026-11-20 — playback adapter + host/renderer wiring (Lane B, implemented)
+
+Plans: `docs/superpowers/plans/2026-11-20-playback-host-wiring.md` (written with
+writing-plans) and `2026-11-19-remaining-development.md` Lane B. Built with
+subagent-driven development (adapter agent, then one coordinated wiring agent).
+
+- **B2 adapter** — new `crates/playback` workspace member: `mpv::Player` port,
+  `MpvPlayer` (argument-vector spawn, 5 s IPC connect, kills child on Drop),
+  `IpcTransport` trait + in-memory fake, and `resolve_source` (ADR-0015 host-side
+  container-path → host-file resolution, fails closed on stale/escape/missing).
+  11 headless tests + 1 `#[ignore]` live-mpv test.
+- **B3 wiring** — backend `GET /playback_source/:media_id` (host-internal; GET so
+  the 24-command POST parity test is untouched); `LibraryRepository::media_source_path`;
+  Tauri `PlayerState` resolves via A9's `render_mounts().host_path_map()`, opens
+  mpv, emits `player://state` (display-only `{timePos,pause,volume,mediaId}`) every
+  500 ms, and exposes named `player_control` (play/pause/seek/volume) — no path or
+  token in any renderer-facing DTO or event. Renderer `player.ts` listens to the
+  event and drives `PlayerPage` from engine state; the 4× simulation is now a
+  dev-only fallback when no Tauri engine stream exists. New `PlayerPage.test.tsx`.
+
+Verified at this commit (all exit 0, fresh `CARGO_TARGET_DIR=target/verify-final2`):
+`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
+`cargo test --workspace` (**136 passed, 2 ignored** — route parity still 24/24),
+`npm run typecheck`, `npm run lint`, `npx vitest run` (**13/13**),
+`npm run check:tokens` (63 files, 0), `npm run build`, `npm run check:bundle`
+(no dev token / signed HTTP client). `git diff --check` 0.
+
+NOT RUN: live mpv playback, codec/hardware-decode matrix, real WebView event
+emission — mpv is absent (install needs consent). **CP-3 remains OPEN.**
+Integration assumption needing live validation: stored scan paths must use the
+`/media/root-<n>` container form that `resolve_source` matches against the A9 map;
+this can only be proven with a live scan + mpv. Agent notes (not defects):
+mpv spawn failure reports `engine unavailable` (not `source unavailable`); unmute
+resets volume to 100; rapid reopen can briefly spawn two status pollers.
+
+## 2026-11-20 — live mpv playback verified; real IPC defect fixed
+
+Consent granted for installing mpv. winget had no mpv package and choco lacked
+admin rights, so a portable official mpv v0.42.0 x64 build was downloaded to the
+approved temp dir (`C:\Users\Stanley\AppData\Local\Temp\opencode\mpv-portable`)
+— testing only, not a shipped artefact. The "full" build is GPL-flavoured; O-09
+still requires an LGPL-configured build for release (unresolved).
+
+A 5-second H.264 test file was generated with the probe container's ffmpeg.
+Running the ignored live test exposed a **real defect**: mpv emits async event
+lines (`start-file`) on the same IPC channel, and `MpvPlayer::command()` treated
+the first line as the reply — desyncing command/response pairing. On Windows the
+`File` pipe read has no timeout, so this hung for 423 s. Fixed in
+`crates/playback/src/mpv.rs`: commands now send the proper mpv envelope
+`{"command":[...],"request_id":N}`, `command()` skips lines with an `event`
+field or a different `request_id`, and caps reads at 64 to avoid an infinite
+wait. Added regression test `event_lines_are_skipped_when_matching_a_reply`.
+
+Verified: `cargo test -p media-playback` headless 0 (12 passed, 1 ignored);
+live `cargo test -p media-playback -- --ignored` with `MEDIAHAVEN_MPV` and
+`MEDIAHAVEN_TEST_MEDIA` set → **PASS in 0.90 s**, no orphan mpv process. This
+closes B2/B3 engine-path verification. The codec/hardware matrix (B6) and the
+container-path-format integration assumption are still being gathered by the
+parallel evidence agents.
+
+## 2026-11-20 — parallel evidence + D3 + frontend defect fix
+
+Four consented parallel agents were dispatched (A9/Phase 0 measurements,
+Playwright smoke, frontend CP-4 evidence, TMDB D3). Results so far:
+
+- **D3 (TMDB provider)** — implemented off-by-default in `crates/metadata`
+  (`tmdb.rs`, `cache.rs`): opt-in gate (zero requests when disabled), 30-day
+  cache with byte cap + oldest-first eviction, injectable fetch seam (no HTTP
+  client dependency — adding one needs an ADR), sanitisation, `TMDB_ATTRIBUTION`,
+  env key lookup. 8 fake-fetch tests + 8 NFO tests pass; fmt/clippy 0. No live
+  TMDB call (no key). P2-06 NOT complete (real HTTP transport, UI opt-in toggle,
+  artwork route and attribution rendering remain).
+- **Frontend CP-4 evidence** (`docs/testing/frontend-evidence.md`) — 3/7 items
+  observed, 4 NOT RUN with reasons. Contrast: 19/25 pairs ≥4.5:1; real misses
+  on `--paper` over `--tone-3/4` (4.42/4.21:1). Found `--paper-80` used as text
+  colour in 4 CSS modules but undefined in `tokens.css`. **Fixed** by adding a
+  `--paper-80` alias token (0.8 alpha) in `tokens.css`; token check 0 violations,
+  build 0. Backend 10k search PASS (1.68 s test body); Vitest 13/13. NOTE: no
+  focus-navigation suite exists at HEAD (removed in the UI consolidation), so
+  P4-03 has zero automated focus coverage — a real gap. Full keyboard walkthrough,
+  TV-distance/dropped frames, frontend 10k render, and containerised-backend E2E
+  remain NOT RUN with reasons. CP-4 NOT passed.
+
+The A9/Phase-0 and Playwright agents were killed by server restarts and
+re-dispatched; their workspace containers were left running by the first attempt
+and the second was asked to finish and tear down.
+
+### Parallel evidence results (all agents complete)
+
+- **Playwright smoke: PASS** — `npm i -D @playwright/test` + `npx playwright install chromium`
+  (consented), `playwright.config.ts` + `tests/e2e/smoke.spec.ts`, `playwright test` →
+  4 passed (18.4 s), no orphan node/cargo processes. Vite binds `::1` on this host, so
+  the config adds a Playwright-only `--host 127.0.0.1` (no `vite.config.ts` change).
+  Backend used the prebuilt binary, not a fresh cargo build. 10 pre-existing npm audit
+  vulnerabilities reported (out of scope).
+- **A9 mount scope: PASS** (`docs/security/boundary-evidence.md`) — core had exactly
+  core-data, staging and one `/media/root-0` `ro` bind; no socket, not privileged;
+  writes to the mount returned "Read-only file system". P0-13: 5/6 PASS (only
+  `127.0.0.1:18082`, no portproxy, no 2375/2376, NAT not mirrored; second-machine
+  LAN test NOT RUN — no second machine). P0-10/P0-14 measured: core 10.45 MiB,
+  probe 2.13 MiB, cold start median 6654 ms, WSL2 MemTotal 8,073,875,456 B.
+  P0-11: VAAPI/NVDEC/Vulkan all FAIL on this machine (Intel Iris Xe only; nvdec
+  failure is a hardware-availability observation). No display/audio in container.
+  Teardown PASS, no orphans (controller re-verified and cleaned a leftover probe).
+  **CP-0 remains OPEN** — human reviews; full dedicated-engine comparison, playback-
+  active footprint and second-machine LAN proof are NOT RUN.
+- **A9 integration risk (UNTESTED):** `render_mounts` uses `std::fs::canonicalize`,
+  which on Windows prefixes `\\?\`; whether Docker accepts a literal `\\?\`-prefixed
+  bind source was not tested (the live override used the prefix-free equivalent).
+- Image IDs drifted since A6 (sources/Dockerfiles changed) — rebuild/re-record at CP time.
+
+CP-3 and CP-4 remain OPEN (human review + NOT RUN items). No checkpoint passed by an agent.
+
+### A9 integration risk — fixed (real defect)
+
+The A9 evidence flagged that `render_mounts` uses `std::fs::canonicalize`, which
+on Windows returns `\\?\C:\...`. Confirmed live: `docker run -v "\\?\C:\...:/data:ro"`
+fails with "invalid spec: too many colons" (exit 125). Fixed in
+`apps/desktop/src-tauri/src/mounts.rs`: a `strip_verbatim_prefix()` helper strips
+`\\?\` (and maps `\\?\UNC\` → `\\`) ONLY for the Compose bind source; the canonical
+path stays in the persisted map for `resolve_source` containment. Added
+`verbatim_prefix_is_stripped_from_the_bind_source` regression test (Windows).
+`cargo clippy -p mediahaven-desktop --all-targets -- -D warnings` 0,
+`cargo test -p mediahaven-desktop` 0 (31 tests, incl. the new one). This closes
+the main A9 integration risk; the live override had used the prefix-free form,
+so this makes the generated form match what was verified.

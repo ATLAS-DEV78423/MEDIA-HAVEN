@@ -3,7 +3,14 @@
 Cross-cutting test suites and fixtures. Unit tests live beside the code they
 test; this directory holds the tests that need more than one layer.
 
-**Status: empty.** Suites are created by the roadmap tasks that need them.
+**Status: partially populated.** Cross-cutting suites currently present:
+`tests/dependency_graph.sh` (H3 assertion script), `tests/test-media/README.md`
+(gitignored fixtures placeholder), plus crate-level suites that carry the
+boundary work: `crates/core/tests/auth.rs`, `crates/contract/tests/{parity,route_parity}.rs`,
+`crates/media-library/tests/{roots,scanner}.rs`, `crates/metadata/tests/nfo.rs`,
+`crates/persistence/tests/{migrations,repository}.rs`, `crates/app-core/tests/domain.rs`
+and `apps/desktop/src/**/*.test.tsx`. `tests/security/`, `tests/performance/` and
+`tests/e2e/` are not yet created.
 
 ## Layout
 
@@ -26,13 +33,14 @@ test; this directory holds the tests that need more than one layer.
   sensitive value is *not* in the output. A boundary test asserts *no* access
   occurred outside the root — not merely that an error was returned.
 
-## Running (once the harness exists)
+## Running
 
 ```bash
-cargo test --workspace            # unit + integration
-npm test -w apps/desktop          # component tests
-cargo test --test security        # boundary suite
-npx playwright test               # e2e
+cargo test --workspace                    # observed PASS 2026-11-19 (107 passed, 1 ignored)
+bash tests/dependency_graph.sh            # read-only assertion script, H3
+cd apps/desktop && npx vitest run         # observed PASS 2026-11-19 (11/11)
+cd apps/desktop && npm run check:bundle   # dev-token/signing markers absent from dist/
+npx playwright test                       # e2e harness — NOT RUN, suite not yet built
 ```
 
 Results must be recorded in `progress.md` as PASS / FAIL / **NOT RUN**.

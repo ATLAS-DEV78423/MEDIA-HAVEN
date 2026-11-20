@@ -8,3 +8,4 @@ license.workspace = true
 app-core = { path = "../app-core" }
 thiserror.workspace = true
 async-trait.workspace = true
+serde_json.workspace = true

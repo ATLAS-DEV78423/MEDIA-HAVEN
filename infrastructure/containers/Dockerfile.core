@@ -22,7 +22,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 mediahaven \
-    && useradd --system --uid 10001 --gid mediahaven --home-dir /data --create-home mediahaven
+    && useradd --system --uid 10001 --gid mediahaven --home-dir /data --create-home mediahaven \
+    && mkdir -p /var/lib/mediahaven/staging /var/cache/mediahaven \
+    && chown -R 10001:10001 /var/lib/mediahaven /var/cache/mediahaven /data
 
 COPY --from=builder /src/target/release/mediahaven-core /usr/local/bin/mediahaven-core
 

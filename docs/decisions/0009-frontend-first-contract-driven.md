@@ -1,6 +1,6 @@
 # ADR-0009 — Frontend-first delivery, built against a frozen command contract
 
-- **Status:** Proposed — human review required
+- **Status:** Accepted - recorded as product-owner decision (index); body corrected 2026-11-20 to match
 - **Date:** 2026-11-15
 - **Deciders:** product owner (sequencing), architecture
 - **Related:** ADR-0001, ADR-0005, ADR-0008, `docs/architecture/overview.md`, `roadmap.md` P4-06 … P4-08

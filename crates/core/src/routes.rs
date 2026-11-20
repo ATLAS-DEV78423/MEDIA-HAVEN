@@ -6,7 +6,7 @@
 //! every identifier even though the UI already did (ADR-0005 §4).
 
 use app_core::domain::*;
-use axum::extract::{FromRequest, Request, State};
+use axum::extract::{FromRequest, Path, Request, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::{async_trait, Json, Router};
@@ -205,6 +205,11 @@ pub fn protected_router() -> Router<AppState> {
 
     Router::new()
         .route("/readyz", get(readyz))
+        // Host-internal source lookup (ADR-0015). GET, not POST: the renderer
+        // command surface is POST-only and the parity test derives commands
+        // from POST routes, so this stays OUT of the 24 renderer commands.
+        // It still passes the signed auth middleware, like `/readyz`.
+        .route("/playback_source/:media_id", get(playback_source))
         .route("/library_home", post(library_home))
         .route("/library_movies", post(library_movies))
         .route("/library_shows", post(library_shows))
@@ -483,12 +488,34 @@ async fn playback_start(
             ));
         }
     }
-    Ok(Json(state.service.playback_start(&args.request).await?))
+    let session = state.service.playback_start(&args.request).await?;
+    // Task 6 fix: record the live playback session. This — not an inert
+    // download_items.state field — is the "actively playing" cleanup gate.
+    crate::acquisition::on_playback_started(&args.request.media_id);
+    // Task 5: trigger the rolling buffer after the policy checks above. The
+    // trigger swallows its own errors, so a prefetch failure can never fail the
+    // playback session (plan risk A-6). Backend stays authoritative (ADR-0002).
+    crate::acquisition::trigger_prefetch(&state, &args.request.media_id).await;
+    Ok(Json(session))
 }
 
 async fn playback_stop(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     state.service.playback_stop().await?;
+    // Clear the authoritative live-session gate so cleanup can proceed later.
+    crate::acquisition::on_playback_stopped();
     Ok(Json(Value::Null))
+}
+
+/// Host-internal (ADR-0015): the stored container-path identity for a media id.
+/// It is authenticated like `/readyz` but is NOT a renderer command — the host
+/// resolves this path through A9's mount map and never returns it to the WebView.
+async fn playback_source(
+    State(state): State<AppState>,
+    Path(media_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    check_id(&media_id, "media_id")?;
+    let path = state.service.media_source_path(&media_id).await?;
+    Ok(Json(serde_json::json!({ "path": path })))
 }
 
 async fn playback_checkpoint(
@@ -508,6 +535,10 @@ async fn playback_checkpoint(
         }
     }
     state.service.playback_checkpoint(&args.request).await?;
+    // Task 6: evaluate cleanup only after a confirmed completion is recorded;
+    // the trigger swallows its own errors and never deletes inline, so a
+    // checkpoint can never fail playback (seeking/close never confirm).
+    crate::acquisition::on_playback_checkpoint(&args.request.media_id).await;
     Ok(Json(Value::Null))
 }
 

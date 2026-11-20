@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { Segmented, Toggle, buttonClass } from "@/components/ui/Controls";
 import { FieldRow, PageHeader, Panel } from "@/components/ui/Surfaces";
+import { call } from "@/services/transport";
 import type { RuntimeStatus } from "@/services/types";
 import type { SubtitleSize } from "@/state/AppState";
 import { useAppState } from "@/state/AppState";
@@ -31,6 +33,40 @@ const runtimeLabel = (status: RuntimeStatus): string => {
 
 export function SettingsPage() {
   const { data, activeProfile, preferences, updatePreference } = useAppState();
+  const [downloadRoot, setDownloadRoot] = useState("");
+  const [rootDraft, setRootDraft] = useState("");
+  const [rootError, setRootError] = useState<string | null>(null);
+  const [rootSaved, setRootSaved] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void call<string>("download_root_get", {})
+      .then((value) => {
+        if (!active) return;
+        setDownloadRoot(value);
+        setRootDraft(value);
+      })
+      .catch(() => {
+        if (active) setRootError("The acquisition folder could not be read.");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const saveRoot = async () => {
+    try {
+      const value = await call<string>("download_root_set", { path: rootDraft });
+      setDownloadRoot(value);
+      setRootDraft(value);
+      setRootError(null);
+      setRootSaved(true);
+    } catch {
+      setRootError("Enter an absolute folder path. The directory could not be set.");
+      setRootSaved(false);
+    }
+  };
+
   if (!data) return null;
 
   const { settings, roots } = data;
@@ -126,6 +162,47 @@ export function SettingsPage() {
                 Run setup
               </Link>
             </FieldRow>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Acquisition</h2>
+          <Panel>
+            <FieldRow
+              label="Download folder"
+              hint="Where authorized downloads are stored. qBittorrent and playback both use this folder."
+            >
+              <div className={styles.rootRow}>
+                <input
+                  className={styles.rootInput}
+                  aria-label="Download folder"
+                  value={rootDraft}
+                  onChange={(event) => {
+                    setRootDraft(event.target.value);
+                    setRootSaved(false);
+                  }}
+                  placeholder={downloadRoot || "Absolute folder path"}
+                />
+                <button
+                  type="button"
+                  className={buttonClass("glass")}
+                  data-focusable="true"
+                  onClick={() => void saveRoot()}
+                >
+                  Save
+                </button>
+              </div>
+            </FieldRow>
+            {rootError ? (
+              <p className={styles.rootError} role="alert">
+                {rootError}
+              </p>
+            ) : null}
+            {rootSaved && !rootError ? (
+              <p className={styles.rootHint} role="status">
+                Saved. Restart the download service to apply it to qBittorrent.
+              </p>
+            ) : null}
           </Panel>
         </section>
 

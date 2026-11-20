@@ -1,6 +1,6 @@
 # ADR-0005 — Host ↔ container boundary: one loopback port, per-install token, no Docker access from the frontend
 
-- **Status:** Proposed — blocked on P0-13 (port reachability measurement)
+- **Status:** Accepted (2026-11-20) — via ADR-0016 blanket human acceptance; P0-13 LAN measurement evidence still owed
 - **Date:** 2026-11-16
 - **Related:** ADR-0001, ADR-0007, `docs/architecture/docker-workspace.md` §3
 

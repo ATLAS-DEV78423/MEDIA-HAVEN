@@ -443,6 +443,18 @@ impl LibraryRepository for SqliteLibraryRepository {
         Ok(())
     }
 
+    async fn recover_interrupted_scans(&self) -> Result<usize, AppError> {
+        let result = sqlx::query(
+            "UPDATE library_roots SET status = 'error', \
+             error_message = 'Scan interrupted by restart.' \
+             WHERE status = 'scanning'",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(result.rows_affected() as usize)
+    }
+
     async fn media_replace_for_root(
         &self,
         root_id: &str,
@@ -606,6 +618,9 @@ impl LibraryRepository for SqliteLibraryRepository {
             tasks: vec![],
             storage_used_bytes: 0,
             storage_limit_bytes: storage_limit,
+            // Same G-8 predicate the prefetch scheduler uses; a message string
+            // only, never a path (renderer DTO boundary).
+            buffer_notice: buffer_pause_notice(0, storage_limit),
         })
     }
 
@@ -777,6 +792,17 @@ impl LibraryRepository for SqliteLibraryRepository {
         Ok(())
     }
 
+    async fn media_source_path(&self, id: &str) -> Result<Option<String>, AppError> {
+        // Exact, bound match: LIKE metacharacters in an id are literal here.
+        // A missing row (no file ever scanned, or the file was removed from
+        // the library) is `None` — the caller fails closed (ADR-0015).
+        sqlx::query_scalar("SELECT path FROM media_files WHERE media_id = ? LIMIT 1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(Self::internal)
+    }
+
     async fn watchlist_add(&self, media_id: &str) -> Result<(), AppError> {
         if self.fetch_row(media_id).await?.is_none() {
             return Err(AppError::new(
@@ -941,6 +967,173 @@ impl LibraryRepository for SqliteLibraryRepository {
         }
         tx.commit().await.map_err(Self::internal)
     }
+
+    async fn download_add(
+        &self,
+        item: &DownloadItem,
+        file_path: &str,
+        source: &str,
+        save_path: &str,
+    ) -> Result<(), AppError> {
+        let now = now_iso();
+        let state = download_state_to_str(item.state);
+        let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+
+        sqlx::query(
+            "INSERT INTO torrent_tasks \
+             (hash, magnet_or_source, state, progress, save_path, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(hash) DO UPDATE SET state = excluded.state, \
+             progress = excluded.progress, updated_at = excluded.updated_at",
+        )
+        .bind(&item.torrent_hash)
+        .bind(source)
+        .bind(state)
+        .bind(item.progress)
+        .bind(save_path)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+
+        sqlx::query(
+            "INSERT INTO download_items \
+             (id, torrent_hash, media_id, file_path, state, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(id) DO UPDATE SET media_id = excluded.media_id, \
+             state = excluded.state",
+        )
+        .bind(&item.id)
+        .bind(&item.torrent_hash)
+        .bind(&item.media_id)
+        .bind(file_path)
+        .bind(state)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+
+        // Record the app-managed file in the same transaction. Cleanup relies
+        // on file_mappings to recognise an acquired file (app_managed=true);
+        // without this row no production code ever creates the mapping and a
+        // genuine acquisition could never be reconciled as removable.
+        // `media_id` may be NULL until the file is identified (migration 0004).
+        sqlx::query(
+            "INSERT INTO file_mappings (file_path, torrent_hash, media_id, episode_no) \
+             VALUES (?, ?, ?, NULL) \
+             ON CONFLICT(file_path) DO UPDATE SET torrent_hash = excluded.torrent_hash, \
+             media_id = excluded.media_id",
+        )
+        .bind(file_path)
+        .bind(&item.torrent_hash)
+        .bind(&item.media_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+
+        tx.commit().await.map_err(Self::internal)
+    }
+
+    async fn download_status(&self, id: &str) -> Result<Option<DownloadItem>, AppError> {
+        let row = sqlx::query(
+            "SELECT d.id, d.torrent_hash, d.media_id, d.state, t.progress \
+             FROM download_items d JOIN torrent_tasks t ON t.hash = d.torrent_hash \
+             WHERE d.id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+
+        Ok(row.map(|row| DownloadItem {
+            id: row.get("id"),
+            torrent_hash: row.get("torrent_hash"),
+            media_id: row.get("media_id"),
+            state: download_state_from_str(&row.get::<String, _>("state")),
+            progress: row.get("progress"),
+        }))
+    }
+
+    async fn download_remove(&self, id: &str) -> Result<(), AppError> {
+        let hash: Option<String> =
+            sqlx::query_scalar("SELECT torrent_hash FROM download_items WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(Self::internal)?;
+        let Some(hash) = hash else {
+            return Ok(());
+        };
+
+        let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+        sqlx::query("DELETE FROM download_items WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::internal)?;
+
+        // Keep the torrent task while another item or episode mapping still
+        // needs it: removing one episode must not remove the other's media.
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM download_items WHERE torrent_hash = ?")
+                .bind(&hash)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(Self::internal)?;
+        let mapped: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM file_mappings WHERE torrent_hash = ?")
+                .bind(&hash)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(Self::internal)?;
+        if remaining == 0 && mapped == 0 {
+            sqlx::query("DELETE FROM torrent_tasks WHERE hash = ?")
+                .bind(&hash)
+                .execute(&mut *tx)
+                .await
+                .map_err(Self::internal)?;
+        }
+        tx.commit().await.map_err(Self::internal)
+    }
+
+    async fn prefetch_upsert(&self, entry: &PrefetchEntry) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO prefetch_entries (media_id, requested_for, priority, state) \
+             VALUES (?, ?, ?, ?) \
+             ON CONFLICT(media_id) DO UPDATE SET requested_for = excluded.requested_for, \
+             priority = excluded.priority, state = excluded.state",
+        )
+        .bind(&entry.media_id)
+        .bind(&entry.requested_for)
+        .bind(entry.priority)
+        .bind(&entry.state)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(())
+    }
+
+    async fn cleanup_eligible(&self) -> Result<Vec<CleanupEntry>, AppError> {
+        let rows = sqlx::query(
+            "SELECT media_id, eligible_at, state, outcome FROM cleanup_entries \
+             WHERE state = 'pending' AND eligible_at <= ? ORDER BY eligible_at ASC",
+        )
+        .bind(now_iso())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+
+        Ok(rows
+            .iter()
+            .map(|row| CleanupEntry {
+                media_id: row.get("media_id"),
+                eligible_at: row.get("eligible_at"),
+                state: row.get("state"),
+                outcome: row.get("outcome"),
+            })
+            .collect())
+    }
 }
 
 impl SqliteLibraryRepository {
@@ -1100,6 +1293,28 @@ fn queue_state_from_str(value: &str) -> QueueEntryState {
         "done" => QueueEntryState::Done,
         "failed" => QueueEntryState::Failed,
         _ => QueueEntryState::Pending,
+    }
+}
+
+fn download_state_to_str(value: DownloadState) -> &'static str {
+    match value {
+        DownloadState::Downloading => "downloading",
+        DownloadState::Ready => "ready",
+        DownloadState::Playing => "playing",
+        DownloadState::Watched => "watched",
+        DownloadState::CleanupPending => "cleanup_pending",
+        DownloadState::Error => "error",
+    }
+}
+
+fn download_state_from_str(value: &str) -> DownloadState {
+    match value {
+        "ready" => DownloadState::Ready,
+        "playing" => DownloadState::Playing,
+        "watched" => DownloadState::Watched,
+        "cleanup_pending" => DownloadState::CleanupPending,
+        "error" => DownloadState::Error,
+        _ => DownloadState::Downloading,
     }
 }
 

@@ -4,11 +4,14 @@
 //! network provider (TMDB) is a separate implementor of the same port, added
 //! only behind an explicit, off-by-default opt-in.
 
+pub mod cache;
 pub mod model;
 pub mod nfo;
+pub mod tmdb;
 
 pub use model::{NfoDocument, NfoError, MAX_NFO_BYTES};
 pub use nfo::{parse, read_beside};
+pub use tmdb::{TmdbLookup, TmdbOptions, TmdbProvider, TMDB_ATTRIBUTION};
 
 use app_core::domain::{AppError, AppErrorCode, MetadataRecord};
 use app_core::ports::MetadataProvider;

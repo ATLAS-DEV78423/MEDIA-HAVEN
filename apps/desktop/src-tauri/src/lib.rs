@@ -6,6 +6,7 @@
 
 mod commands;
 mod mounts;
+mod player;
 mod secret;
 mod supervisor;
 mod wsl;
@@ -38,6 +39,7 @@ fn get_app_info() -> AppInfo {
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(player::PlayerState::new())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
             commands::library_home,
@@ -59,11 +61,17 @@ pub fn run() {
             commands::queue_remove,
             commands::queue_reorder,
             commands::downloads_list,
+            commands::download_add,
+            commands::download_status,
+            commands::download_remove,
+            commands::download_root_get,
+            commands::download_root_set,
             commands::settings_get,
             commands::settings_set,
             commands::playback_start,
             commands::playback_stop,
             commands::playback_checkpoint,
+            commands::player_control,
         ])
         .run(tauri::generate_context!())
         .expect("the MEDIA_HAVEN window failed to start");

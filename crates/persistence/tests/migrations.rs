@@ -68,7 +68,7 @@ async fn migrations_are_idempotent() {
         .fetch_one(&second)
         .await
         .expect("read migration bookkeeping");
-    assert_eq!(applied, 3, "migrations were re-applied instead of skipped");
+    assert_eq!(applied, 4, "migrations were re-applied instead of skipped");
 
     let kind_column: String =
         sqlx::query("SELECT type FROM pragma_table_info('media_items') WHERE name = 'kind'")

@@ -81,7 +81,10 @@ desktop.ini
 !.vscode/extensions.json
 
 # --- Diagnostics exports ---------------------------------------------------
+# Ignore export bundles at any depth, but NOT the diagnostics crate source.
 diagnostics/
+!crates/diagnostics/
+!crates/diagnostics/**
 *.zip
 !infrastructure/packaging/**/*.zip
 

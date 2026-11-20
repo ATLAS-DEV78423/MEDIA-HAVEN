@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 app-core = { path = "../app-core" }
+media-acquisition = { path = "../acquisition" }
 media-persistence = { path = "../persistence" }
 media-library = { path = "../media-library" }
 axum.workspace = true

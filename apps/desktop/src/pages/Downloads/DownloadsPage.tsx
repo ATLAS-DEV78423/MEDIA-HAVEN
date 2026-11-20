@@ -1,9 +1,12 @@
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { ProgressBar, buttonClass } from "@/components/ui/Controls";
 import { EmptyState, PageHeader, Panel } from "@/components/ui/Surfaces";
-import { artFor } from "@/data/catalog";
+import type { AcquisitionRow, AcquisitionState } from "@/services/types";
+import { call } from "@/services/transport";
 import { useAppState } from "@/state/AppState";
+import { AddSourceDialog } from "./AddSourceDialog";
 import styles from "./downloads.module.css";
 
 const bytes = (value: number): string => {
@@ -13,38 +16,87 @@ const bytes = (value: number): string => {
   return `${gigabytes.toFixed(1)} GB`;
 };
 
-const stateLabel = (state: string): string => {
+const stateLabel = (state: AcquisitionState): string => {
   switch (state) {
-    case "available":
-      return "On this device";
+    case "ready":
+      return "Ready";
     case "downloading":
       return "Downloading";
-    case "queued":
-      return "Queued";
-    case "paused":
-      return "Paused";
-    case "verifying":
-      return "Verifying";
+    case "playing":
+      return "Playing";
+    case "watched":
+      return "Watched";
+    case "cleanupPending":
+      return "Cleanup pending";
     default:
-      return "Failed";
+      return "Error";
   }
 };
 
+/** Merge by id so a repeated source can never create a second row. */
+const mergeRow = (rows: AcquisitionRow[], row: AcquisitionRow): AcquisitionRow[] =>
+  rows.some((existing) => existing.id === row.id)
+    ? rows.map((existing) => (existing.id === row.id ? row : existing))
+    : [...rows, row];
+
 export function DownloadsPage() {
   const { data } = useAppState();
+  const [rows, setRows] = useState<AcquisitionRow[]>([]);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    call<AcquisitionRow[]>("download_status", {})
+      .then((items) => {
+        if (!active) return;
+        setRows(items);
+        setLoadError(null);
+      })
+      .catch(() => {
+        if (active) setLoadError("Download status is unavailable.");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const closeDialog = useCallback(() => setDialogOpen(false), []);
+  const addRow = useCallback(
+    (row: AcquisitionRow) => setRows((current) => mergeRow(current, row)),
+    [],
+  );
+
   if (!data) return null;
 
   const { downloads } = data;
   const limit = downloads.storageLimitBytes;
   const used = downloads.storageUsedBytes;
+  // Host-authored G-8 notice; a message string only, never a path.
+  const bufferNotice = downloads.bufferNotice;
   const ratio = limit && limit > 0 ? Math.min(1, used / limit) : null;
+
+  const remove = async (id: string) => {
+    try {
+      await call("download_remove", { id });
+      setRows((current) => current.filter((row) => row.id !== id));
+    } catch {
+      setLoadError("That download could not be removed.");
+    }
+  };
 
   return (
     <div className={`page ${styles.page}`}>
       <PageHeader
         title="Downloads"
-        description="Titles kept on this machine so they play with the network down. A download is a second copy; the file in your library is never modified."
+        description="Acquire media you are authorized to download. Add a magnet link or a .torrent file you already have; the app never searches for sources."
       />
+
+      {bufferNotice ? (
+        <p className={styles.error} role="status">
+          {bufferNotice}
+        </p>
+      ) : null}
 
       <div className={styles.body}>
         {!downloads.enabled ? (
@@ -68,8 +120,7 @@ export function DownloadsPage() {
                   </p>
                 </div>
                 <span className={styles.storagePill}>
-                  {downloads.tasks.length}{" "}
-                  {downloads.tasks.length === 1 ? "download" : "downloads"}
+                  {rows.length} {rows.length === 1 ? "download" : "downloads"}
                 </span>
               </div>
               {ratio !== null ? <ProgressBar value={ratio} large /> : null}
@@ -84,7 +135,7 @@ export function DownloadsPage() {
                 </div>
                 <div>
                   <dt>Tasks</dt>
-                  <dd>{downloads.tasks.length}</dd>
+                  <dd>{rows.length}</dd>
                 </div>
               </dl>
               <p className={styles.note}>
@@ -93,34 +144,51 @@ export function DownloadsPage() {
             </Panel>
 
             <section className={styles.listSection} aria-labelledby="offline-title">
-              <h2 id="offline-title" className={styles.listTitle}>
-                Available offline
-              </h2>
+              <div className={styles.listHead}>
+                <h2 id="offline-title" className={styles.listTitle}>
+                  Acquisitions
+                </h2>
+                <button
+                  type="button"
+                  className={buttonClass("solid")}
+                  data-focusable="true"
+                  onClick={() => setDialogOpen(true)}
+                >
+                  Add source
+                </button>
+              </div>
 
-              {downloads.tasks.length === 0 ? (
+              {loadError ? (
+                <p className={styles.error} role="alert">
+                  {loadError}
+                </p>
+              ) : null}
+
+              {rows.length === 0 ? (
                 <EmptyState
-                  title="No downloads on this device"
-                  body="The download service is enabled but the queue is empty."
+                  title="No downloads yet"
+                  body="Add a magnet link or a .torrent file you already have to start an acquisition."
                 />
               ) : (
-                <ul className={styles.list}>
-                  {downloads.tasks.map((task) => (
-                    <li key={task.id} className={styles.item}>
-                      <span className={styles.thumb}>
-                        <img src={artFor(task.id, task.title).still} alt="" loading="lazy" />
-                      </span>
-
+                <ul className={styles.list} aria-label="Acquisitions">
+                  {rows.map((row) => (
+                    <li key={row.id} className={styles.item}>
                       <div className={styles.itemCopy}>
-                        <span className={styles.itemTitle}>{task.title}</span>
+                        <span className={styles.itemTitle}>{row.id}</span>
                         <span className={styles.itemMeta}>
-                          {stateLabel(task.state)} · {Math.round(task.progress * 100)}%
+                          {stateLabel(row.state)} · {Math.round(row.progress * 100)}%
                         </span>
                       </div>
-
-                      <span className={styles.state}>{task.state}</span>
-                      {task.errorMessage ? (
-                        <span className={styles.itemMeta}>{task.errorMessage}</span>
-                      ) : null}
+                      <span className={styles.state}>{stateLabel(row.state)}</span>
+                      <button
+                        type="button"
+                        className={styles.remove}
+                        data-focusable="true"
+                        aria-label={`Remove download ${row.id}`}
+                        onClick={() => void remove(row.id)}
+                      >
+                        Remove
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -140,17 +208,21 @@ export function DownloadsPage() {
                 library file stays where it is, untouched.
               </li>
               <li>
-                Removing a download frees that copy only. The title remains in
-                the library if the source file is still present.
+                Removing a download frees the task and keeps its files. Source
+                media under your library roots is never deleted.
               </li>
               <li>
-                Nothing is uploaded. Downloads never contact a catalogue or a
-                content service.
+                Only sources you supply are acquired. Nothing is uploaded, and
+                no catalogue or content service is contacted.
               </li>
             </ul>
           </Panel>
         </section>
       </div>
+
+      {dialogOpen ? (
+        <AddSourceDialog onClose={closeDialog} onAdded={addRow} />
+      ) : null}
     </div>
   );
 }

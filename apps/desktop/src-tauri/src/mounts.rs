@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 pub struct RootSpec {
     pub id: String,
     pub path: PathBuf,
+    /// Optional host acquisition directory (storage option B, ADR-0018). When
+    /// set on any spec, `render_mounts` also emits a read-only `/downloads`
+    /// bind for `core` and records `/downloads` in the persisted host map.
+    pub download_root: Option<PathBuf>,
 }
 
 impl RootSpec {
@@ -29,6 +33,7 @@ impl RootSpec {
         Self {
             id: id.into(),
             path: path.into(),
+            download_root: None,
         }
     }
 }
@@ -129,6 +134,30 @@ fn validate_root(spec: &RootSpec) -> Result<PathBuf, MountError> {
     Ok(canonical)
 }
 
+/// Strip the Windows `\\?\` verbatim prefix that `canonicalize()` adds. Docker
+/// cannot use it as a bind source. A no-op on other platforms and on normal paths.
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    const PREFIX: &str = r"\\?\";
+    let raw = path.to_string_lossy();
+    if let Some(rest) = raw.strip_prefix(PREFIX) {
+        // `\\?\C:\foo` -> `C:\foo`. Keep the UNC form `\\?\UNC\server\share`
+        // as `\\server\share` too.
+        if let Some(unc) = rest.strip_prefix("UNC\\") {
+            PathBuf::from(format!(r"\\{unc}"))
+        } else {
+            PathBuf::from(rest)
+        }
+    } else {
+        path.to_path_buf()
+    }
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 /// Validate `roots` and render the override fragment plus the host-path map.
 ///
 /// Container paths are assigned by position: `/media/root-0`, `/media/root-1`,
@@ -152,11 +181,25 @@ pub fn render_mounts(roots: &[RootSpec]) -> Result<RenderOutput, MountError> {
         }
     }
 
+    // The acquisition directory (storage option B, ADR-0018) is validated like
+    // any other root but bound read-only into `core`. qBittorrent writes it
+    // read-write on its own `acquire` network. First non-empty spec wins.
+    let download_root = roots
+        .iter()
+        .find_map(|spec| spec.download_root.as_ref())
+        .map(|path| validate_root(&RootSpec::new("downloads", path)))
+        .transpose()?;
+
     let mut mounts = Vec::with_capacity(canonical.len());
     let mut lines = Vec::with_capacity(canonical.len());
     for (n, (_, host)) in canonical.iter().enumerate() {
         let container_path = format!("/media/root-{n}");
-        let spec = format!("{}:{container_path}:ro", host.to_string_lossy());
+        // Rust's canonicalize() on Windows returns a `\\?\`-prefixed path.
+        // Docker rejects that as a bind source ("too many colons"), so strip
+        // the prefix ONLY for the Compose fragment. The canonical path stays
+        // in the persisted map for containment checks in resolve_source.
+        let bind_source = strip_verbatim_prefix(host);
+        let spec = format!("{}:{container_path}:ro", bind_source.to_string_lossy());
         // Quote the whole spec as one JSON string, which is also a valid YAML
         // double-quoted scalar. This escapes backslashes, quotes and colons,
         // so no path can break out of the YAML fragment.
@@ -164,6 +207,19 @@ pub fn render_mounts(roots: &[RootSpec]) -> Result<RenderOutput, MountError> {
         lines.push(format!("      - {quoted}"));
         mounts.push(RenderedMount {
             container_path,
+            host_path: host.clone(),
+        });
+    }
+
+    // Exactly one read-only /downloads bind for core, source stripped of the
+    // Windows verbatim prefix Docker cannot use as a bind source (A9 fix).
+    if let Some(host) = &download_root {
+        let bind_source = strip_verbatim_prefix(host);
+        let spec = format!("{}:/downloads:ro", bind_source.to_string_lossy());
+        let quoted = serde_json::to_string(&spec).expect("a String is always serialisable");
+        lines.push(format!("      - {quoted}"));
+        mounts.push(RenderedMount {
+            container_path: "/downloads".to_string(),
             host_path: host.clone(),
         });
     }
@@ -334,6 +390,78 @@ mod tests {
             !is_reparse_point(&base).expect("stat a normal directory"),
             "a freshly created directory must not be flagged as a reparse point"
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_prefix_is_stripped_from_the_bind_source() {
+        let p = Path::new(r"\\?\C:\Users\someone\Media");
+        assert_eq!(
+            strip_verbatim_prefix(p),
+            PathBuf::from(r"C:\Users\someone\Media")
+        );
+        let unc = Path::new(r"\\?\UNC\server\share\Media");
+        assert_eq!(
+            strip_verbatim_prefix(unc),
+            PathBuf::from(r"\\server\share\Media")
+        );
+        // A normal path is unchanged.
+        let normal = Path::new(r"C:\Users\someone\Media");
+        assert_eq!(strip_verbatim_prefix(normal), normal.to_path_buf());
+    }
+
+    #[test]
+    fn download_root_renders_one_read_only_downloads_bind_with_verbatim_stripped() {
+        let base = temp_dir("download");
+        let movies = base.join("movies");
+        let downloads = base.join("downloads");
+        std::fs::create_dir_all(&movies).unwrap();
+        std::fs::create_dir_all(&downloads).unwrap();
+
+        let mut spec = RootSpec::new("r1", &movies);
+        spec.download_root = Some(downloads.clone());
+        let rendered = render_mounts(&[spec]).expect("root + download root render");
+
+        // Exactly one read-only /downloads mount, in addition to the root.
+        assert_eq!(
+            rendered.fragment.matches("/downloads:ro").count(),
+            1,
+            "exactly one /downloads:ro bind must be rendered: {}",
+            rendered.fragment
+        );
+        let download_mounts: Vec<_> = rendered
+            .mounts
+            .iter()
+            .filter(|m| m.container_path == "/downloads")
+            .collect();
+        assert_eq!(download_mounts.len(), 1);
+
+        // Reuse strip_verbatim_prefix: the fragment binds the Docker-usable
+        // path, never the canonical \\?\ form (A9 regression guard).
+        let canonical = std::fs::canonicalize(&downloads).unwrap();
+        let bind_source = strip_verbatim_prefix(&canonical);
+        let expected = format!("{}:/downloads:ro", bind_source.to_string_lossy());
+        let quoted = serde_json::to_string(&expected).unwrap();
+        assert!(
+            rendered.fragment.contains(&quoted),
+            "fragment must bind the stripped host path, got: {}",
+            rendered.fragment
+        );
+        assert!(
+            !rendered.fragment.contains(r"\\\\?\\"),
+            "the canonical verbatim prefix must be stripped, got: {}",
+            rendered.fragment
+        );
+
+        // mpv resolves acquired files through the persisted host map.
+        let map = rendered.host_path_map();
+        assert_eq!(map["/downloads"], canonical);
+        assert_eq!(
+            map["/media/root-0"],
+            std::fs::canonicalize(&movies).unwrap()
+        );
+
         let _ = std::fs::remove_dir_all(&base);
     }
 

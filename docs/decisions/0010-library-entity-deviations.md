@@ -1,6 +1,6 @@
 # ADR-0010: Library entity deviations and scanner conventions
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-20) — via ADR-0016 blanket human acceptance
 - **Date:** 2026-11-17
 - **Deciders:** human partner, contributing agent
 - **Related:** P2-02, P2-03, Development.md §4.2, §5, docs/superpowers/plans/2026-11-17-phase-2-backend-completion.md

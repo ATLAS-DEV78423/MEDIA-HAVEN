@@ -41,6 +41,9 @@ impl<R: LibraryRepository> LibraryService<R> {
     pub async fn root_remove(&self, id: &str) -> Result<(), AppError> {
         self.repo.root_remove(id).await
     }
+    pub async fn recover_interrupted_scans(&self) -> Result<usize, AppError> {
+        self.repo.recover_interrupted_scans().await
+    }
     pub async fn root_update(
         &self,
         id: &str,
@@ -90,6 +93,11 @@ impl<R: LibraryRepository> LibraryService<R> {
     ) -> Result<(), AppError> {
         self.repo.playback_checkpoint(request).await
     }
+    /// Host-internal passthrough (ADR-0015). The container path returned here
+    /// is resolved in the host only; it is never placed in a renderer DTO.
+    pub async fn media_source_path(&self, id: &str) -> Result<Option<String>, AppError> {
+        self.repo.media_source_path(id).await
+    }
     pub async fn watchlist_add(&self, media_id: &str) -> Result<(), AppError> {
         self.repo.watchlist_add(media_id).await
     }
@@ -107,5 +115,28 @@ impl<R: LibraryRepository> LibraryService<R> {
     }
     pub async fn queue_reorder(&self, ordered_ids: &[String]) -> Result<(), AppError> {
         self.repo.queue_reorder(ordered_ids).await
+    }
+    pub async fn download_add(
+        &self,
+        item: &DownloadItem,
+        file_path: &str,
+        source: &str,
+        save_path: &str,
+    ) -> Result<(), AppError> {
+        self.repo
+            .download_add(item, file_path, source, save_path)
+            .await
+    }
+    pub async fn download_status(&self, id: &str) -> Result<Option<DownloadItem>, AppError> {
+        self.repo.download_status(id).await
+    }
+    pub async fn download_remove(&self, id: &str) -> Result<(), AppError> {
+        self.repo.download_remove(id).await
+    }
+    pub async fn prefetch_upsert(&self, entry: &PrefetchEntry) -> Result<(), AppError> {
+        self.repo.prefetch_upsert(entry).await
+    }
+    pub async fn cleanup_eligible(&self) -> Result<Vec<CleanupEntry>, AppError> {
+        self.repo.cleanup_eligible().await
     }
 }

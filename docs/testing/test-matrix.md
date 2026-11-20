@@ -7,6 +7,13 @@ what runs, where, and what counts as evidence.
 when it was not executed is a reporting defect and, per `AGENTS.md`, a stop-the-
 line event for the task.
 
+**Observed on 2026-11-19 at HEAD `7d48507`:** Rust unit/integration suites PASS
+(107 tests, 1 ignored), frontend component suites PASS (11/11), token/bundle
+checks PASS, CI workflow present but no GitHub Actions run recorded. The
+Security, E2E and Performance layers below are specified but **NOT RUN** as
+cross-cutting suites; the path-escape and auth cases currently live in
+`crates/media-library/tests/roots.rs` and `crates/core/tests/auth.rs`.
+
 ## Layers
 
 | Layer | Location | Runs on | Purpose |

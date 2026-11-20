@@ -1,6 +1,6 @@
 # ADR-0004: Local HDMI playback first
 
-- **Status:** Not started — create and approve via `roadmap.md` P0-01
+- **Status:** Accepted (2026-11-20) — via ADR-0016 blanket human acceptance; originally to be approved via P0-01
 - **Date:** —
 - **Deciders:** human partner
 - **Related:** `Development.md` §1.5, §18 item 9; `roadmap.md` P0-01

@@ -90,6 +90,72 @@
   letter-spacing: var(--tracking-title);
 }
 
+.listHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.error {
+  font-size: var(--text-small);
+  color: var(--danger);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--s-4);
+  background: var(--ink-void);
+  z-index: var(--z-dialog);
+}
+
+.dialog {
+  width: min(100%, calc(var(--card-w) * 2.4));
+  padding: var(--s-6);
+  border: var(--hairline) solid var(--glass-edge);
+  border-radius: var(--r-lg);
+  background: var(--ink-800);
+  box-shadow: var(--shadow-card);
+}
+
+.dialogForm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin-top: var(--s-5);
+}
+
+.fieldLabel {
+  font-size: var(--text-small);
+  color: var(--paper-72);
+}
+
+.input {
+  width: 100%;
+  padding: var(--s-3);
+  border: var(--hairline) solid var(--glass-edge);
+  border-radius: var(--r-sm);
+  background: var(--ink-700);
+  color: var(--paper-90);
+  font-size: var(--text-small);
+}
+
+.input:focus {
+  outline: var(--ring-w) solid var(--paper);
+  outline-offset: var(--ring-offset);
+}
+
+.dialogActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--s-3);
+  margin-top: var(--s-2);
+}
+
 .list {
   display: flex;
   flex-direction: column;

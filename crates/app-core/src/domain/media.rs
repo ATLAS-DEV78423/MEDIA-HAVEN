@@ -301,8 +301,69 @@ pub struct WatchlistScreen {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum DownloadState {
+    Downloading,
+    Ready,
+    Playing,
+    Watched,
+    CleanupPending,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadItem {
+    pub id: String,
+    pub torrent_hash: String,
+    pub media_id: Option<String>,
+    pub state: DownloadState,
+    pub progress: f64,
+}
+
+// Paths stay host-internal: no renderer-facing DTO carries a filesystem path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentTask {
+    pub hash: String,
+    pub source: String,
+    pub state: String,
+    pub progress: f64,
+    pub created_at: IsoTimestamp,
+    pub updated_at: IsoTimestamp,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMapping {
+    pub torrent_hash: String,
+    pub media_id: Option<String>,
+    pub episode_no: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrefetchEntry {
+    pub media_id: MediaId,
+    pub requested_for: MediaId,
+    pub priority: i64,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupEntry {
+    pub media_id: MediaId,
+    pub eligible_at: IsoTimestamp,
+    pub state: String,
+    pub outcome: Option<String>,
+}
+
+// Legacy renderer wire values for the read-only Downloads screen; kept
+// distinct from the acquisition DownloadState so the frontend contract holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegacyDownloadState {
     Queued,
     Downloading,
     Paused,
@@ -316,9 +377,37 @@ pub enum DownloadState {
 pub struct DownloadTask {
     pub id: String,
     pub title: String,
-    pub state: DownloadState,
+    pub state: LegacyDownloadState,
     pub progress: f64,
     pub error_message: Option<String>,
+}
+
+/// G-8 buffer policy. Pure and shared by acquisition and the Downloads DTO so
+/// the enqueue decision and the surfaced notice can never drift apart.
+pub const DEFAULT_BUFFER_LIMIT_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+pub const BUFFER_PAUSED_NOTICE: &str = "buffer paused — storage full";
+const BUFFER_PAUSE_PERCENT: u64 = 90;
+
+/// Paused once retained bytes reach 90% of the cap. A zero cap fails closed.
+pub fn is_buffer_paused(used_bytes: u64, limit_bytes: u64) -> bool {
+    if limit_bytes == 0 {
+        return true;
+    }
+    used_bytes.saturating_mul(100) >= limit_bytes.saturating_mul(BUFFER_PAUSE_PERCENT)
+}
+
+/// Renderer-facing notice for the same condition; a missing/zero configured
+/// cap uses the 20 GiB default. Returns only a message string — never a path.
+pub fn buffer_pause_notice(used_bytes: i64, limit_bytes: Option<i64>) -> Option<String> {
+    let limit = limit_bytes
+        .filter(|value| *value > 0)
+        .map(|value| value as u64)
+        .unwrap_or(DEFAULT_BUFFER_LIMIT_BYTES);
+    if is_buffer_paused(used_bytes.max(0) as u64, limit) {
+        Some(BUFFER_PAUSED_NOTICE.to_string())
+    } else {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,6 +417,9 @@ pub struct DownloadsScreen {
     pub tasks: Vec<DownloadTask>,
     pub storage_used_bytes: i64,
     pub storage_limit_bytes: Option<i64>,
+    /// Host-authored status message only; no filesystem path is ever included.
+    #[serde(default)]
+    pub buffer_notice: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

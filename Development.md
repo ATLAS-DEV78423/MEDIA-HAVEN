@@ -2150,30 +2150,31 @@ Do not publish a public release until all gates pass:
 
 These decisions require prototype evidence or user approval:
 
-1.  **Playback engine:** choose after codec, hardware acceleration,
-    subtitle and resource testing. The *placement* is decided (Windows host,
-    ADR-0002); the engine and its licence are not.
+1.  **Playback engine:** DECIDED 2026-11-18 — mpv via JSON IPC, LGPL build,
+    host-side placement (ADR-0002, O-09). The shipped artefact must still be
+    confirmed LGPL-configured (P0-12) before release.
 2.  **Windows Docker runtime/provider:** Docker Engine-compatible runtime and
-    Compose are **mandatory and selected**; the supported Windows
-    *distribution* is proposed (dedicated WSL2 distro, ADR-0001 Part 2) and
-    must be confirmed with compatibility, signing, licensing, resource and
-    networking evidence.
-3.  **Playback licence:** LGPL vs GPL libmpv build (O-09). A hard gate on
-    CP-0 and on the project's own licence.
+    Compose are mandatory (ADR-0001 Part 1). Distribution DECIDED 2026-11-18 —
+    dedicated WSL2 distro, no reuse of an existing engine (ADR-0001 Part 2,
+    O-06/O-07). P0-10/P0-13/P0-14 measurements are still owed.
+3.  **Playback licence:** DECIDED 2026-11-18 — LGPL mpv build (O-09). A hard
+    gate on CP-0 remains: confirm the actual artefact is LGPL-configured.
 4.  **Media server:** defer unless headless or multi-device streaming is
     a confirmed requirement.
-5.  **Download integration:** optional and deferred; content-source
-    neutral, lawful use only, separate security review.
-6.  **Metadata providers:** choose only providers that permit the
-    intended use and can be optional.
+5.  **Download integration:** **REOPENED 2026-11-20 (ADR-0017)** — authorized-media
+    acquisition via qBittorrent is in scope per the consolidated specification.
+    Lawful use only; no bundled trackers/indexers; see ADR-0018/0019 and the
+    conversion plan.
+6.  **Metadata providers:** DECIDED 2026-11-18 — TMDB primary with local NFO
+    offline fallback, network opt-in and off by default (ADR-0011, O-04).
 7.  **Offline guarantee:** decide whether the complete app must work
     indefinitely without internet after installation. Local playback
     should work offline regardless.
-8.  **Windows 10 support:** do not promise until servicing status and
-    prerequisites are reviewed.
+8.  **Windows 10 support:** DECIDED 2026-11-18 — Windows 11 x64 only for v1
+    (O-02). Do not claim Windows 10 or ARM64.
 9.  **Remote access:** out of MVP.
-10. **Project branding/name:** not yet finalised; use a neutral
-    placeholder in package IDs until approved.
+10. **Project branding/name:** DECIDED 2026-11-18 — "MEDIA HAVEN" is the project
+    and app name (O-01). The package/bundle ID is still needed before P7-01.
 
 ------------------------------------------------------------------------
 

@@ -2169,6 +2169,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "media-acquisition"
+version = "0.1.0"
+dependencies = [
+ "app-core",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "media-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "app-core",
+]
+
+[[package]]
 name = "media-library"
 version = "0.1.0"
 dependencies = [
@@ -2188,6 +2204,7 @@ version = "0.1.0"
 dependencies = [
  "app-core",
  "async-trait",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 
@@ -2205,6 +2222,14 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "media-playback"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2228,6 +2253,7 @@ dependencies = [
  "chrono",
  "hex",
  "hmac",
+ "media-acquisition",
  "media-library",
  "media-persistence",
  "serde",
@@ -2251,6 +2277,8 @@ dependencies = [
  "app-core",
  "hex",
  "hmac",
+ "media-acquisition",
+ "media-playback",
  "mediahaven-contract",
  "serde",
  "serde_json",

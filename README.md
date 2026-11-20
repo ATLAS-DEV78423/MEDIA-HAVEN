@@ -14,9 +14,10 @@ browse and play them through a full-screen, remote-friendly interface.
 - **Isolated.** The backend and media inspection run in a Docker workspace with
   read-only mounts, non-root containers and a single loopback-only API port.
 
-> **Status: pre-implementation.** This repository currently contains the
-> engineering contract, the roadmap and the documentation baseline. There is no
-> runnable application yet. See `progress.md` for exact state.
+> **Status: functional prototype, no checkpoint passed.** The React UI, Rust
+> backend, Tauri host and local tests run today. Real playback, the container
+> boundary, reliability/security work and packaging are still open. See
+> `progress.md` for the 2026-11-19 evidence and the exact NOT RUN list.
 
 ## Read these first
 
@@ -28,7 +29,7 @@ browse and play them through a full-screen, remote-friendly interface.
 | `AGENTS.md` | Rules for human and AI contributors |
 | `docs/` | Architecture, ADRs, design, security, testing, operations |
 
-## Planned stack
+## Stack
 
 Docker/Compose-hosted Rust backend (`core` + `probe`) · Tauri 2 Windows shell and
 supervisor · React + TypeScript (Vite) · SQLite.
@@ -40,11 +41,12 @@ single loopback-only authenticated API. Containers are an internal detail: there
 still exactly one MEDIA_HAVEN application, and the user never sees a container
 dashboard or types a Docker command.
 
-The Windows runtime distribution (ADR-0001 Part 2), the host/container transport
-(ADR-0005) and the playback engine and its licence (ADR-0002, O-09) are **open
-proposals** pending Phase 0 evidence and human review. If the required runtime is
-unavailable, backend-dependent functions remain unavailable; there is no host-side
-backend fallback.
+The runtime distribution is decided as a dedicated WSL2 distro with Docker
+Engine (ADR-0001 Part 2, accepted 2026-11-18); the shipped images and boundary
+evidence are not yet built. The host/container transport (ADR-0005) and the
+playback descriptor (ADR-0015) remain Proposed and must not be treated as
+binding. If the required runtime is unavailable, backend-dependent functions
+remain unavailable; there is no host-side backend fallback.
 
 ## Repository layout
 
@@ -61,16 +63,36 @@ progress.md        Current state
 
 ## Quick start (contributors)
 
-Nothing is runnable yet. The only current command is the read-only preflight:
+The read-only preflight reports Windows version, architecture, RAM, free disk,
+virtualisation capability, Docker presence and port availability. It changes
+nothing on your machine — no installs, no feature toggles, no admin prompt:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/preflight.ps1
 ```
 
-It reports Windows version, architecture, RAM, free disk, virtualisation capability, Docker presence and port availability. **It changes nothing on your machine**—no installs, no feature toggles, no admin prompt. Docker detection is for the required backend prerequisite, not an optional service check.
+The following were observed green on 2026-11-19:
 
-When Phase 1 lands, `cargo build` plus `npm install && npm run tauri dev` will be
-the documented path. `roadmap.md` P1-01 tracks it.
+```powershell
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+From `apps/desktop`:
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run check:tokens
+npm run check:bundle
+npm run build
+npm run dev
+```
+
+No Docker command is runnable without explicit consent. See `progress.md` for the
+2026-11-19 evidence and the exact NOT RUN list.
 
 ## Tooling for AI agents
 

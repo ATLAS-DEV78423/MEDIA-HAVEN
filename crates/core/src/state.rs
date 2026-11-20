@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use app_core::application::LibraryService;
+use media_acquisition::AcquisitionState;
 use media_persistence::sqlite::SqliteLibraryRepository;
 
 /// The application service over the SQLite adapter. `core` never talks to
@@ -14,6 +15,9 @@ pub struct AppState {
     pub service: Arc<LibraryServiceHandle>,
     /// Per-install secret (ADR-0005 §2). One token, no roles.
     pub token: Arc<str>,
+    /// Host-internal acquisition orchestrator. Lives in `core` because only it
+    /// sits on the `acquire` network where `qbittorrent:8080` resolves.
+    pub acquisition: Arc<AcquisitionState>,
 }
 
 impl AppState {
@@ -21,6 +25,7 @@ impl AppState {
         Self {
             service: Arc::new(service),
             token: Arc::from(token.into()),
+            acquisition: Arc::new(AcquisitionState::new()),
         }
     }
 }

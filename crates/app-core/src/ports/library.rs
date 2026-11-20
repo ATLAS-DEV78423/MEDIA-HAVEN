@@ -24,6 +24,9 @@ pub trait LibraryRepository: Send + Sync {
         last_scan_at: Option<&str>,
         error_message: Option<&str>,
     ) -> Result<(), AppError>;
+    /// Mark roots left in `scanning` by a killed process as `error`.
+    /// Returns the number of roots recovered. Never deletes rows or media.
+    async fn recover_interrupted_scans(&self) -> Result<usize, AppError>;
     async fn media_replace_for_root(
         &self,
         root_id: &str,
@@ -43,10 +46,27 @@ pub trait LibraryRepository: Send + Sync {
         &self,
         request: &PlaybackCheckpointRequest,
     ) -> Result<(), AppError>;
+    /// Host-internal container-path identity for a media id (ADR-0015).
+    /// Never a renderer DTO: the path stays inside the host and is handed only
+    /// to the playback engine after host-side resolution.
+    async fn media_source_path(&self, id: &str) -> Result<Option<String>, AppError>;
     async fn watchlist_add(&self, media_id: &str) -> Result<(), AppError>;
     async fn watchlist_remove(&self, media_id: &str) -> Result<(), AppError>;
     async fn watchlist_reorder(&self, ordered_ids: &[String]) -> Result<(), AppError>;
     async fn queue_add(&self, media_id: &str) -> Result<(), AppError>;
     async fn queue_remove(&self, queue_id: &str) -> Result<(), AppError>;
     async fn queue_reorder(&self, ordered_ids: &[String]) -> Result<(), AppError>;
+
+    // Acquisition records. Paths are host-internal arguments, never DTO fields.
+    async fn download_add(
+        &self,
+        item: &DownloadItem,
+        file_path: &str,
+        source: &str,
+        save_path: &str,
+    ) -> Result<(), AppError>;
+    async fn download_status(&self, id: &str) -> Result<Option<DownloadItem>, AppError>;
+    async fn download_remove(&self, id: &str) -> Result<(), AppError>;
+    async fn prefetch_upsert(&self, entry: &PrefetchEntry) -> Result<(), AppError>;
+    async fn cleanup_eligible(&self) -> Result<Vec<CleanupEntry>, AppError>;
 }

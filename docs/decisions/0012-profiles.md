@@ -1,6 +1,6 @@
 # ADR-0012: Profiles ("Who's watching")
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-20) — via ADR-0016 blanket human acceptance; local-only profile picker already implemented
 - **Date:** 2026-11-18
 - **Deciders:** human partner, contributing agent
 - **Related:** Development.md §7 (UI), Stitch `profile_selection_who_s_watching`

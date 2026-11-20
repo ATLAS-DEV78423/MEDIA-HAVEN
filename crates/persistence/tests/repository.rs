@@ -1028,3 +1028,95 @@ async fn queue_remove_archives_to_history_without_advancing() {
     assert_eq!(state, "pending");
     assert_eq!(position, 1);
 }
+
+#[tokio::test]
+async fn interrupted_scan_is_marked_error_without_touching_media() {
+    let fixture = Fixture::new().await;
+    fixture.seed().await;
+    let root = fixture
+        .repo
+        .root_add("Recover", "/tmp/recover")
+        .await
+        .expect("add root");
+    fixture
+        .repo
+        .root_update(&root.id, 3, LibraryRootStatus::Scanning, None, None)
+        .await
+        .expect("set scanning");
+
+    assert_eq!(fixture.repo.recover_interrupted_scans().await.unwrap(), 1);
+
+    let updated = fixture
+        .repo
+        .roots()
+        .await
+        .unwrap()
+        .roots
+        .into_iter()
+        .find(|r| r.id == root.id)
+        .expect("root still present");
+    assert_eq!(updated.status, LibraryRootStatus::Error);
+    assert_eq!(
+        updated.error_message.as_deref(),
+        Some("Scan interrupted by restart.")
+    );
+    // Recovery is idempotent: a second pass finds nothing left in `scanning`.
+    assert_eq!(fixture.repo.recover_interrupted_scans().await.unwrap(), 0);
+    // No media rows were deleted by the recovery.
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM media_items")
+        .fetch_one(fixture.repo.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 4);
+}
+
+/// ADR-0015: the backend's host-internal source lookup returns exactly the
+/// stored container-path identity, and fails closed (None) for an unknown id
+/// or a stale row whose file is no longer in the library.
+#[tokio::test]
+async fn media_source_path_returns_stored_path_and_fails_closed() {
+    let fixture = Fixture::new().await;
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let item = MediaUpsert {
+        metadata: None,
+        id: "m1".to_string(),
+        kind: MediaKind::Movie,
+        title: "Arrival".to_string(),
+        root_id: None,
+        path: Some("/media/root-0/movies/arrival.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h".to_string()),
+    };
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &[item])
+        .await
+        .expect("scan");
+
+    assert_eq!(
+        fixture.repo.media_source_path("m1").await.expect("source"),
+        Some("/media/root-0/movies/arrival.mkv".to_string())
+    );
+    assert_eq!(
+        fixture
+            .repo
+            .media_source_path("unknown")
+            .await
+            .expect("unknown"),
+        None
+    );
+
+    // A stale/missing file row must not yield a guessed path.
+    sqlx::query("DELETE FROM media_files WHERE media_id = 'm1'")
+        .execute(fixture.repo.pool())
+        .await
+        .expect("remove file row");
+    assert_eq!(
+        fixture.repo.media_source_path("m1").await.expect("stale"),
+        None
+    );
+}

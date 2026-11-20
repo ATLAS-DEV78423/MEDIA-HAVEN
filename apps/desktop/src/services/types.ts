@@ -162,6 +162,25 @@ export interface DownloadsScreen {
   tasks: DownloadTask[];
   storageUsedBytes: number;
   storageLimitBytes: number | null;
+  /** Host-authored buffer status message (no path). Null while the buffer runs. */
+  bufferNotice: string | null;
+}
+
+/* Acquisition rows (Rust `DownloadItem`, camelCase, path-free). */
+export type AcquisitionState =
+  | "downloading"
+  | "ready"
+  | "playing"
+  | "watched"
+  | "cleanupPending"
+  | "error";
+
+export interface AcquisitionRow {
+  id: string;
+  torrentHash: string;
+  mediaId: string | null;
+  state: AcquisitionState;
+  progress: number;
 }
 
 export interface Profile {

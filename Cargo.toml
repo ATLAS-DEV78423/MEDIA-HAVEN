@@ -6,7 +6,10 @@ members = [
   "crates/core",
   "crates/media-library",
   "crates/metadata",
+  "crates/acquisition",
   "crates/contract",
+  "crates/diagnostics",
+  "crates/playback",
   "apps/desktop/src-tauri",
 ]
 

@@ -2,7 +2,8 @@
 
 Windows installer and release packaging.
 
-**Status: empty.** Created by `roadmap.md` P7-01, after CP-5 passes.
+**Status: not populated.** Packaging artifacts are created by `roadmap.md`
+P7-01, after CP-5 passes.
 
 ## What will live here
 
@@ -28,9 +29,9 @@ Windows installer and release packaging.
 - **Signing is an open decision** (`roadmap.md` O-08) — an unsigned build will
   trip SmartScreen, and that must be stated rather than hidden.
 
-## Blocking decisions before this directory is populated
+## Decisions resolved (2026-11-20, ADR-0016 blanket human acceptance)
 
-- O-01: project name, branding, package ID (a neutral placeholder is in use).
-- O-08: installer signing certificate.
-
-Do not invent a product name to unblock packaging. Ask.
+- O-01 residual: package/bundle ID = `com.mediahaven.desktop`. Project name is
+  MEDIA HAVEN. Apply at P7-01; reversible by the human.
+- O-08: v1 ships **unsigned**. Publish the SmartScreen caveat in release notes.
+  A signed build needs a future human budget decision + certificate (reopens O-08).

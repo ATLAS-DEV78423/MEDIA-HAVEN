@@ -195,6 +195,8 @@ export interface DownloadsScreen {
   tasks: DownloadTask[];
   storageUsedBytes: number;
   storageLimitBytes: number | null;
+  /** Host-authored buffer status message (no path). Null while the buffer runs. */
+  bufferNotice: string | null;
 }
 
 export interface Profile {

@@ -12,6 +12,15 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# Resolve ffprobe/ffmpeg's full shared-library closure into one flat directory.
+# A top-level `*.so*` glob misses subdirectory libs (pulseaudio/, blas/, ...),
+# which makes the distroless runtime fail with "lib...so: cannot open shared
+# object file" (observed 2026-11-19: libpulsecommon-16.1.so, libblas.so.3).
+RUN mkdir -p /libs \
+    && for bin in /usr/bin/ffprobe /usr/bin/ffmpeg; do \
+         ldd "$bin" | awk '/=> \// {print $3} /^\// {print $1}'; \
+       done | sort -u | while read -r lib; do cp -L "$lib" /libs/; done
+
 # distroless/cc carries the C runtime libraries but no shell and no package
 # manager (plan R-27). The `static` variant cannot run Debian's ffprobe: it is
 # dynamically linked against libav* and codec libraries, so `cc` is the
@@ -29,9 +38,14 @@ USER 10002:10002
 
 COPY --from=ffmpeg-builder /usr/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=ffmpeg-builder /usr/bin/ffmpeg /usr/local/bin/ffmpeg
-# Shared objects only, not the multiarch directory's executable helpers.
-# Copying the full set avoids an ldd list that rots with each distro package
-# bump. This image targets x64 only (O-02).
-COPY --from=ffmpeg-builder /usr/lib/x86_64-linux-gnu/*.so* /usr/lib/x86_64-linux-gnu/
+# The container must stay up so the host can `docker exec ffprobe ...` on demand.
+# Bare ffprobe exits with code 1 when given no input, causing a restart loop
+# (observed 2026-11-19). A static /bin/sleep from the builder keeps it idle.
+COPY --from=ffmpeg-builder /bin/sleep /usr/local/bin/sleep
+# Copy the exact ldd-resolved library closure (dereferenced, flat) plus set
+# LD_LIBRARY_PATH so the loader finds it. No shell, no package manager.
+ENV LD_LIBRARY_PATH=/libs
+COPY --from=ffmpeg-builder /libs/ /libs/
 
-ENTRYPOINT ["/usr/local/bin/ffprobe"]
+ENTRYPOINT ["/usr/local/bin/sleep", "infinity"]
+# ffprobe/ffmpeg remain available on PATH for `docker exec`.

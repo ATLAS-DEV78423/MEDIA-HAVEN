@@ -1,6 +1,6 @@
 # ADR-0008 — Modular monolith across the Windows host and the Docker backend
 
-- **Status:** Proposed — human review required
+- **Status:** Accepted (2026-11-20) — via ADR-0016 blanket human acceptance
 - **Date:** 2026-11-16
 - **Deciders:** architecture; human partner approves
 - **Related:** ADR-0001, ADR-0003, ADR-0005, `docs/architecture/overview.md`, `Development.md` §2.2, §3.1

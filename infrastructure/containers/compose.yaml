@@ -60,6 +60,10 @@ services:
       # Manager. Never a default, never in the repository, never in an image.
       # See ADR-0007 for the honest limits of env-var delivery.
       MEDIAHAVEN_API_TOKEN: "${MEDIAHAVEN_API_TOKEN:?generated per install by the host supervisor}"
+      # Same host-generated secret injected into qBittorrent as QB_WEBUI_TOKEN.
+      # The host-side WebUI client logs in with it; never a default, never in an
+      # image, a log or a renderer DTO (ADR-0018).
+      MEDIAHAVEN_QB_TOKEN: "${MEDIAHAVEN_QB_TOKEN:?host-generated}"
       MEDIAHAVEN_DATA_DIR: "/var/lib/mediahaven"
       MEDIAHAVEN_STAGING_DIR: "/var/lib/mediahaven/staging"
       MEDIAHAVEN_CACHE_DIR: "/var/cache/mediahaven"
@@ -77,10 +81,12 @@ services:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
 
     networks:
-      # `edge` carries the published loopback port and is the only network with
-      # a gateway. `internal` has no gateway at all.
+      # `edge` carries the published loopback port. `internal` has no gateway.
+      # `acquire` reaches the qBittorrent WebUI only; it has no published port,
+      # so this is the sole production path to the downloader (ADR-0018).
       - edge
       - internal
+      - acquire
 
     deploy:
       resources:
@@ -161,12 +167,54 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # ---------------------------------------------------------------------
+  # qbittorrent — acquisition engine (ADR-0018; storage option B, gates G-1/G-9).
+  # Owns: user-supplied torrent acquisition into a dedicated download dir.
+  # Needs egress, but its WebUI is a high-trust management interface: it is
+  # never published to the LAN or reachable from the browser. No token in
+  # source/images/logs — injected at start from the host secret store.
+  # ---------------------------------------------------------------------
+  qbittorrent:
+    # Built from Dockerfile.qbittorrent (base pinned by digest there). The
+    # required var is the digest of the built image — no mutable tag, no latest.
+    build:
+      context: .
+      dockerfile: Dockerfile.qbittorrent
+    image: "${MEDIAHAVEN_QB_IMAGE:?must be <image>@sha256:<digest>}"
+    container_name: mediahaven-qbittorrent
+    restart: "on-failure:3"
+    user: "10003:10003"
+    read_only: false                 # qBittorrent must write resume data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      QB_WEBUI_TOKEN: "${MEDIAHAVEN_QB_TOKEN:?host-generated}"
+    volumes:
+      # Same host directory the supervisor binds read-only into `core` and
+      # records in the A9 host map for mpv. A named volume here would be a
+      # different store and downloads would be invisible to playback.
+      # A build-time chown cannot affect a host bind; writability is verified
+      # live (docs/security/boundary-evidence.md).
+      - ${MEDIAHAVEN_DOWNLOAD_ROOT:?host acquisition directory}:/downloads:rw
+      - qb-config:/config:rw
+    networks:
+      # Dedicated bridge with egress. No published port — WebUI reachable
+      # only from core on this network, never from the LAN or the browser.
+      - acquire
+
 volumes:
   # Class 2 — application data (SQLite database, config, artwork cache).
   # A named volume survives container recreation. It is NOT a backup.
   core-data:
   # Class 4 — imported / untrusted files awaiting promotion or purge.
   staging:
+  # App-managed acquisition destination is a HOST bind
+  # (${MEDIAHAVEN_DOWNLOAD_ROOT}), not a named volume, so qB's writes and the
+  # host map used by mpv refer to the same files.
+  # qBittorrent resume/session state.
+  qb-config:
 
 networks:
   # Carries the single published loopback port.
@@ -176,3 +224,6 @@ networks:
   internal:
     driver: bridge
     internal: true
+  # Egress allowed for acquisition; no published port to the LAN (G-9).
+  acquire:
+    driver: bridge

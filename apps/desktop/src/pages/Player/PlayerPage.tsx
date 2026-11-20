@@ -10,6 +10,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "@/components/ui/Icon";
 import { artFor } from "@/data/catalog";
 import { api, describeError } from "@/services/api";
+import { listenPlayerState, playerControl } from "@/services/player";
 import type { PlaybackSession } from "@/services/types";
 import { useAppState } from "@/state/AppState";
 import styles from "./player.module.css";
@@ -37,6 +38,8 @@ export function PlayerPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [playing, setPlaying] = useState(true);
+  // Once a real engine event arrives the 4x dev clock is retired for good.
+  const [engineSeen, setEngineSeen] = useState(false);
   const [chrome, setChrome] = useState(true);
   const [muted, setMuted] = useState(false);
 
@@ -70,6 +73,16 @@ export function PlayerPage() {
     return () => window.clearTimeout(timer);
   }, [start]);
 
+  useEffect(
+    () =>
+      listenPlayerState((event) => {
+        setEngineSeen(true);
+        setElapsed(event.timePos);
+        setPlaying(!event.pause);
+      }),
+    [],
+  );
+
   const save = useCallback(async () => {
     if (!mediaId || !session) return;
     await saveProgress(mediaId, elapsedRef.current, totalSeconds);
@@ -77,13 +90,14 @@ export function PlayerPage() {
 
   const active = Boolean(session) && playing && elapsed < totalSeconds;
 
+  // Dev-only fallback: no engine stream has been seen (browser without Tauri).
   useEffect(() => {
-    if (!active) return;
+    if (!active || engineSeen) return;
     const timer = window.setInterval(() => {
       setElapsed((current) => Math.min(totalSeconds, current + SIMULATION_RATE));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [active, totalSeconds]);
+  }, [active, engineSeen, totalSeconds]);
 
   useEffect(() => {
     if (!session) return;
@@ -114,15 +128,27 @@ export function PlayerPage() {
     setChrome(true);
   }, []);
 
-  const seekBy = useCallback(
-    (deltaSeconds: number) => {
-      setElapsed((current) =>
-        Math.min(totalSeconds, Math.max(0, current + deltaSeconds)),
-      );
+  const seekTo = useCallback(
+    (position: number) => {
+      const next = Math.min(totalSeconds, Math.max(0, position));
+      setElapsed(next);
+      void playerControl("seek", next).catch(() => {});
       wake();
     },
     [totalSeconds, wake],
   );
+
+  const seekBy = useCallback(
+    (deltaSeconds: number) => seekTo(elapsedRef.current + deltaSeconds),
+    [seekTo],
+  );
+
+  const togglePlay = useCallback(() => {
+    const next = !playing;
+    setPlaying(next);
+    void playerControl(next ? "play" : "pause").catch(() => {});
+    wake();
+  }, [playing, wake]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -136,8 +162,7 @@ export function PlayerPage() {
       switch (event.key) {
         case " ":
           event.preventDefault();
-          setPlaying((current) => !current);
-          wake();
+          togglePlay();
           break;
         case "ArrowLeft":
           event.preventDefault();
@@ -172,7 +197,7 @@ export function PlayerPage() {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("pointerdown", onMove);
     };
-  }, [navigate, seekBy, wake]);
+  }, [navigate, seekBy, togglePlay, wake]);
 
   useEffect(() => {
     document.documentElement.dataset.player = "active";
@@ -271,10 +296,7 @@ export function PlayerPage() {
           <button
             type="button"
             className={styles.pill}
-            onClick={() => {
-              setElapsed(Math.min(totalSeconds, 95));
-              wake();
-            }}
+            onClick={() => seekTo(95)}
             data-focusable="true"
           >
             <Icon name="skipForward" />
@@ -296,9 +318,7 @@ export function PlayerPage() {
             aria-label="Seek"
             style={{ "--seek": `${ratio * 100}%` } as CSSProperties}
             onChange={(event) => {
-              const next = Number(event.target.value) / 1000;
-              setElapsed(next * totalSeconds);
-              wake();
+              seekTo((Number(event.target.value) / 1000) * totalSeconds);
             }}
             onMouseUp={() => void save()}
             onTouchEnd={() => void save()}
@@ -320,10 +340,7 @@ export function PlayerPage() {
             <button
               type="button"
               className={`${styles.round} ${styles.play}`}
-              onClick={() => {
-                setPlaying((current) => !current);
-                wake();
-              }}
+              onClick={() => togglePlay()}
               aria-label={active ? "Pause" : "Play"}
               data-focusable="true"
             >
@@ -345,7 +362,9 @@ export function PlayerPage() {
               type="button"
               className={styles.round}
               onClick={() => {
-                setMuted((current) => !current);
+                const next = !muted;
+                setMuted(next);
+                void playerControl("volume", next ? 0 : 100).catch(() => {});
                 wake();
               }}
               aria-label={muted ? "Unmute" : "Mute"}

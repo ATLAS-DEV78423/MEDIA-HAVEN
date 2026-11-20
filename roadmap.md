@@ -72,16 +72,24 @@ blocked, not passed. See ADR-0009.
 
 ## Current milestone
 
-- **Phase:** 0 — Discovery and technical validation
-- **Goal:** Replace assumptions that could invalidate the mandatory architecture with evidence: runtime distribution and Compose lifecycle, host/container reachability and isolation, combined resource cost, containerised GPU-decode feasibility, and Windows playback compatibility. No host changes without explicit consent.
-- **Exit criteria:** CP-0 passes — the mandatory Docker backend boundary and the proposed runtime distribution are documented separately and human-reviewed; the playback ADR is accepted from codec/GPU/audio/subtitle/licence evidence; runtime networking, egress, mounts and lifecycle have evidence; resource claims are measured or explicitly unproven; the libmpv licence question (O-09) is answered; and a Tauri proof of concept opens and serves one IPC command.
+- **Phase:** No checkpoint has passed. Work is concurrent across Phase 1 foundation
+  (WS-A host boundary), Phase 2 library, Phase 3 playback and Phase 4 frontend —
+  the product owner chose frontend-first (ADR-0009).
+- **Goal:** Close the container boundary — A6 engine build and A8 boundary evidence
+  remain open; A9 (media-root read-only mount override) already landed at `c23b06f`
+  and unblocks P1-07/P1-08. Also build real playback (B2/B3, which unblocks
+  P3-01/P3-02). These items remain open.
+- **Exit criteria:** the next checkpoint reached passes only on observed evidence
+  recorded in `progress.md`, including a human-readable checkpoint summary.
 - **Owner/agent:** unassigned. Any agent picking this up must first read
   `Development.md`, this file and `progress.md`, then confirm scope with the
   human partner.
-- **Note:** no user-facing feature work starts before CP-0. Code written during
-  Phase 0 is explicitly labelled throwaway unless a task says otherwise.
-- **Note:** Phase 0 is where the evidence comes from. It is not a documentation
-  phase — a proposal is not a measurement, and CP-0 does not pass on prose.
+- **Note:** CP-0 is still OPEN. Zero of its evidence items are satisfied — every
+  one requires a measurement or a human sign-off, not a document.
+- **Note:** a `[~]` marker means code or partial evidence exists, NOT that the
+  acceptance criteria are met. `[x]` is reserved for checkpoint-verified tasks.
+- **Evidence:** `progress.md` 2026-11-19 entry records the live verification at
+  HEAD `7d48507` (Rust/frontend gates green; no engine or hardware evidence run).
 
 ---
 
@@ -408,7 +416,7 @@ Purpose: buy down the risks that can invalidate the mandatory architecture — p
 - **Risks:** Publishing a hardware promise the product cannot keep.
 - **Status:** Not started
 
-### ✅ Checkpoint CP-0 — Assumptions proven
+### Checkpoint CP-0 — Assumptions proven — OPEN
 
 - **Gate:** P0-01 … P0-14 complete.
 - **Evidence required:**
@@ -464,7 +472,7 @@ safely and can be verified by CI.
 - **Risks:** Unpinned toolchains causing "works on my machine" drift.
 - **Status:** Not started
 
-### [ ] P1-02 — Add CI for Rust and frontend
+### [~] P1-02 — Add CI for Rust and frontend
 
 - **Goal:** Every push runs format, lint, tests and build for both halves.
 - **Scope:** `.github/workflows/ci.yml` with separate Rust and Node jobs,
@@ -480,7 +488,7 @@ safely and can be verified by CI.
   - [ ] A green run is demonstrated on a branch, not asserted.
 - **Tests:** Deliberately break one check per job and confirm red, then revert.
 - **Risks:** A CI that only proves the happy path.
-- **Status:** Not started
+- **Status:** In progress — CI workflow and H1/H2/H3 tests exist and pass locally; a green GitHub Actions run has not been demonstrated.
 
 ### [ ] P1-03 — Implement structured logging and redaction
 
@@ -556,7 +564,7 @@ safely and can be verified by CI.
   selection with free-space validation, and a clean abort path.
 - **Out of scope:** Installing anything, enabling Windows features, requesting
   admin rights, downloading runtimes.
-- **Dependencies:** P1-03, P1-04, P1-06 (`preflight.ps1`).
+- **Dependencies:** P1-03, P1-04, P0-05 (runtime validation).
 - **Implementation areas:** `scripts/windows/preflight.ps1`,
   `apps/desktop/src/pages/Setup`, `crates/platform-windows`.
 - **Acceptance criteria:**
@@ -574,7 +582,7 @@ safely and can be verified by CI.
   dead-ends a 4 GB machine.
 - **Status:** Not started
 
-### [ ] P1-07 — Stand up the required Docker runtime and the `core`/`probe` workspace
+### [~] P1-07 — Stand up the required Docker runtime and the `core`/`probe` workspace
 
 - **Goal:** The mandatory container boundary exists, running and measurable
   before any product feature is built on top of it.
@@ -608,7 +616,7 @@ safely and can be verified by CI.
   recreate-and-verify test; a mount-scope test; an orphan-container check.
 - **Risks:** Building product features on a boundary that was never
   exercised; a container that can reach more than it should.
-- **Status:** Not started
+- **Status:** Code complete, unproven — compose/Dockerfile/mount-override code exists; no live engine build or docker inspect evidence (needs consent).
 
 ### [~] P1-08 — Implement the host↔container boundary and the supervisor lifecycle
 
@@ -641,9 +649,9 @@ safely and can be verified by CI.
 - **Tests:** Auth-matrix test; schema-drift test; dependency-graph assertion.
 - **Risks:** A generic passthrough command quietly becoming a full-capability
   API for the frontend.
-- **Status:** Not started
+- **Status:** In progress — named commands, DPAPI token, supervisor, HMAC forwarder and auth/contract tests exist; live engine + token-forwarding validation NOT RUN.
 
-### ✅ Checkpoint CP-1 — It builds, it logs, it fails safely
+### Checkpoint CP-1 — It builds, it logs, it fails safely — OPEN
 
 - **Gate:** P1-01 … P1-08 complete.
 - **Evidence required:**
@@ -753,7 +761,7 @@ touching their files.
 
 > Backend completion note (2026-11-17): closed — schema matches entity list with deviations recorded in ADR-0010 (`collections` deferred), UTC round-trip test, index-usage test via EXPLAIN, and `media_replace_for_root` upsert+prune with cascade-safe rescan tests. Remaining: `collections` (deferred), normalised path comparison, explicit cascade test for `media_item` deletion.
 
-### [ ] P2-04 — Build Movies, Shows and Library views
+### [~] P2-04 — Build Movies, Shows and Library views
 
 - **Goal:** A user can browse their indexed media by type.
 - **Scope:** Movies grid/shelf, Shows with seasons and episodes, Library view
@@ -774,9 +782,9 @@ touching their files.
 - **Tests:** Frontend tests per state; a performance check on the 10k fixture
   asserting bounded image requests.
 - **Risks:** Janky scrolling; layout shift when artwork fails.
-- **Status:** Not started
+- **Status:** In progress — Movies/Shows/Library/Search screens built and browser-checked against the host-run backend; data-dependent criteria remain open.
 
-### [ ] P2-05 — Add search, sorting, filtering and empty/error states
+### [~] P2-05 — Add search, sorting, filtering and empty/error states
 
 - **Goal:** Finding a title in a large library is fast and local.
 - **Scope:** Local-first search over indexed fields, sort and filter controls,
@@ -796,9 +804,9 @@ touching their files.
 - **Tests:** Unit tests for the query builder including wildcard escaping;
   timing test on the fixture.
 - **Risks:** SQL injection via search input; unindexed full scans.
-- **Status:** Not started
+- **Status:** In progress — local search implemented and timed at crate level; 10k-item frontend check and wildcard-input proof remain open.
 
-### [ ] P2-06 — Metadata and artwork cache with offline fallback
+### [~] P2-06 — Metadata and artwork cache with offline fallback
 
 - **Goal:** Nice metadata when possible, useful library when not.
 - **Scope:** Provider interface with at least one optional provider, local cache
@@ -820,11 +828,9 @@ touching their files.
   tests with hostile strings and malformed images.
 - **Risks:** Privacy leak via filenames; cache growth; terms-of-service
   violation.
-- **Status:** In progress — local NFO reader landed 2026-11-18
-  (`crates/metadata`, plan Task D2). Provider (TMDB, opt-in), artwork cache and
-  the UI opt-in surface remain; acceptance criteria above are not yet met.
+- **Status:** In progress — local NFO reader landed 2026-11-18; TMDB opt-in provider, cache, egress flag and UI toggle remain.
 
-### [ ] P2-07 — Implement the local watchlist
+### [~] P2-07 — Implement the local watchlist
 
 - **Goal:** The user can save media to watch later, and it survives restarts
   and upgrades.
@@ -852,11 +858,11 @@ touching their files.
   assertion on removal; missing-file handling; queue independence.
 - **Risks:** Conflating the watchlist with the queue, which would make
   "play next" mutate unexpectedly.
-- **Status:** Not started
+- **Status:** In progress — backend table, routes, persistence and Watchlist screen exist; file-count, restart and queue-independence tests remain.
 
-### ✅ Checkpoint CP-2 — The library is real
+### Checkpoint CP-2 — The library is real — OPEN
 
-- **Gate:** P2-01 … P2-06 complete.
+- **Gate:** P2-01 … P2-07 complete.
 - **Evidence required:**
   - [ ] 10k-item fixture browsed end to end with recorded timings.
   - [ ] Path-escape and reparse-point tests passing.
@@ -876,7 +882,7 @@ touching their files.
 
 Purpose: video actually plays, and the app remembers where the user was.
 
-### [ ] P3-01 — Integrate the selected player engine
+### [~] P3-01 — Integrate the selected player engine
 
 - **Goal:** The engine chosen in P0-03 plays a real file inside the app shell.
 - **Scope:** Adapter behind a `Player` port, lifecycle (open/play/pause/stop),
@@ -895,7 +901,7 @@ Purpose: video actually plays, and the app remembers where the user was.
 - **Tests:** Codec matrix replay as an automated or scripted suite; kill-file
   test; exit-leak test.
 - **Risks:** Engine update changing codec support; orphaned player processes.
-- **Status:** Not started
+- **Status:** In progress — engine adapter wired into host + renderer with headless evidence (2026-11-20, ADR-0015); live playback/codec/hardware-decode NOT RUN (mpv absent, install needs consent).
 
 ### [ ] P3-02 — Implement playback controls and overlay
 
@@ -920,7 +926,7 @@ Purpose: video actually plays, and the app remembers where the user was.
 - **Risks:** Controls that need a mouse; focus lost behind the video surface.
 - **Status:** Not started
 
-### [ ] P3-03 — Persist resume position
+### [~] P3-03 — Persist resume position
 
 - **Goal:** Stop, crash or shut down mid-episode and continue where you left off.
 - **Scope:** Checkpoints written on pause, stop, periodic interval, and app
@@ -939,9 +945,9 @@ Purpose: video actually plays, and the app remembers where the user was.
 - **Tests:** Integration tests for each exit path, including the simulated kill;
   a concurrency test for two items.
 - **Risks:** Losing progress on power loss; corrupt row on abrupt exit.
-- **Status:** Not started
+- **Status:** In progress — pure resume policy and checkpoint persistence exist; engine wiring and four exit-path tests remain.
 
-### [ ] P3-04 — Implement completion logic and tests
+### [~] P3-04 — Implement completion logic and tests
 
 - **Goal:** "Watched" is a multi-signal backend decision, never one seek.
 - **Scope:** Watched-duration threshold plus position-near-end plus a normal
@@ -962,7 +968,7 @@ Purpose: video actually plays, and the app remembers where the user was.
 - **Risks:** False completion triggering future cleanup. This task is the
   safety boundary for automated retention: treat a failing test as a release
   blocker.
-- **Status:** Not started
+- **Status:** In progress — domain completion rules exist with unit tests; persisted completion signal and full adversarial suite remain.
 
 ### [ ] P3-05 — Test subtitles, audio tracks and hardware decoding
 
@@ -985,7 +991,7 @@ Purpose: video actually plays, and the app remembers where the user was.
 - **Risks:** Promising subtitle support that fails on ASS-heavy releases.
 - **Status:** Not started
 
-### [ ] P3-06 — Implement the durable queue and Up Next
+### [~] P3-06 — Implement the durable queue and Up Next
 
 - **Goal:** A queue that survives a crash, a reboot and an upgrade, and that
   never deletes or advances media on its own.
@@ -1007,17 +1013,24 @@ Purpose: video actually plays, and the app remembers where the user was.
   consistency; file-count assertion on removal.
 - **Risks:** A queue that advances or deletes on its own — the same class of
   defect as R-05.
-- **Status:** Not started
+- **Status:** In progress — queue screen, durable reorder, removal history and crash-consistency tests exist; Up Next and restart proof remain.
 
-### ✅ Checkpoint CP-3 — Video plays and remembers
+### Checkpoint CP-3 — Video plays and remembers — OPEN
 
-- **Gate:** P3-01 … P3-05 complete.
+- **Gate:** P3-01 … P3-06 complete.
 - **Evidence required:**
   - [ ] Playback of at least one 1080p H.264 and one HEVC file, with recorded
         hardware-decode status.
   - [ ] Resume after a simulated kill, demonstrated.
   - [ ] The five adversarial completion tests passing, listed explicitly.
   - [ ] Orphan-process check after quitting mid-playback.
+
+> **2026-11-20:** P3-01 is now `[~]` — the mpv adapter is wired into the Tauri
+> host and renderer (ADR-0015 accepted). Headless evidence is in
+> `docs/security/boundary-evidence.md` and `progress.md`, but no real file has
+> been played: mpv is absent and installing it needs human consent. CP-3 stays
+> **OPEN** — the 1080p/HEVC playback, hardware-decode, resume-after-kill and
+> orphan-process items above are all still NOT RUN.
   - [ ] Support matrix published in `docs/testing/`.
 - **If it fails:** Do not build the TV layer on top of a player that loses
   position or mis-detects completion. P3-04 failures block the entire storage
@@ -1035,7 +1048,7 @@ Purpose: the product becomes pleasant to use from a couch.
 > **Dependencies below list the phases needed to *finish* each task, not the phases
 > needed to *start* it.**
 
-### [ ] P4-06 — Define the typed command and DTO contract
+### [~] P4-06 — Define the typed command and DTO contract
 
 - **Goal:** One frozen, typed description of everything the frontend may see and
   call — written before either side exists.
@@ -1064,9 +1077,9 @@ Purpose: the product becomes pleasant to use from a couch.
   request and response type, or if a type is changed in one place only.
 - **Risks:** A contract that leaks backend internals into the UI, making the
   backend impossible to change later.
-- **Status:** Not started
+- **Status:** In progress — crates/contract is the single source for 24 commands and 31 DTOs; parity tests pass; contract not frozen at a checkpoint.
 
-### [ ] P4-07 — Build the development mock transport
+### [~] P4-07 — Build the development mock transport
 
 - **Goal:** The interface can be built, demoed and tested before the backend
   exists — without that becoming a host-side backend.
@@ -1092,9 +1105,9 @@ Purpose: the product becomes pleasant to use from a couch.
   production bundle excludes the mock.
 - **Risks:** The mock quietly growing into a second, unpoliced backend. That
   would breach the mandatory boundary — see ADR-0009's revisit trigger.
-- **Status:** Not started
+- **Status:** Superseded — development mock was replaced by a host Tauri command surface and a dev-only signed HTTP client (A5/A7).
 
-### [ ] P4-08 — Integrate the frontend with the real backend
+### [~] P4-08 — Integrate the frontend with the real backend
 
 - **Goal:** Every screen verified against live data from the containerised
   backend.
@@ -1120,9 +1133,9 @@ Purpose: the product becomes pleasant to use from a couch.
   performance check; a backend-down smoke test.
 - **Risks:** The contract and the backend disagreeing in a way the mock never
   exposed. That is the point of this task.
-- **Status:** Not started
+- **Status:** In progress — frontend verified against the host-run backend; containerised backend, 10k fixture and failure-mode suite remain.
 
-### [ ] P4-01 — Implement design tokens and responsive layout
+### [~] P4-01 — Implement design tokens and responsive layout
 
 - **Goal:** One token source for colour, type, spacing, radii, elevation,
   motion and focus — no scattered hex values.
@@ -1130,7 +1143,7 @@ Purpose: the product becomes pleasant to use from a couch.
   palette with verified contrast, TV/laptop/narrow breakpoints, reduced-motion
   variants.
 - **Out of scope:** Screen composition.
-- **Dependencies:** P4-01, P0-08 prototype learnings. Tokens and layout do not need
+- **Dependencies:** P0-08 prototype learnings. Tokens and layout do not need
   a backend.
 - **Implementation areas:** `apps/desktop/src/styles/`.
 - **Acceptance criteria:**
@@ -1145,9 +1158,9 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Tests:** Automated contrast check on the token pairs; a grep/lint gate for
   literals; visual check at 1080p and 4K.
 - **Risks:** Contrast that passes on paper and fails over artwork; token sprawl.
-- **Status:** Not started
+- **Status:** In progress — token system and literal-check gate implemented; computed contrast ratios and TV-distance review NOT RUN.
 
-### [ ] P4-02 — Build Home hero and media shelves
+### [~] P4-02 — Build Home hero and media shelves
 
 - **Goal:** The screen that sells the product: data-driven, never hard-coded
   titles.
@@ -1173,9 +1186,9 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Tests:** Fixture-driven frontend tests for shelf order, empty states, and
   focus scaling without reflow.
 - **Risks:** Layout shift on artwork load; hero gradient failing on pale art.
-- **Status:** Not started
+- **Status:** In progress — hero/shelves/cards built and browser-checked; fixture-driven shelf-order and empty-state tests remain.
 
-### [ ] P4-03 — Implement keyboard and remote focus navigation
+### [~] P4-03 — Implement keyboard and remote focus navigation
 
 - **Goal:** The whole app is operable without a mouse.
 - **Scope:** `FocusManager` plus a tested directional navigation hook; shelf
@@ -1200,9 +1213,9 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Risks:** Focus traps, hidden focus behind overlays, unreachable controls.
   This is the highest-regression area in the app: every later phase must re-run
   the walkthrough.
-- **Status:** Not started
+- **Status:** In progress — spatial focus implementation and unit tests exist; full keyboard-only walkthrough across every screen NOT RUN.
 
-### [ ] P4-04 — Build details, settings and setup screens
+### [~] P4-04 — Build details, settings and setup screens
 
 - **Goal:** Everything the user needs is in-app; no second dashboard, ever.
 - **Scope:** Details view with season picker and episode list; Settings sections
@@ -1224,9 +1237,9 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Tests:** Persistence round-trip for settings; a test that an invalid value
   is rejected; navigation tests for each section.
 - **Risks:** Settings that write but never apply, or apply without persisting.
-- **Status:** Not started
+- **Status:** In progress — details/settings/setup screens built; settings validation and diagnostics-view tests remain.
 
-### [ ] P4-05 — Validate readability and performance at TV distance
+### [~] P4-05 — Validate readability and performance at TV distance
 
 - **Goal:** Prove the interface works at 3 metres, not just at desk distance.
 - **Scope:** Measure minimum text size, focus visibility, contrast in situ, and
@@ -1246,9 +1259,9 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Tests:** Recorded on-device measurements at 1080p and, if available, 4K.
 - **Risks:** Shipping an interface that only looks right on the developer's
   monitor.
-- **Status:** Not started
+- **Status:** In progress — DOM geometry checked at two sizes; contrast ratios, dropped-frame counts and TV-distance review NOT RUN.
 
-### ✅ Checkpoint CP-4 — Usable from the couch
+### Checkpoint CP-4 — Usable from the couch — OPEN
 
 - **Gate:** P4-01 … P4-08 complete.
 - **Evidence required:**
@@ -1426,7 +1439,7 @@ Purpose: the app cannot silently lose the user's data or leak their machine.
 - **Risks:** Undiscovered corruption paths that only appear on real hardware.
 - **Status:** Not started
 
-### ✅ Checkpoint CP-5 — Trustworthy under failure
+### Checkpoint CP-5 — Trustworthy under failure — OPEN
 
 - **Gate:** P5-01 … P5-07 complete.
 - **Evidence required:**
@@ -1483,7 +1496,7 @@ these is unresolved, stop before implementation.
 - **Risks:** A control that exists on paper only.
 - **Status:** Not started
 
-### [ ] P6-02 — Optional lawful download provider adapter
+### [~] P6-02 — Optional lawful download provider adapter
 
 - **Goal:** A provider interface with no bundled content sources and no
   unlawful defaults.
@@ -1508,7 +1521,7 @@ these is unresolved, stop before implementation.
 - **Risks:** Legal exposure; a leaked control API; a misconfiguration turning
   the app into a piracy front-end. This task requires human legal sign-off
   before implementation begins.
-- **Status:** Not started
+- **Status:** [~] Reopened and implemented under ADR-0017/0018/0019 (human-accepted 2026-11-20) via the torrent-acquisition conversion plan, Tasks 1–7. Built: qBittorrent Docker sandbox on an egress `acquire` network with no published port, loopback-only WebUI client with secret-store credentials, named + signed host-internal acquisition routes, user-supplied magnet/`.torrent` Downloads UI, rolling two-episode buffer with 20 GiB cap, and coordinated cleanup of app-managed downloads only. Full gate green (fmt/clippy clean; 84 Rust passed/1 ignored, parity 24; 18 Vitest; frontend checks clean). Acceptance evidence: `docs/testing/acquisition-matrix.md`. **NOT RUN:** live authorized-torrent acquisition, real-media appearance/playback, live prefetch, live qB deletion, real retained-byte cap, and second-machine LAN non-reachability (no lawful source / human evidence gate). No checkpoint passed.
 
 ### [ ] P6-03 — Verify workspace shutdown, limits, recovery and persistence
 
@@ -1534,7 +1547,7 @@ these is unresolved, stop before implementation.
   a container upgrade that loses watch history.
 - **Status:** Not started
 
-### ✅ Checkpoint CP-6 — Required workspace is contained
+### Checkpoint CP-6 — Required workspace is contained — OPEN
 
 - **Gate:** P6-01 … P6-03 complete; the mandatory backend boundary is verified.
 - **Evidence required:**
@@ -1657,7 +1670,7 @@ Purpose: a non-technical user installs, updates and uninstalls safely.
 - **Risks:** Documentation describing intended rather than actual behaviour.
 - **Status:** Not started
 
-### ✅ Checkpoint CP-7 — Shippable
+### Checkpoint CP-7 — Shippable — OPEN
 
 - **Gate:** All of `Development.md` §17 release gates pass.
 - **Evidence required:**
@@ -1681,6 +1694,9 @@ approved requirement and a spec update.
 
 - Remote/headless streaming and multi-device access (reopens auth, TLS,
   patching, threat model).
+- ~~Whole download workstream / O-05~~ **REOPENED 2026-11-20 by ADR-0017** —
+  torrent acquisition of authorized media is now in scope; see
+  `docs/superpowers/plans/2026-11-20-torrent-acquisition-conversion.md`.
 - Mobile companion application.
 - Multi-user profiles and cloud sync.
 - Transcoding farm, Kubernetes, distributed anything.
@@ -1719,14 +1735,14 @@ approved requirement and a spec update.
 | R-19 | Third-party decoder parses hostile media on the host | Risk | Code execution | ADR-0002 exception; OS mitigations; sandboxed renderer | Accepted |
 | R-20 | Watch history readable by the same OS user | Risk | Privacy | Per-user app data and per-user distro | Accepted |
 | R-21 | No HDR guarantee | Risk | Experience | Deferred with the playback ADR | P0-12 result |
-| O-01 | Project name / branding / package ID | **Decided 2026-11-18** — MEDIA HAVEN is the project and the app name | Blocks installer identity | Package ID still needed at P7-01 | Before P7-01 |
+| O-01 | Project name / branding / package ID | **Decided 2026-11-18 / 2026-11-20** — MEDIA HAVEN is the name; package ID `com.mediahaven.desktop` (ADR-0016) | Blocks installer identity | Apply at P7-01 | Before P7-01 |
 | O-02 | Windows 10 support claim | **Decided 2026-11-18** — Windows 11 x64 only for v1 | Support surface | Development.md and installer must state it | Before P7-04 |
-| O-03 | Offline-indefinitely guarantee | Decision | Metadata feature behaviour | Decide after Phase 2 | Before CP-2 |
+| O-03 | Offline-indefinitely guarantee | **Decided 2026-11-20** — fully offline after install (ADR-0016); local playback/browsing never need a network | Metadata feature behaviour | Enforce opt-in egress in P2-06 | Before CP-2 |
 | O-04 | Metadata provider selection and terms | **Accepted 2026-11-18** — TMDB primary, local NFO fallback (ADR-0011) | Legal/feature scope | Opt-in egress, attribution, secret-store key | Before P2-06 |
-| O-05 | Download provider legal/security review | **Deferred 2026-11-18** — the whole download workstream is out of v1 | Blocks P6-02 entirely | Revisit only if downloads are proposed again | Before P6-02 |
+| O-05 | Download provider legal/security review | **Reversed and accepted 2026-11-20 (ADR-0017/0018/0019)** — authorized-media acquisition via qBittorrent is in scope; conversion Tasks 1–7 complete and ADR-0018/0019 controls verified by tests + boundary evidence (`docs/testing/acquisition-matrix.md`, `docs/security/boundary-evidence.md`) | Live lawful-source acquisition, real-media playback/cleanup and second-machine LAN non-reachability remain **NOT RUN** (no lawful source / human evidence gate); no checkpoint passed | Evidence recorded in `docs/testing/acquisition-matrix.md`; human CP review still owed | Design closed 2026-11-20; live gates open |
 | O-06 | Windows Docker runtime distribution | **Accepted 2026-11-18** — dedicated WSL2 distro + Docker Engine (ADR-0001 Part 2) | Required backend packaging and lifecycle | P0-10/P0-13/P0-14 numbers still owed | Before CP-0 |
 | O-07 | Whether to reuse an existing Docker Desktop engine instead of a dedicated distro | **Decided 2026-11-18** — no reuse; the product ships its own dedicated distro | Isolation vs install friction | Detection still reported to the user, never silent | Before CP-0 |
-| O-08 | Installer signing certificate | Decision | Trust/SmartScreen | Human budget decision | Before P7-01 |
+| O-08 | Installer signing certificate | **Decided 2026-11-20** — ship unsigned in v1, publish the SmartScreen caveat; a signed build needs a future human budget decision (ADR-0016) | Trust/SmartScreen | Document caveat at P7-03 | Before P7-01 |
 | O-09 | libmpv LGPL vs GPL build | **Decided 2026-11-18** — LGPL build (ADR-0002 acceptance record) | **Project licence compatibility** | Confirm the shipped artefact really is LGPL-configured | Before CP-0 |
 
 **Rule:** an agent may propose options for any `O-*` item and must record the

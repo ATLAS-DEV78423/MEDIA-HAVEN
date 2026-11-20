@@ -1,8 +1,8 @@
 # ADR-0015: Playback source is resolved host-side from the media id — no path or token in the renderer
 
-- **Status:** **Proposed — recommendation only; not accepted.** Code must not depend on it (see the ADR index rules). Only the human partner may accept it.
+- **Status:** **Accepted (2026-11-20)** via ADR-0016 blanket human acceptance. Code may now depend on it.
 - **Date:** 2026-11-19
-- **Deciders:** human partner (acceptance pending), contributing agent
+- **Deciders:** human partner (accepted 2026-11-20 via ADR-0016), contributing agent
 - **Related:** ADR-0002 (playback on the Windows host via mpv JSON IPC; the containerised backend stays the authority on *what* to play), ADR-0005 §3 (named commands only, no path to the renderer, no generic passthrough) and §5 (failures must be legible), ADR-0009 / roadmap P4-06 (typed command and DTO contract), ADR-0013 (containerise before features), plan `2026-11-18-backend-completion.md` tasks B1/B2, roadmap P3-01 … P3-05. D-6 (autoplay off by default) is in force and is not reopened here.
 
 ## Context
@@ -17,13 +17,13 @@ Measured vs assumed: the command list, the `RenderOutput::host_path_map()` shape
 
 ## Decision
 
-### Recommendation (Proposed — pending human acceptance, not Accepted)
+### Decision (Accepted 2026-11-20 via ADR-0016)
 
 **`playback_start` stays a renderer-facing named command whose `PlaybackSession` DTO contains no filesystem path and no source token.** When the host handles `playback_start`, it uses the requested media id to find the item's container-path identity, resolves that to a host path through `RenderOutput::host_path_map()` from A9, and hands that host path only to mpv via the host-internal `playback_open(mediaId) -> EngineHandle`. The renderer sees named commands and typed, display-only DTOs; it never sees a path or a token. The backend remains the authority on what to play (ADR-0002); the host decides only how to open the already-authorised file.
 
 **Why there is no opaque `sourceToken`:** the host already holds the media id and the mount map, so a token would add no containment. Returned in the `playback_start` DTO it would put a file-locating handle in the renderer (the defect this decision exists to prevent); kept host-side it would be redundant with the media id. We drop it. The renderer's only handle is the media id it already sends.
 
-This is a recommendation. It is **not** accepted and must not be treated as binding until the human partner moves this ADR to Accepted.
+This decision is **Accepted** (2026-11-20, ADR-0016) and is binding.
 
 ### Containment rule
 
@@ -41,7 +41,7 @@ In that case resolution **fails closed**: if the map no longer contains the cont
 
 | Option | Pros | Cons | Verdict |
 |---|---|---|---|
-| Host resolves the media id via `RenderOutput::host_path_map()` (this recommendation) | No path or token reaches the renderer; reuses the map A9 already builds; backend stays the authority on what to play (ADR-0002); fails closed on a moved file | Adds a host-side resolve step to the critical path to playback | **Recommended — not yet accepted** |
+| Host resolves the media id via `RenderOutput::host_path_map()` (this decision) | No path or token reaches the renderer; reuses the map A9 already builds; backend stays the authority on what to play (ADR-0002); fails closed on a moved file | Adds a host-side resolve step to the critical path to playback | **Accepted (2026-11-20)** |
 | Return an opaque `sourceToken` in the `playback_start` DTO | Looks opaque, so it appears not to be a path | `playback_start` is renderer-facing; this hands the renderer a field whose only purpose is locating a file, violating the no-path/no-handle rule (ADR-0005 §3, P4-06), plus token lifecycle and replay work for no containment gain. The host already owns the map | Rejected — resolves the ambiguity in the brief's proposed shape |
 | Return a raw filesystem path in the `playback_start` DTO | Simplest to implement | Forbidden by ADR-0005 §3 and P4-06; leaks a host path into the WebView and hands the renderer an actionable path; any XSS becomes a file-open primitive | Rejected |
 | Stream file bytes through the API to a renderer/host player | Avoids exposing any path at all | Unnecessary on one machine; reintroduces the encode/extra-decode latency and bandwidth ceiling ADR-0002 rejected; still needs a path somewhere to read the bytes | Rejected |

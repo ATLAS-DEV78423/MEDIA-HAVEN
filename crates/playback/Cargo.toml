@@ -1,0 +1,13 @@
+[package]
+name = "media-playback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Host-side mpv playback adapter with a testable IPC port and ADR-0015 source containment"
+
+[dependencies]
+# Both are already in [workspace.dependencies]; no new dependency is introduced.
+serde_json.workspace = true
+thiserror.workspace = true

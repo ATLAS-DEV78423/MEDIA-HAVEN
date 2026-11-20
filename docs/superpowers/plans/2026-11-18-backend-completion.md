@@ -7,7 +7,11 @@
 > or NOT RUN, never a guess. Read `AGENTS.md`, `Development.md`, `roadmap.md`
 > and `progress.md` before the first task, in that order.
 
-**Status:** draft for human review — no task in this plan has been executed.
+**Status:** active plan. Implemented in code: A1–A5, A7, A9 (render logic), C1–C2,
+D1–D2, H2–H3. Written but NOT RUN on a live engine: A4 live cycle, A6 build/digests,
+A8 boundary evidence, A9 mount-scope proof, C1 token forwarding. Not started:
+B2–B6 (except pure domain logic in B4/B5), D3–D4, F1–F6, G1–G4. See `progress.md`
+2026-11-19 entry for observed evidence.
 
 ## Goal
 
@@ -29,23 +33,23 @@ and 4** in the one order the contracts allow. It does not re-plan Phase 0
 discovery measurement work; where a measurement is still missing it appears as
 a gate, not as a substitute.
 
-## Where the build actually is (observed 2026-11-18)
+## Where the build actually is (observed 2026-11-19)
 
 Facts, not intentions:
 
-| Area | Observed state |
+| Area | Observed state at HEAD `7d48507` (2026-11-19) |
 |---|---|
-| Rust workspace | `app-core`, `core`, `media-library`, `persistence`. Builds; clippy and tests pass. |
-| API | 26 routes: `/healthz` public + 25 token/HMAC-protected. Unknown fields rejected. |
-| Persistence | SQLite with migrations, roots, media, watchlist, queue tables, settings, profiles. |
-| Scanner | Real filesystem scan, stable ids, path-escape refusal, duplicates reported. |
-| UI | React 19 + Vite on `:5173`, calls the API directly with a **development** token. |
-| Playback | `playback_start` returns metadata only. `PlayerPage` runs a simulated clock at 4×; there is **no stream route and no engine**. |
-| Queue | Routes exist; no UI, no caller, no tests beyond repository level. |
-| Downloads | `downloads_list` exists; no provider, no actions, no writes. |
-| Tauri host | Scaffolded 2026-11-18 (A2): window opens, one smoke command, no supervisor/token/command surface yet. |
-| Docker | `infrastructure/containers/{compose.yaml,Dockerfile.core}` exist as **unrun artefacts**. The backend runs on the host, outside the required boundary. |
-| CI | No workflow. |
+| Rust workspace | Seven crates: `app-core`, `core`, `media-library`, `metadata`, `persistence`, `contract`, `mediahaven-desktop`. `cargo test --workspace` green. |
+| API | 26 routes: `/healthz` public + 25 token/HMAC protected. Unknown fields rejected; 11 auth-matrix tests pass. |
+| Persistence | SQLite migrations, roots, media, watchlist, durable queue + history, settings, profiles. |
+| Scanner | Real filesystem scan, stable ids, path-escape refusal, duplicates reported; NFO sidecar metadata stored. |
+| UI | React 19 + Vite, wired to the host through 24 named Tauri commands; dev-only signed HTTP client for browser work. |
+| Playback | `playback_start` returns metadata only; renderer runs a simulated 4× clock. No `crates/playback`, no stream route. |
+| Queue | Screen, route, nav, add/remove/reorder, durable reorder and removal history implemented and tested. |
+| Downloads | `downloads_list` is read-only. Whole workstream deferred out of v1 (O-05). |
+| Tauri host | Window, DPAPI token, WSL supervisor, mount override renderer, command surface and signed forwarder implemented. |
+| Docker | Dockerfiles, compose and override renderer written but never built or run; no digests, no `docker inspect` evidence. |
+| CI | Workflow + contract-drift + dependency-graph + H2/H3 tests present and green locally; no GitHub Actions run recorded. |
 
 Two documentation defects were found while writing this plan. The first is
 fixed: ADR-0011's status line and Decision section disagreed; both were corrected
@@ -212,7 +216,7 @@ present with live connections to `127.0.0.1:8080`, and zero processes left after
 stopping it. Cold-start timing was **NOT** measured, and the window was not
 inspected visually. The renderer still talks HTTP directly, which A5/A7 fix.
 
-### A3 — Per-install token provisioning
+### A3 — Per-install token provisioning — COMPLETE (2026-11-18)
 
 **Goal:** a 256-bit token generated once, stored in Windows Credential Manager,
 retrievable only by the host process.
@@ -251,7 +255,7 @@ quit, `down` runs and no container remains.
 name) asserting a legible error and zero containers started.
 **Risks:** orphan containers on crash — Task A8 must prove cleanup.
 
-### A5 — Named command surface
+### A5 — Named command surface — COMPLETE (2026-11-18)
 
 **Goal:** the renderer calls named commands; the host signs and forwards.
 **Files:** create `crates/contract/` (operation list + request/response types,
@@ -295,7 +299,7 @@ no others.
 **Risks:** multi-stage build of the whole workspace inflating the image; a
 probe image with a shell and a package manager left in it.
 
-### A7 — Renderer transport swap
+### A7 — Renderer transport swap — COMPLETE (2026-11-18)
 
 **Goal:** the UI works with the host, and still works in the browser for
 development without weakening the production path.
@@ -325,7 +329,8 @@ listener on `0.0.0.0`.
 **Acceptance:** each check recorded with the command and its output.
 **Tests:** the auth matrix must be automated, not a checklist someone ticked.
 
-### A9 — Media root mount rendering
+### A9 — Media root mount rendering — IMPLEMENTED IN CODE, live validation NOT RUN (2026-11-18)
+> Label note: "C1" in `progress.md` means token injection into core; "C1" in this plan means the Queue screen. They are different tasks.
 
 **Goal:** adding a library root adds exactly one read-only mount and nothing
 else.

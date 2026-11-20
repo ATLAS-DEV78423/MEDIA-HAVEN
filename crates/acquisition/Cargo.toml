@@ -1,0 +1,14 @@
+[package]
+name = "media-acquisition"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+description = "Loopback qBittorrent WebUI client and acquisition orchestration"
+
+[dependencies]
+# All are already workspace dependencies; no new crate is introduced (ADR-0018).
+app-core = { path = "../app-core" }
+serde_json.workspace = true
+thiserror.workspace = true

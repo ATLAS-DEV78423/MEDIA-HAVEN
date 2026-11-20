@@ -62,6 +62,9 @@ jobs:
       - name: H2 — contract / route / generated-TS drift
         run: cargo test -p mediahaven-contract --test route_parity
 
+      - name: F3 — path traversal / root containment suite
+        run: cargo test -p media-library --test security
+
       - name: Workspace tests
         run: cargo test --workspace
 

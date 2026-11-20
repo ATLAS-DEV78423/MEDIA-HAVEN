@@ -11,17 +11,22 @@ Never rewrite an accepted ADR's decision.
 | [0001](0001-windows-container-runtime.md) | Mandatory Docker boundary and Windows runtime distribution | Mandatory boundary **Accepted**; distribution **Accepted (provisional)** (dedicated WSL2 + Docker Engine) | P0-10, P0-13, P0-14 |
 | [0002](0002-playback-engine.md) | Playback engine and placement | **Accepted (provisional)** — mpv via JSON IPC, abstract interface | P0-11, P0-12, O-09 |
 | [0003](0003-modular-monolith.md) | Modular monolith | Accepted; deployment boundary reconciled by ADR-0008 | — |
-| [0004](0004-local-playback-first.md) | Local HDMI playback first | Not started; requires human acceptance | P0-01 |
-| [0005](0005-host-container-boundary.md) | Host/container transport and authentication | Proposed; not verified | P0-13, P1-08 |
+| [0004](0004-local-playback-first.md) | Local HDMI playback first | **Accepted** (2026-11-20, ADR-0016) | P0-01 |
+| [0005](0005-host-container-boundary.md) | Host/container transport and authentication | **Accepted** (2026-11-20, ADR-0016); P0-13 evidence still owed | P0-13, P1-08 |
 | [0006](0006-filesystem-and-volume-policy.md) | Filesystem and volume policy | **Accepted (provisional)** | P1-07, P6-03 |
 | [0007](0007-secrets-management.md) | Secrets management | **Accepted (provisional)** — token storage mechanism amended by ADR-0014 | P1-03, P1-08 |
-| [0008](0008-modular-monolith-deployment-boundary.md) | Modular monolith across Windows host and Docker backend | Proposed; human review required | P0-07, P1-08 |
+| [0008](0008-modular-monolith-deployment-boundary.md) | Modular monolith across Windows host and Docker backend | **Accepted** (2026-11-20, ADR-0016) | P0-07, P1-08 |
 | [0009](0009-frontend-first-contract-driven.md) | Frontend-first, contract-driven development | Accepted | — |
-| [0010](0010-library-entity-deviations.md) | Library entity deviations and scanner conventions | Proposed | P2-02, P2-03 |
+| [0012](0012-profiles.md) | Profiles ("Who's watching") | **Accepted** (2026-11-20, ADR-0016) | — |
+| [0010](0010-library-entity-deviations.md) | Library entity deviations and scanner conventions | **Accepted** (2026-11-20, ADR-0016) | P2-02, P2-03 |
 | [0011](0011-metadata-provider-selection.md) | Metadata provider selection | **Accepted** (2026-11-18) — TMDB primary, local NFO offline fallback, network opt-in | P2-06, O-04 |
 | [0013](0013-backend-completion-sequencing.md) | Containerise the backend before the remaining features | **Accepted** (2026-11-18) | P1-08, P4-08 |
 | [0014](0014-host-token-storage.md) | Host token storage uses DPAPI | **Accepted** (2026-11-18) — amends ADR-0007 for the API token | P1-08, O-07 |
-| [0015](0015-playback-descriptor.md) | Playback source resolved host-side from the media id — no path or token in the renderer | **Proposed** — recommendation only, not accepted | P3-01, P4-06 |
+| [0015](0015-playback-descriptor.md) | Playback source resolved host-side from the media id — no path or token in the renderer | **Accepted** (2026-11-20, ADR-0016) | P3-01, P4-06 |
+| [0016](0016-blanket-acceptance-2026-11-20.md) | Human blanket acceptance of outstanding decisions | Accepted | — |
+| [0017](0017-acquisition-conversion.md) | Adopt torrent-acquisition conversion; supersede local-playback-first | **Accepted** (2026-11-20) | Tasks 1–7 |
+| [0018](0018-qbittorrent-boundary.md) | qBittorrent sandbox and trust boundary | **Accepted** (2026-11-20) | Tasks 2–3 |
+| [0019](0019-app-managed-cleanup.md) | Cleanup of watched, app-managed media only | **Accepted** (2026-11-20) | Task 6 |
 
 **Two decisions are already binding and are not reopened by Phase 0:**
 
@@ -30,12 +35,18 @@ Never rewrite an accepted ADR's decision.
 2. **The frontend never receives Docker daemon access** (ADR-0005 §3). Lifecycle
    operations go through the host supervisor only.
 
-**Still open, and each needs human acceptance before code depends on it:** the Windows
-runtime distribution (ADR-0001 Part 2), the playback engine and its placement (ADR-0002),
-the host/container transport and auth scheme (ADR-0005), the volume policy (ADR-0006),
-the secret-provisioning mechanism (ADR-0007) and the deployment-boundary rules
-(ADR-0008). The metadata provider is no longer open: ADR-0011 was accepted by the
-human partner on 2026-11-18 (TMDB primary, local NFO offline fallback).
+**Resolved 2026-11-20 by ADR-0016 blanket human acceptance:** ADR-0004, 0005,
+0008, 0010, 0015, the O-03 offline guarantee (fully offline), O-08 (unsigned v1
+build, SmartScreen caveat published) and the O-01 residual package ID
+(`com.mediahaven.desktop`). Any of these is reversible by the human; see ADR-0016.
+
+**Still provisional, pending Phase 0 measurement evidence:** ADR-0001 Part 2
+and ADR-0002 are **Accepted (provisional)** and become fully binding only when
+their P0-10/P0-11/P0-12/P0-13/P0-14 evidence is observed and human-reviewed.
+ADR-0006 and ADR-0007 are **Accepted (provisional)**, with ADR-0007's token
+mechanism amended by the Accepted ADR-0014. ADR-0011 (TMDB primary, local NFO
+offline fallback, opt-in network) was accepted by the human partner on
+2026-11-18 and is no longer open.
 
 ## Status values
 

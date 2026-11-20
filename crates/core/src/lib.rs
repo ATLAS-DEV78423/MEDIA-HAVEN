@@ -4,6 +4,7 @@
 //! SQLite, and this crate owns transport only — routing, authentication and
 //! process lifecycle. No policy lives here that the domain could own.
 
+pub mod acquisition;
 pub mod auth;
 pub mod routes;
 pub mod seed;
