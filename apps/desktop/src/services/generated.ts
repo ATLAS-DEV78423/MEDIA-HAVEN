@@ -182,6 +182,9 @@ export interface WatchlistScreen {
   entries: WatchlistEntry[];
 }
 
+/** Display-only verification state. Never carries a path or a scanner detail. */
+export type MediaStatus = "scanning" | "blocked" | "ready" | "unavailable";
+
 export interface DownloadTask {
   id: string;
   title: string;

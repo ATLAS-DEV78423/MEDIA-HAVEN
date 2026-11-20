@@ -167,6 +167,10 @@ export interface DownloadsScreen {
 }
 
 /* Acquisition rows (Rust `DownloadItem`, camelCase, path-free). */
+
+/** Display-only verification state. Never carries a path or a scanner detail. */
+export type MediaStatus = "scanning" | "blocked" | "ready" | "unavailable";
+
 export type AcquisitionState =
   | "downloading"
   | "ready"
@@ -181,6 +185,8 @@ export interface AcquisitionRow {
   mediaId: string | null;
   state: AcquisitionState;
   progress: number;
+  /** Honest, path-free verification state; absent until the gates report. */
+  mediaStatus?: MediaStatus;
 }
 
 export interface Profile {

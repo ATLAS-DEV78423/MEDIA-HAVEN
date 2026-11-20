@@ -18,11 +18,14 @@ use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
 use media_acquisition::{
-    missing_episodes, next_two_in_season, reconcile, AcquireError, CleanupCandidate,
-    CleanupDecision, CleanupError, CleanupState, CleanupWorker, EpisodeRef, ManagedFile,
-    PrefetchScheduler, QbClient, TorrentApi, DEFAULT_BUFFER_LIMIT_BYTES, REPLAY_GRACE, SAVE_PATH,
+    inspect_with_runner, missing_episodes, next_two_in_season, reconcile, AcquireError,
+    CleanupCandidate, CleanupDecision, CleanupError, CleanupState, CleanupWorker,
+    DockerProbeRunner, EpisodeRef, InspectionState, ManagedFile, PrefetchScheduler, ProbeRunner,
+    QbClient, TorrentApi, DEFAULT_BUFFER_LIMIT_BYTES, REPLAY_GRACE, SAVE_PATH,
 };
-use media_persistence::sqlite::{CleanupRepository, ManagedFileRow};
+use media_persistence::sqlite::{
+    connect_path, CleanupRepository, ManagedFileRow, SqliteLibraryRepository,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -37,6 +40,7 @@ const REMOVE_PATH: &str = "/host/acquisition_remove";
 const BUFFER_STATUS_PATH: &str = "/host/acquisition_buffer_status";
 const CLEANUP_CONFIRM_PATH: &str = "/host/acquisition_cleanup_confirm";
 const CLEANUP_PASS_PATH: &str = "/host/acquisition_cleanup_pass";
+const INSPECT_PATH: &str = "/host/acquisition_inspect";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -48,6 +52,16 @@ struct AddArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RemoveArgs {
     id: String,
+}
+
+/// Host-internal inspection trigger for a completed download. `containerPath`
+/// is a host-internal container path (never a renderer DTO field); it is
+/// constrained to `/downloads/...` before any command is built.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InspectArgs {
+    id: String,
+    container_path: String,
 }
 
 /// Host-internal completion signal (NOT a renderer DTO). Carries the B5 inputs
@@ -73,6 +87,7 @@ pub fn host_router() -> Router<AppState> {
         .route(BUFFER_STATUS_PATH, post(buffer_status))
         .route(CLEANUP_CONFIRM_PATH, post(confirm_completion))
         .route(CLEANUP_PASS_PATH, post(cleanup_pass))
+        .route(INSPECT_PATH, post(inspect))
 }
 
 fn map_error(error: AcquireError) -> ApiError {
@@ -129,6 +144,19 @@ async fn add(
             .download_add(&item, path, &args.source, SAVE_PATH)
             .await?;
     }
+    // Bridge the orchestrator's automatic inspection result (computed in memory
+    // on acquire) into SQLite so the playability gate can read it. Persist by
+    // download id (= torrent hash); the gate looks up by media_id, which stays
+    // NULL until the per-episode source mapping (spec R-01 gate) is supplied.
+    // Writing it now means no re-scan is needed when that mapping lands.
+    if let Some(inspection) = state.acquisition.inspection_state(&item.id) {
+        let detail = (inspection != InspectionState::Clean)
+            .then(|| format!("probe: {}", inspection.as_str()));
+        verify_repo()
+            .await?
+            .set_verification_state(&item.id, inspection.as_str(), detail.as_deref())
+            .await?;
+    }
     encode(item)
 }
 
@@ -142,6 +170,77 @@ async fn remove(
 ) -> Result<Json<Value>, ApiError> {
     state.acquisition.remove(&args.id).map_err(map_error)?;
     Ok(Json(Value::Null))
+}
+
+// ---------------------------------------------------------------------------
+// Downloaded-media inspection gate (security hardening, Task 1). Stays under
+// /host/ and outside the 24-command renderer surface. The probe result is
+// stored on `download_items`; playback/detail refuse anything not `clean`.
+// ---------------------------------------------------------------------------
+
+/// Lazy repository for verification writes, mirroring `CLEANUP_REPO`: `core`
+/// opens one pool per process rather than one per request.
+static VERIFY_REPO: OnceLock<SqliteLibraryRepository> = OnceLock::new();
+
+async fn verify_repo() -> Result<&'static SqliteLibraryRepository, AppError> {
+    if let Some(repo) = VERIFY_REPO.get() {
+        return Ok(repo);
+    }
+    let path = crate::server::default_data_dir().join("library.db");
+    let repo = SqliteLibraryRepository::new(connect_path(&path).await.map_err(|_| {
+        AppError::new(
+            AppErrorCode::BackendUnreachable,
+            "The verification store is unavailable.",
+            true,
+        )
+    })?);
+    let _ = VERIFY_REPO.set(repo);
+    VERIFY_REPO.get().ok_or_else(|| {
+        AppError::new(
+            AppErrorCode::BackendUnreachable,
+            "The verification store is unavailable.",
+            true,
+        )
+    })
+}
+
+/// Run the probe gate and persist its result. The runner is injected so tests
+/// never touch Docker; `spawn_blocking` keeps the bounded CLI wait off a tokio
+/// worker. The detail string is a fixed label, never a filesystem path.
+pub async fn inspect_and_record_with<R: ProbeRunner + Send + 'static>(
+    repo: &SqliteLibraryRepository,
+    runner: R,
+    id: &str,
+    container_path: &str,
+) -> Result<InspectionState, AppError> {
+    let path = container_path.to_string();
+    let state = tokio::task::spawn_blocking(move || inspect_with_runner(&runner, &path))
+        .await
+        .map_err(|_| {
+            AppError::new(
+                AppErrorCode::BackendUnreachable,
+                "The inspection task did not complete.",
+                true,
+            )
+        })?;
+    let detail = (state != InspectionState::Clean).then(|| format!("probe: {}", state.as_str()));
+    repo.set_verification_state(id, state.as_str(), detail.as_deref())
+        .await?;
+    Ok(state)
+}
+
+/// Called by the host when a download is complete, before the item may play.
+async fn inspect(
+    State(_state): State<AppState>,
+    ApiJson(args): ApiJson<InspectArgs>,
+) -> Result<Json<Value>, ApiError> {
+    if args.id.trim().is_empty() {
+        return Err(cleanup_invalid("id is required."));
+    }
+    let repo = verify_repo().await?;
+    let result =
+        inspect_and_record_with(repo, DockerProbeRunner, &args.id, &args.container_path).await?;
+    Ok(Json(serde_json::json!({ "state": result.as_str() })))
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +722,7 @@ mod tests {
             BUFFER_STATUS_PATH,
             CLEANUP_CONFIRM_PATH,
             CLEANUP_PASS_PATH,
+            INSPECT_PATH,
         ] {
             assert!(path.starts_with(HOST_PREFIX), "host-only path: {path}");
         }
@@ -853,5 +953,91 @@ mod production_wiring_tests {
             !entry.outcome.unwrap_or_default().contains("removed"),
             "no false removal claim"
         );
+    }
+
+    struct RefusingProbe;
+    impl ProbeRunner for RefusingProbe {
+        fn run(
+            &self,
+            _container_path: &str,
+        ) -> Result<media_acquisition::ProbeOutput, media_acquisition::ProbeError> {
+            Ok(media_acquisition::ProbeOutput {
+                success: false,
+                stdout: String::new(),
+            })
+        }
+    }
+
+    struct AcceptingProbe;
+    impl ProbeRunner for AcceptingProbe {
+        fn run(
+            &self,
+            _container_path: &str,
+        ) -> Result<media_acquisition::ProbeOutput, media_acquisition::ProbeError> {
+            Ok(media_acquisition::ProbeOutput {
+                success: true,
+                stdout: r#"{"format":{"format_name":"matroska","duration":"1.0"}}"#.to_string(),
+            })
+        }
+    }
+
+    /// Production wiring: real SQLite, real persistence port, real gate — only
+    /// the probe's observation is faked. Proves a non-Clean result blocks the
+    /// same `detail` call the renderer's `library_detail` route makes.
+    #[tokio::test]
+    async fn probe_failure_is_persisted_and_blocks_playback_through_production_wiring() {
+        let (_dir, db) = temp_db("inspect");
+        let pool = connect_path(&db).await.expect("connect and migrate");
+        let repo = SqliteLibraryRepository::new(pool.clone());
+        let service = LibraryService::new(SqliteLibraryRepository::new(pool.clone()));
+
+        const PATH: &str = "/downloads/bad/e01.mkv";
+        let item = DownloadItem {
+            id: "d-inspect".to_string(),
+            torrent_hash: "h-inspect".to_string(),
+            media_id: Some("m-inspect".to_string()),
+            state: DownloadState::Ready,
+            progress: 1.0,
+        };
+        service
+            .download_add(&item, PATH, "magnet:?xt=urn:btih:inspect", SAVE_PATH)
+            .await
+            .expect("download_add persists the item");
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO media_items (id, kind, title, created_at, updated_at) \
+             VALUES ('m-inspect', 'movie', 'title', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(&pool)
+        .await
+        .expect("insert media");
+
+        let result = inspect_and_record_with(&repo, RefusingProbe, "d-inspect", PATH)
+            .await
+            .expect("inspection completes");
+        assert_eq!(result, InspectionState::Suspicious);
+        assert_eq!(
+            repo.verification_state_for_media("m-inspect")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("suspicious")
+        );
+        let error = service.detail("m-inspect").await.unwrap_err();
+        assert_eq!(error.code, AppErrorCode::MediaUnsupported);
+        assert!(!error.message.contains("/downloads"), "display-only reason");
+
+        // A clean result must re-enable the very same call: no stale refusal.
+        let result = inspect_and_record_with(&repo, AcceptingProbe, "d-inspect", PATH)
+            .await
+            .expect("inspection completes");
+        assert_eq!(result, InspectionState::Clean);
+        // Task 2: detail now checks both gates; set the Defender half too.
+        repo.set_defender_verification("d-inspect", "clean", None)
+            .await
+            .expect("record defender clean");
+        assert!(service.detail("m-inspect").await.is_ok());
     }
 }

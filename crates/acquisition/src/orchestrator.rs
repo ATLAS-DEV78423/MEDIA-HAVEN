@@ -5,10 +5,14 @@
 //! a fake in tests) and a `DownloadStore`. It is deliberately synchronous and
 //! path-free: no host path or credential is ever produced here.
 
+use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use app_core::domain::{DownloadItem, DownloadState};
 
+use crate::inspection::{
+    combine_inspection, inspect_completed, DockerProbeRunner, InspectionState, ProbeRunner,
+};
 use crate::qbittorrent::{QbClient, TorrentApi};
 
 /// Container destination for user-supplied acquisitions (storage option B).
@@ -84,6 +88,12 @@ pub trait DownloadStore {
     fn download_status(&self, id: &str) -> Option<DownloadItem>;
     fn download_list(&self) -> Vec<DownloadItem>;
     fn download_remove(&self, id: &str);
+    /// Completion-path inspection result. Default no-op keeps other stores
+    /// compiling; the in-memory store records it so the gate can read it.
+    fn record_inspection(&self, _id: &str, _state: InspectionState) {}
+    fn inspection_state(&self, _id: &str) -> Option<InspectionState> {
+        None
+    }
 }
 
 #[derive(Clone)]
@@ -98,6 +108,7 @@ struct Stored {
 #[derive(Default)]
 pub struct InMemoryDownloadStore {
     stored: Mutex<Vec<Stored>>,
+    inspection: Mutex<HashMap<String, InspectionState>>,
 }
 
 impl DownloadStore for InMemoryDownloadStore {
@@ -143,6 +154,25 @@ impl DownloadStore for InMemoryDownloadStore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|entry| entry.item.id != id);
+        self.inspection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(id);
+    }
+
+    fn record_inspection(&self, id: &str, state: InspectionState) {
+        self.inspection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id.to_string(), state);
+    }
+
+    fn inspection_state(&self, id: &str) -> Option<InspectionState> {
+        self.inspection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .copied()
     }
 }
 
@@ -150,11 +180,65 @@ impl DownloadStore for InMemoryDownloadStore {
 pub struct Orchestrator<A: TorrentApi, S: DownloadStore> {
     api: A,
     store: S,
+    probe: Box<dyn ProbeRunner + Send + Sync>,
+    /// Per-file probe results for completed downloads (host-internal only).
+    inspection: Mutex<HashMap<String, Vec<(String, InspectionState)>>>,
 }
 
 impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
     pub fn new(api: A, store: S) -> Self {
-        Self { api, store }
+        Self {
+            api,
+            store,
+            probe: Box::new(DockerProbeRunner),
+            inspection: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Inject a probe for tests. Production uses `DockerProbeRunner` by default.
+    pub fn with_probe_runner(mut self, runner: impl ProbeRunner + Send + Sync + 'static) -> Self {
+        self.probe = Box::new(runner);
+        self
+    }
+
+    /// The inspection result recorded for a completed download id.
+    pub fn inspection_state(&self, id: &str) -> Option<InspectionState> {
+        self.store.inspection_state(id)
+    }
+
+    /// The per-file results, used by the host to record detail without paths
+    /// entering any renderer DTO (container paths are host-internal only).
+    pub fn inspection_results(&self, id: &str) -> Vec<(String, InspectionState)> {
+        self.inspection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Completion-path trigger (Task 1 finding 1). qB reports `Ready` here; a
+    /// finished download is inspected immediately instead of staying pending
+    /// forever. Any failure is unplayable — never a silent Clean.
+    fn inspect_if_ready(&self, item: &DownloadItem) {
+        if item.state != DownloadState::Ready {
+            return;
+        }
+        let paths: Vec<String> = self
+            .api
+            .files(&item.torrent_hash)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|name| format!("{SAVE_PATH}/{}", name.trim_start_matches('/')))
+            .collect();
+        let probe: &dyn ProbeRunner = self.probe.as_ref();
+        let results = inspect_completed(probe, &paths);
+        let combined = combine_inspection(&results);
+        self.inspection
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(item.id.clone(), results);
+        self.store.record_inspection(&item.id, combined);
     }
 
     /// Add a user-supplied source once. A repeat of the same source returns the
@@ -177,6 +261,7 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
             progress: status.progress,
         };
         self.store.download_insert(&item, &source);
+        self.inspect_if_ready(&item);
         Ok(item)
     }
 
@@ -246,6 +331,14 @@ impl AcquisitionState {
 
     pub fn acquire(&self, raw: &str) -> Result<DownloadItem, AcquireError> {
         self.with(|orchestrator| orchestrator.acquire(raw))
+    }
+
+    /// Inspection result computed for `id` on the completion path. Used by core
+    /// to persist it into SQLite so the playability gate can read it.
+    pub fn inspection_state(&self, id: &str) -> Option<InspectionState> {
+        self.with(|orchestrator| Ok(orchestrator.inspection_state(id)))
+            .ok()
+            .flatten()
     }
 
     /// Host-internal container paths for an acquired torrent.
@@ -430,6 +523,115 @@ mod tests {
         assert_eq!(
             orchestrator.remove(&first.id).unwrap_err(),
             AcquireError::NotFound
+        );
+    }
+
+    // --- Completion-path inspection trigger (Task 1 finding 1) --------------
+
+    struct ReadyApi {
+        files: Vec<String>,
+    }
+
+    impl TorrentApi for ReadyApi {
+        fn add(&self, source: &str, _save_path: &str) -> Result<String, QbError> {
+            Ok(format!("hash-{source}"))
+        }
+        fn status(&self, hash: &str) -> Result<TorrentStatus, QbError> {
+            Ok(TorrentStatus {
+                hash: hash.to_string(),
+                state: "completed".to_string(),
+                progress: 1.0,
+            })
+        }
+        fn files(&self, _hash: &str) -> Result<Vec<String>, QbError> {
+            Ok(self.files.clone())
+        }
+        fn remove(&self, _hash: &str, _delete_files: bool) -> Result<(), QbError> {
+            Ok(())
+        }
+    }
+
+    struct FakeProbe(InspectionState);
+
+    impl ProbeRunner for FakeProbe {
+        fn run(
+            &self,
+            _container_path: &str,
+        ) -> Result<crate::inspection::ProbeOutput, crate::inspection::ProbeError> {
+            use crate::inspection::{ProbeError, ProbeOutput};
+            match self.0 {
+                InspectionState::Clean => Ok(ProbeOutput {
+                    success: true,
+                    stdout: r#"{"format":{"format_name":"matroska"}}"#.to_string(),
+                }),
+                InspectionState::Suspicious => Ok(ProbeOutput {
+                    success: false,
+                    stdout: String::new(),
+                }),
+                _ => Err(ProbeError::Unavailable),
+            }
+        }
+    }
+
+    #[test]
+    fn completed_download_is_inspected_automatically_on_acquire() {
+        let api = ReadyApi {
+            files: vec!["show/e01.mkv".to_string()],
+        };
+        let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default())
+            .with_probe_runner(FakeProbe(InspectionState::Clean));
+        let item = orchestrator.acquire(MAGNET).expect("acquire");
+
+        assert_eq!(item.state, DownloadState::Ready);
+        assert_eq!(
+            orchestrator.inspection_state(&item.id),
+            Some(InspectionState::Clean)
+        );
+        let results = orchestrator.inspection_results(&item.id);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "/downloads/show/e01.mkv");
+        assert_eq!(results[0].1, InspectionState::Clean);
+    }
+
+    #[test]
+    fn refused_and_unavailable_probes_fail_closed_on_completion() {
+        for (probe_state, expected) in [
+            (InspectionState::Suspicious, InspectionState::Suspicious),
+            (InspectionState::Unavailable, InspectionState::Unavailable),
+        ] {
+            let api = ReadyApi {
+                files: vec!["e01.mkv".to_string()],
+            };
+            let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default())
+                .with_probe_runner(FakeProbe(probe_state));
+            let item = orchestrator.acquire(MAGNET).expect("acquire");
+            assert_eq!(orchestrator.inspection_state(&item.id), Some(expected));
+            assert_ne!(
+                orchestrator.inspection_state(&item.id),
+                Some(InspectionState::Clean)
+            );
+        }
+    }
+
+    #[test]
+    fn incomplete_download_is_not_inspected_yet() {
+        let orchestrator = Orchestrator::new(FakeApi::default(), InMemoryDownloadStore::default())
+            .with_probe_runner(FakeProbe(InspectionState::Clean));
+        let item = orchestrator.acquire(MAGNET).expect("acquire");
+        assert_eq!(item.state, DownloadState::Downloading);
+        assert_eq!(orchestrator.inspection_state(&item.id), None);
+    }
+
+    #[test]
+    fn completed_torrent_with_no_files_fails_closed() {
+        let orchestrator =
+            Orchestrator::new(ReadyApi { files: vec![] }, InMemoryDownloadStore::default())
+                .with_probe_runner(FakeProbe(InspectionState::Clean));
+        let item = orchestrator.acquire(MAGNET).expect("acquire");
+        assert_eq!(
+            orchestrator.inspection_state(&item.id),
+            Some(InspectionState::Unavailable),
+            "no files to inspect is never Clean"
         );
     }
 }

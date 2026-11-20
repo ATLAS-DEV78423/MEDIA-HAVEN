@@ -107,7 +107,7 @@ async fn acquisition_migration_is_idempotent() {
         .fetch_one(&second)
         .await
         .expect("read migration bookkeeping");
-    assert_eq!(applied, 4, "migrations were re-applied instead of skipped");
+    assert_eq!(applied, 6, "migrations were re-applied instead of skipped");
     for table in [
         "torrent_tasks",
         "download_items",

@@ -251,6 +251,14 @@ impl LibraryRepository for SqliteLibraryRepository {
             .fetch_row(id)
             .await?
             .ok_or_else(|| AppError::new(AppErrorCode::NotFound, "media not found", false))?;
+        // Downloaded items must pass the probe gate before the UI may even
+        // present their detail. Library imports have no download row and stay
+        // allowed; the reason returned here is display-only (never a path).
+        self.refuse_unverified(id).await?;
+        // Task 2: Defender half of the combined gate, alongside Task 1's probe
+        // check above. A flagged download gets an honest blocked state, not a
+        // normal detail view; the reason never contains a path.
+        self.refuse_unscanned_download(id).await?;
 
         match kind_from_str(&row.kind) {
             MediaKind::Movie => Ok(MediaDetail::Movie(MovieDetail {
@@ -707,6 +715,13 @@ impl LibraryRepository for SqliteLibraryRepository {
             .fetch_row(&request.media_id)
             .await?
             .ok_or_else(|| AppError::new(AppErrorCode::NotFound, "media not found", false))?;
+        // The authoritative gate: mpv never receives a downloaded file that
+        // has not been parsed by the probe. Enforced here (not in React) so no
+        // caller of the read port can bypass it.
+        self.refuse_unverified(&request.media_id).await?;
+        // Task 2: Defender half of the combined pre-play gate, alongside Task 1's
+        // probe check above. No path or scanner detail reaches the caller.
+        self.refuse_unscanned_download(&request.media_id).await?;
 
         if let MediaAvailability::Available =
             availability(&row.availability_state, &row.availability_last_seen)
@@ -1361,5 +1376,434 @@ fn default_settings() -> AppSettings {
             avatar_color: "#E50914".to_string(),
             created_at: now_iso(),
         }],
+    }
+}
+
+/// Task 2: Defender verification columns on `download_items`. This block owns
+/// only `defender_state`/`defender_detail`; Task 1's `verification_*` columns
+/// and methods are deliberately untouched.
+impl SqliteLibraryRepository {
+    /// Persist the Defender result for one download. `detail` is a host-only
+    /// diagnostic; callers must pass a path-free reason for display surfaces.
+    pub async fn set_defender_verification(
+        &self,
+        id: &str,
+        state: &str,
+        detail: Option<&str>,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE download_items SET defender_state = ?, defender_detail = ? WHERE id = ?",
+        )
+        .bind(state)
+        .bind(detail)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(())
+    }
+
+    /// Defender state for a media id. Absence (no row, no media id) fails
+    /// closed: the caller treats `None` as "not scanned", never as clean.
+    pub async fn defender_state_for_media(
+        &self,
+        media_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT defender_state FROM download_items WHERE media_id = ? LIMIT 1",
+        )
+        .bind(media_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Self::internal)
+    }
+
+    /// Refuse a downloaded item until Defender reports clean. A library import
+    /// (no download row) is unaffected; every other state fails closed. The
+    /// reason is a fixed display string, never a path or a scanner detail.
+    async fn refuse_unscanned_download(&self, media_id: &str) -> Result<(), AppError> {
+        let state = self.defender_state_for_media(media_id).await?;
+        let reason = match state.as_deref() {
+            None | Some("clean") => return Ok(()),
+            Some("threat") => "Windows Defender flagged this file.",
+            Some("unavailable") => "Windows Defender could not scan this file.",
+            Some(_) => "This file has not been scanned yet.",
+        };
+        Err(AppError::new(AppErrorCode::MediaUnsupported, reason, false))
+    }
+}
+
+#[cfg(test)]
+mod defender_tests {
+    use super::*;
+    use crate::sqlite::connect_path;
+    use app_core::application::LibraryService;
+
+    fn temp_db(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("mh-defender-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir.join("library.db")
+    }
+
+    async fn insert_item(repo: &SqliteLibraryRepository, id: &str, media_id: &str) {
+        let pool = repo.pool();
+        sqlx::query(
+            "INSERT INTO torrent_tasks (hash, magnet_or_source, state, save_path, created_at, updated_at) \
+             VALUES (?, ?, 'ready', '/downloads', '', '')",
+        )
+        .bind(format!("hash-{id}"))
+        .bind("magnet:?xt=urn:btih:test")
+        .execute(pool)
+        .await
+        .expect("insert torrent task");
+        sqlx::query(
+            "INSERT INTO download_items (id, torrent_hash, media_id, file_path, state, created_at) \
+             VALUES (?, ?, ?, ?, 'ready', '')",
+        )
+        .bind(id)
+        .bind(format!("hash-{id}"))
+        .bind(media_id)
+        .bind(format!("/downloads/{id}.mkv"))
+        .execute(pool)
+        .await
+        .expect("insert download item");
+    }
+
+    #[tokio::test]
+    async fn defender_state_defaults_to_not_scanned_and_is_settable() {
+        let db = temp_db("default");
+        let pool = connect_path(&db).await.expect("connect and migrate");
+        let repo = SqliteLibraryRepository::new(pool);
+        insert_item(&repo, "d-def", "m-def").await;
+
+        assert_eq!(
+            repo.defender_state_for_media("m-def").await.expect("read"),
+            Some("not_scanned".to_string()),
+            "a fresh download fails closed"
+        );
+        repo.set_defender_verification("d-def", "threat", None)
+            .await
+            .expect("set");
+        assert_eq!(
+            repo.defender_state_for_media("m-def").await.expect("read"),
+            Some("threat".to_string())
+        );
+
+        // No mapping for an unknown media id fails closed too.
+        assert_eq!(
+            repo.defender_state_for_media("m-unknown")
+                .await
+                .expect("read"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn threat_is_never_playable_or_visible_even_when_probe_is_clean() {
+        let db = temp_db("playback");
+        let pool = connect_path(&db).await.expect("connect and migrate");
+        let repo = SqliteLibraryRepository::new(pool);
+        let now = now_iso();
+        sqlx::query(
+            "INSERT INTO media_items (id, kind, title, created_at, updated_at) \
+             VALUES ('m-threat', 'movie', 'title', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(repo.pool())
+        .await
+        .expect("insert media");
+        sqlx::query(
+            "INSERT INTO torrent_tasks (hash, magnet_or_source, state, save_path, created_at, updated_at) \
+             VALUES ('h-threat', 'magnet:?xt=urn:btih:test', 'ready', '/downloads', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(repo.pool())
+        .await
+        .expect("insert torrent task");
+        sqlx::query(
+            "INSERT INTO download_items \
+             (id, torrent_hash, media_id, file_path, state, created_at, verification_state, defender_state) \
+             VALUES ('d-threat', 'h-threat', 'm-threat', '/downloads/m-threat.mkv', 'ready', ?, 'clean', 'threat')",
+        )
+        .bind(&now)
+        .execute(repo.pool())
+        .await
+        .expect("insert download item");
+
+        let service = LibraryService::new(SqliteLibraryRepository::new(repo.pool().clone()));
+
+        // A probe-clean but Defender-flagged download must not present a normal
+        // detail view, and the refusal must never leak a path.
+        let detail_error = service
+            .detail("m-threat")
+            .await
+            .expect_err("a Defender threat must not show a detail view");
+        assert_eq!(detail_error.code, AppErrorCode::MediaUnsupported);
+        assert!(detail_error.message.contains("Defender"));
+        assert!(!detail_error.message.contains("/downloads"));
+
+        let error = service
+            .playback_start(&PlaybackStartRequest {
+                media_id: "m-threat".to_string(),
+                start_position_seconds: None,
+            })
+            .await
+            .expect_err("a Defender threat must never be playable");
+        assert_eq!(error.code, AppErrorCode::MediaUnsupported);
+        assert!(error.message.contains("Defender"));
+        assert!(!error.message.contains("/downloads"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Downloaded-media verification gate (security hardening, Task 1).
+// ---------------------------------------------------------------------------
+
+impl SqliteLibraryRepository {
+    /// Verification state for the download that owns `media_id`. `None` means
+    /// the item is not a download (a library import) and is trusted by the
+    /// library scanner, not by the probe gate.
+    pub async fn verification_state_for_media(
+        &self,
+        media_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        sqlx::query_scalar(
+            "SELECT verification_state FROM download_items WHERE media_id = ? LIMIT 1",
+        )
+        .bind(media_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Self::internal)
+    }
+
+    /// Record a probe result for a download. `detail` is metadata only and must
+    /// never contain a filesystem path.
+    pub async fn set_verification_state(
+        &self,
+        download_id: &str,
+        state: &str,
+        detail: Option<&str>,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE download_items SET verification_state = ?, verification_detail = ? WHERE id = ?",
+        )
+        .bind(state)
+        .bind(detail)
+        .bind(download_id)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(())
+    }
+
+    /// Refuse a downloaded item until the probe has parsed it as media. The
+    /// message is a fixed display string: no path reaches the renderer.
+    async fn refuse_unverified(&self, media_id: &str) -> Result<(), AppError> {
+        let state = self.verification_state_for_media(media_id).await?;
+        if let Some(reason) = playback_block_reason(state.as_deref()) {
+            return Err(AppError::new(AppErrorCode::MediaUnsupported, reason, false));
+        }
+        Ok(())
+    }
+}
+
+/// Map a stored verification state to a display-only refusal reason. `None`
+/// means either a library import (no download row) or a verified-clean download;
+/// both are allowed. Every other state — including unknown values — fails closed.
+pub fn playback_block_reason(state: Option<&str>) -> Option<&'static str> {
+    match state {
+        None | Some("clean") => None,
+        Some("scanning") => Some("This download is still being checked."),
+        Some("suspicious") => Some("This download failed verification and cannot be played."),
+        Some("unavailable") => Some("This download could not be verified and cannot be played."),
+        Some(_) => Some("This download has not passed verification yet."),
+    }
+}
+
+#[cfg(test)]
+mod verification_tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::*;
+    use crate::sqlite::pool::connect_path;
+    use app_core::application::LibraryService;
+
+    async fn seeded_db(tag: &str) -> (SqliteLibraryRepository, std::path::PathBuf) {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("mh-verify-{tag}-{nanos}"));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let db = dir.join("library.db");
+        let pool = connect_path(&db).await.expect("connect and migrate");
+        (SqliteLibraryRepository::new(pool), db)
+    }
+
+    async fn seed_media(repo: &SqliteLibraryRepository, media_id: &str) {
+        let now = now_iso();
+        sqlx::query(
+            "INSERT INTO media_items (id, kind, title, created_at, updated_at) \
+             VALUES (?, 'movie', ?, ?, ?)",
+        )
+        .bind(media_id)
+        .bind(format!("title-{media_id}"))
+        .bind(&now)
+        .bind(&now)
+        .execute(repo.pool())
+        .await
+        .expect("insert media");
+    }
+
+    async fn seed_download(repo: &SqliteLibraryRepository, media_id: &str, state: &str) {
+        seed_media(repo, media_id).await;
+        let now = now_iso();
+        sqlx::query(
+            "INSERT INTO torrent_tasks (hash, magnet_or_source, state, progress, save_path, created_at, updated_at) \
+             VALUES (?, 'magnet:?xt=urn:btih:test', 'ready', 1.0, '/downloads', ?, ?)",
+        )
+        .bind(format!("hash-{media_id}"))
+        .bind(&now)
+        .bind(&now)
+        .execute(repo.pool())
+        .await
+        .expect("insert torrent task");
+        sqlx::query(
+            "INSERT INTO download_items (id, torrent_hash, media_id, file_path, state, created_at, verification_state) \
+             VALUES (?, ?, ?, ?, 'ready', ?, ?)",
+        )
+        .bind(format!("d-{media_id}"))
+        .bind(format!("hash-{media_id}"))
+        .bind(media_id)
+        .bind(format!("/downloads/{media_id}.mkv"))
+        .bind(&now)
+        .bind(state)
+        .execute(repo.pool())
+        .await
+        .expect("insert download item");
+    }
+
+    fn service(repo: &SqliteLibraryRepository) -> LibraryService<SqliteLibraryRepository> {
+        LibraryService::new(SqliteLibraryRepository::new(repo.pool().clone()))
+    }
+
+    #[test]
+    fn refusal_reasons_are_display_only_and_never_a_path() {
+        assert_eq!(playback_block_reason(None), None, "library import allowed");
+        assert_eq!(playback_block_reason(Some("clean")), None);
+        for state in ["pending", "scanning", "suspicious", "unavailable", "weird"] {
+            let reason = playback_block_reason(Some(state)).expect("non-clean is refused");
+            assert!(!reason.contains('/'), "no path in reason: {reason}");
+            assert!(!reason.contains('\\'), "no path in reason: {reason}");
+        }
+    }
+
+    #[tokio::test]
+    async fn suspicious_download_is_refused_by_detail_and_playback_start() {
+        let (repo, _db) = seeded_db("suspicious").await;
+        seed_download(&repo, "m-bad", "suspicious").await;
+
+        let detail_error = service(&repo)
+            .detail("m-bad")
+            .await
+            .expect_err("detail refused");
+        assert_eq!(detail_error.code, AppErrorCode::MediaUnsupported);
+        assert!(detail_error.message.contains("failed verification"));
+        assert!(!detail_error.message.contains("/downloads"));
+
+        let playback_error = service(&repo)
+            .playback_start(&PlaybackStartRequest {
+                media_id: "m-bad".to_string(),
+                start_position_seconds: None,
+            })
+            .await
+            .expect_err("playback refused");
+        assert_eq!(playback_error.code, AppErrorCode::MediaUnsupported);
+        assert!(!playback_error.message.contains("/downloads"));
+    }
+
+    #[tokio::test]
+    async fn every_non_clean_state_fails_closed_through_the_gate() {
+        let (repo, _db) = seeded_db("states").await;
+        for (index, state) in [
+            "pending",
+            "scanning",
+            "suspicious",
+            "unavailable",
+            "unknown",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let media_id = format!("m-{index}");
+            seed_download(&repo, &media_id, state).await;
+            let error = service(&repo).detail(&media_id).await.unwrap_err();
+            assert_eq!(error.code, AppErrorCode::MediaUnsupported, "state: {state}");
+        }
+    }
+
+    #[tokio::test]
+    async fn clean_download_and_library_import_are_allowed() {
+        let (repo, _db) = seeded_db("allowed").await;
+        seed_download(&repo, "m-clean", "clean").await;
+        // Task 2: a downloaded file needs BOTH gates clean; a library import
+        // (m-library) has no download row and stays scanner-trusted.
+        repo.set_defender_verification("d-m-clean", "clean", None)
+            .await
+            .expect("set defender clean");
+        seed_media(&repo, "m-library").await;
+        assert!(service(&repo).detail("m-clean").await.is_ok());
+        assert!(service(&repo).detail("m-library").await.is_ok());
+        // Task 2 added a second (Defender) gate on playback_start. A probe-clean
+        // download only plays once that gate is clean too; seed that state here.
+        sqlx::query("UPDATE download_items SET defender_state = 'clean' WHERE id = 'd-m-clean'")
+            .execute(repo.pool())
+            .await
+            .expect("set defender clean for the integrated test");
+        let session = service(&repo)
+            .playback_start(&PlaybackStartRequest {
+                media_id: "m-clean".to_string(),
+                start_position_seconds: None,
+            })
+            .await
+            .expect("clean download plays");
+        assert_eq!(session.media.id, "m-clean");
+    }
+
+    #[tokio::test]
+    async fn verification_state_starts_pending_and_can_flip_to_clean_then_back() {
+        let (repo, _db) = seeded_db("lifecycle").await;
+        seed_download(&repo, "m-life", "pending").await;
+        assert_eq!(
+            repo.verification_state_for_media("m-life")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("pending")
+        );
+        assert_eq!(
+            service(&repo).detail("m-life").await.unwrap_err().code,
+            AppErrorCode::MediaUnsupported
+        );
+
+        repo.set_verification_state("d-m-life", "clean", None)
+            .await
+            .expect("record clean");
+        // Task 2: detail now needs both gates clean; set the Defender half too.
+        repo.set_defender_verification("d-m-life", "clean", None)
+            .await
+            .expect("record defender clean");
+        assert!(service(&repo).detail("m-life").await.is_ok());
+
+        // A later failure must immediately revoke playability: no stale trust.
+        repo.set_verification_state("d-m-life", "unavailable", Some("probe: unavailable"))
+            .await
+            .expect("record unavailable");
+        assert_eq!(
+            service(&repo).detail("m-life").await.unwrap_err().code,
+            AppErrorCode::MediaUnsupported
+        );
     }
 }

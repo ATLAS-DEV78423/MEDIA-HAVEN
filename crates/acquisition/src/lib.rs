@@ -5,6 +5,8 @@
 //! renderer DTO.
 
 pub mod cleanup;
+pub mod defender;
+pub mod inspection;
 pub mod orchestrator;
 pub mod prefetch;
 pub mod qbittorrent;
@@ -13,6 +15,14 @@ pub use cleanup::{
     completion_confirmed_by_b5, is_eligible, is_managed_path, is_still_needed, reconcile,
     removal_mode, CleanupCandidate, CleanupDecision, CleanupError, CleanupOutcome, CleanupState,
     CleanupWorker, ManagedFile, NotEligibleReason, RemoveMode, REPLAY_GRACE,
+};
+pub use defender::{
+    both_gates_clean, defender_scan, defender_scan_with, refusal_reason, DefenderState,
+    MpCmdRunScanner, Scanner,
+};
+pub use inspection::{
+    inspect_with_probe, inspect_with_runner, probe_args, DockerProbeRunner, InspectionState,
+    ProbeError, ProbeOutput, ProbeRunner, DOWNLOADS_PREFIX, FFPROBE_PATH, PROBE_IMAGE,
 };
 pub use orchestrator::{
     validate_source, AcquireError, AcquisitionState, DownloadStore, InMemoryDownloadStore,
