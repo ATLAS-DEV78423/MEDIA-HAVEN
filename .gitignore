@@ -91,6 +91,8 @@ diagnostics/
 # --- Local dev backend data ------------------------------------------------
 .mediahaven-dev/
 .mediahaven-live/
+*-live.log
+*-live.err
 
 # Agent working artifacts (typo'd path variant) 
 .superpowers/sd/
