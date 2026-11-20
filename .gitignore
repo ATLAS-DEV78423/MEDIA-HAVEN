@@ -90,3 +90,7 @@ diagnostics/
 
 # --- Local dev backend data ------------------------------------------------
 .mediahaven-dev/
+
+# Agent working artifacts (typo'd path variant) 
+.superpowers/sd/
+
