@@ -2,7 +2,9 @@
 //! offline degradation. All fetch calls are fakes — no network is used.
 
 use media_metadata::cache::Cache;
-use media_metadata::tmdb::{FetchFn, TmdbOptions, TmdbProvider, TMDB_ATTRIBUTION};
+use media_metadata::tmdb::{
+    classify_image, too_large, ArtworkCache, FetchFn, TmdbOptions, TmdbProvider, TMDB_ATTRIBUTION,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -184,4 +186,37 @@ fn cache_entry_expires_after_thirty_days() {
         .expect("set old mtime");
 
     assert!(cache.get("k").is_none());
+}
+
+#[test]
+fn artwork_key_is_opaque_sha256_hex() {
+    let key = media_metadata::tmdb::artwork_key("/abc123.jpg");
+    assert_eq!(key.len(), 64);
+    assert!(key
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    assert_ne!(key, media_metadata::tmdb::artwork_key("/other.jpg"));
+}
+
+#[test]
+fn image_bytes_are_type_checked_and_capped() {
+    let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+    assert_eq!(classify_image(&jpeg), Some("image/jpeg"));
+    assert_eq!(classify_image(&[0x89, 0x50, 0x4E, 0x47]), Some("image/png"));
+    assert_eq!(classify_image(b"<script>alert(1)</script>"), None);
+    assert!(too_large(2 * 1024 * 1024 + 1));
+}
+
+#[test]
+fn artwork_cache_stores_and_evicts_oldest_first() {
+    let dir = std::env::temp_dir().join(format!("mh-art-{}", uuid::Uuid::new_v4()));
+    let cache = ArtworkCache::new(dir.clone(), 8); // tiny cap forces eviction
+    let fake_jpeg = b"\xFF\xD8\xFF\xE0\x00"; // 5 bytes, valid JPEG magic header
+    cache.put("aaa", fake_jpeg, "image/jpeg").unwrap();
+    cache.put("bbb", fake_jpeg, "image/jpeg").unwrap();
+    assert!(cache.get("aaa").is_none()); // oldest evicted
+    let (bytes, kind) = cache.get("bbb").expect("kept entry");
+    assert_eq!(bytes, fake_jpeg);
+    assert_eq!(kind, "image/jpeg");
+    let _ = std::fs::remove_dir_all(dir);
 }

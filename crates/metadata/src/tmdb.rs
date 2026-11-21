@@ -5,16 +5,18 @@
 //! the environment (the app sources it from the ADR-0007 secret store); it is
 //! never read from or written to the repository.
 //!
-//! Transport seam: the workspace has no HTTP client crate and no ADR permits
-//! adding one, so the default fetch fails closed. The application injects a
-//! real fetch implementation once approved. Everything around it — opt-in
-//! gate, fail-closed key check, 30-day cache, eviction, parsing and
-//! sanitisation — is implemented and tested here.
+//! Transport seam: `TmdbProvider::new` still uses a fail-closed fetch, so no
+//! request can leave the machine until the application injects one. ADR-0023
+//! approved `http_search_fetch` as the real transport; it is only used by an
+//! enabled provider with an injected key. Everything around it — opt-in gate,
+//! fail-closed key check, 30-day cache, eviction, parsing and sanitisation — is
+//! implemented and tested here.
 
 use crate::cache::Cache;
 use crate::model::{MAX_GENRES, MAX_GENRE_CHARS, MAX_SYNOPSIS_CHARS, MAX_TITLE_CHARS};
 use app_core::domain::MetadataRecord;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 /// TMDB's required attribution line. The UI must render this wherever TMDB
@@ -249,3 +251,138 @@ fn sanitize_poster(raw: &str) -> Option<String> {
     }
     Some(value.to_string())
 }
+
+/// Real TMDB v3 search transport. Only title/year/key are used; no path.
+pub fn http_search_fetch() -> Box<FetchFn> {
+    Box::new(|title, year, key| {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .map_err(|err| err.to_string())?;
+        let mut request = client
+            .get("https://api.themoviedb.org/3/search/movie")
+            .query(&[("api_key", key), ("query", title)]);
+        if let Some(year) = year {
+            request = request.query(&[("year", year.to_string())]);
+        }
+        let response = request.send().map_err(|err| err.to_string())?;
+        response
+            .error_for_status()
+            .map_err(|err| err.to_string())?
+            .text()
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// 2 MiB per poster; anything larger is refused before it is cached.
+pub const MAX_ARTWORK_BYTES: usize = 2 * 1024 * 1024;
+
+pub fn too_large(len: usize) -> bool {
+    len > MAX_ARTWORK_BYTES
+}
+
+pub fn artwork_key(poster_path: &str) -> String {
+    let digest = Sha256::digest(poster_path.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Accept only real JPEG/PNG headers; never cache HTML or script as an image.
+pub fn classify_image(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+        Some("image/png")
+    } else {
+        None
+    }
+}
+
+/// Download a poster from the TMDB image CDN. Pure URL construction from the
+/// already-sanitised `poster_path`; no path from the local filesystem is used.
+pub fn fetch_artwork_bytes(poster_path: &str) -> Result<(Vec<u8>, String), String> {
+    let path = sanitize_poster(poster_path).ok_or_else(|| "invalid poster path".to_string())?;
+    let url = format!("https://image.tmdb.org/t/p/w500{path}");
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|err| err.to_string())?;
+    let response = client.get(&url).send().map_err(|err| err.to_string())?;
+    let bytes = response
+        .error_for_status()
+        .map_err(|err| err.to_string())?
+        .bytes()
+        .map_err(|err| err.to_string())?;
+    if too_large(bytes.len()) {
+        return Err("poster exceeds size cap".to_string());
+    }
+    let kind = classify_image(&bytes).ok_or_else(|| "poster is not an image".to_string())?;
+    Ok((bytes.to_vec(), kind.to_string()))
+}
+
+/// Hashed, size-capped image cache under the core data dir.
+pub struct ArtworkCache {
+    dir: PathBuf,
+    max_bytes: u64,
+}
+
+impl ArtworkCache {
+    pub fn new(dir: PathBuf, max_bytes: u64) -> Self {
+        Self { dir, max_bytes }
+    }
+
+    pub fn get(&self, key: &str) -> Option<(Vec<u8>, String)> {
+        let path = self.dir.join(key);
+        let bytes = std::fs::read(&path).ok()?;
+        let kind = classify_image(&bytes)?.to_string();
+        // Reading updates recency so eviction is genuinely oldest-first.
+        let _ = std::fs::File::open(&path)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+        Some((bytes, kind))
+    }
+
+    pub fn put(&self, key: &str, bytes: &[u8], content_type: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.dir)?;
+        if classify_image(bytes).is_none() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "not an image",
+            ));
+        }
+        let path = self.dir.join(key);
+        std::fs::write(&path, bytes)?;
+        let mut used = std::fs::read_dir(&self.dir)?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                entry
+                    .metadata()
+                    .ok()
+                    .map(|meta| (entry.path(), meta.len(), meta.modified().ok()))
+            })
+            .fold(0u64, |sum, (_, len, _)| sum.saturating_add(len));
+        if used > self.max_bytes {
+            let mut entries: Vec<_> = std::fs::read_dir(&self.dir)?
+                .filter_map(|entry| entry.ok())
+                .filter_map(|entry| {
+                    entry
+                        .metadata()
+                        .ok()
+                        .map(|meta| (entry.path(), meta.modified().ok(), meta.len()))
+                })
+                .collect();
+            entries.sort_by_key(|(_, modified, _)| *modified);
+            for (path, _, len) in entries {
+                if used <= self.max_bytes {
+                    break;
+                }
+                if std::fs::remove_file(&path).is_ok() {
+                    used = used.saturating_sub(len);
+                }
+            }
+        }
+        let _ = content_type; // content type is re-derived from magic bytes on read
+        Ok(())
+    }
+}
+
+// shortcut: content_type is re-derived from magic bytes on read, so the stored
+// file needs no metadata sidecar; upgrade only if non-image formats are added.

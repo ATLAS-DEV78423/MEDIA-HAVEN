@@ -9,3 +9,8 @@ app-core = { path = "../app-core" }
 thiserror.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+uuid.workspace = true

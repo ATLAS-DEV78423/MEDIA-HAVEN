@@ -35,6 +35,7 @@ axum = "0.7"
 tower = { version = "0.5", features = ["util"] }
 hmac = "0.12"
 sha2 = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "blocking", "query"] }
 subtle = "2"
 hex = "0.4"
 tower-http = { version = "0.6", features = ["cors", "trace"] }

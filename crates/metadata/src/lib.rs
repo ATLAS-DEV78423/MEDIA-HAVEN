@@ -21,7 +21,10 @@ pub use nfo::{parse, read_beside};
 pub use omdb::{
     api_key_from_env, MemoryOmdbFetch, OmdbError, OmdbFetch, OmdbOptions, OmdbProvider, API_KEY_ENV,
 };
-pub use tmdb::{TmdbLookup, TmdbOptions, TmdbProvider, TMDB_ATTRIBUTION};
+pub use tmdb::{
+    artwork_key, fetch_artwork_bytes, http_search_fetch, ArtworkCache, TmdbLookup, TmdbOptions,
+    TmdbProvider, DEFAULT_MAX_CACHE_BYTES, MAX_ARTWORK_BYTES, TMDB_ATTRIBUTION,
+};
 
 use app_core::domain::{AppError, AppErrorCode, MetadataRecord};
 use app_core::ports::MetadataProvider;
