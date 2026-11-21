@@ -1742,3 +1742,36 @@ None from list endpoints (Details works); opt-in is env-based not persisted;
 SBOM NOT RUN (no tool, documented); installer non-deterministic across builds
 (hash changed between runs, documented); second-machine LAN + TV hardware + CP
 sign-offs remain human gates. No checkpoint passed by an agent.
+
+## 2026-11-21 Task 1 — Block executable downloads (pre-download guard)
+
+Human-priority security change, ADR-0024, plan
+`docs/superpowers/plans/2026-11-21-block-executable-downloads.md`.
+
+Implemented:
+- `executables.rs`: pure, case-insensitive `has_executable_file` + the 29-entry
+  `EXECUTABLE_EXTENSIONS` blocklist; final and inner dotted segments, both `/`
+  and `\` separators. Re-exported from `lib.rs`.
+- `qbittorrent.rs`: `add_form` now includes `paused=true`; `TorrentApi::resume`
+  added (default no-op so the untouched `core` fake keeps compiling; QbClient
+  overrides it with `/api/v2/torrents/resume`, acquisition fakes record calls).
+- `orchestrator.rs`: `AcquireError::Rejected` (fixed, path-free message);
+  `acquire` adds paused, polls `files()` 5x200 ms, rejects an empty/unreadable
+  list or any executable-bearing name with `remove(hash, false)` and no resume,
+  and only resumes an all-media task before the existing status/store/inspection
+  path. Existing ffprobe and Defender gates were not changed and still run on
+  every completed download.
+- ADR-0024, roadmap R-22, regression tests in `tests/executables.rs`,
+  `tests/qb_fake.rs`, and the orchestrator/cleanup fakes.
+
+Verified (observed): `cargo test -p media-acquisition` 64 passed / 0 failed;
+`cargo fmt --all -- --check` exit 0; `cargo clippy -p media-acquisition
+--all-targets -- -D warnings` exit 0; `cargo check -p mediahaven-core
+--all-targets` exit 0 (default `resume` keeps the untouched crate compiling).
+
+Honest limits: this is a **name-based** pre-download guard — a deliberately
+renamed executable is caught only by the existing post-download probe/Defender
+gates. All acquisition tests used fakes; no qB instance, torrent or executable
+was used or downloaded. **Live qB rejection is NOT RUN** pending a lawful source
+and human review. No scraper/indexer/catalogue, no new dependency, no live
+network/host change.

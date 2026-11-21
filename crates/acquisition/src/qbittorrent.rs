@@ -47,9 +47,25 @@ pub enum QbError {
 /// The port Task 4/5/6 drive. Implementations are fakeable for tests.
 pub trait TorrentApi {
     fn add(&self, source: &str, save_path: &str) -> Result<String, QbError>;
+    /// Resume a task that passed the pre-download executable guard. The default
+    /// keeps downstream fakes (e.g. in `core`) compiling; the production client
+    /// overrides it, and the acquisition fakes override it to record calls.
+    fn resume(&self, _hash: &str) -> Result<(), QbError> {
+        Ok(())
+    }
     fn status(&self, hash: &str) -> Result<TorrentStatus, QbError>;
     fn files(&self, hash: &str) -> Result<Vec<String>, QbError>;
     fn remove(&self, hash: &str, delete_files: bool) -> Result<(), QbError>;
+}
+
+/// The add form, exposed so a test can assert the paused flag without a live
+/// qB server. `paused=true` makes qB store metadata but write no file bytes.
+pub fn add_form<'a>(source: &'a str, save_path: &'a str) -> Vec<(&'a str, &'a str)> {
+    vec![
+        ("urls", source),
+        ("savepath", save_path),
+        ("paused", "true"),
+    ]
 }
 
 struct HttpResponse {
@@ -248,7 +264,7 @@ impl TorrentApi for QbClient {
         // BOTH magnets and bare .torrent sources resolve by the newly-created
         // hash, instead of relying on fragile exact magnet-URI equality.
         let before = self.hashes()?;
-        let body = form(&[("urls", source), ("savepath", save_path)]);
+        let body = form(&add_form(source, save_path));
         self.api("POST", "/api/v2/torrents/add", Some(&body))?;
         let after = self.hashes()?;
         let added: Vec<String> = after.difference(&before).cloned().collect();
@@ -265,6 +281,12 @@ impl TorrentApi for QbClient {
             .and_then(|item| item.get("hash").and_then(Value::as_str))
             .map(str::to_string)
             .ok_or(QbError::NotFound)
+    }
+
+    fn resume(&self, hash: &str) -> Result<(), QbError> {
+        let body = form(&[("hashes", hash)]);
+        self.api("POST", "/api/v2/torrents/resume", Some(&body))?;
+        Ok(())
     }
 
     fn status(&self, hash: &str) -> Result<TorrentStatus, QbError> {

@@ -6,6 +6,7 @@
 
 pub mod cleanup;
 pub mod defender;
+pub mod executables;
 pub mod inspection;
 pub mod orchestrator;
 pub mod prefetch;
@@ -20,6 +21,7 @@ pub use defender::{
     both_gates_clean, defender_scan, defender_scan_with, refusal_reason, DefenderState,
     MpCmdRunScanner, Scanner,
 };
+pub use executables::{has_executable_file, EXECUTABLE_EXTENSIONS};
 pub use inspection::{
     inspect_with_probe, inspect_with_runner, probe_args, DockerProbeRunner, InspectionState,
     ProbeError, ProbeOutput, ProbeRunner, DOWNLOADS_PREFIX, FFPROBE_PATH, PROBE_IMAGE,

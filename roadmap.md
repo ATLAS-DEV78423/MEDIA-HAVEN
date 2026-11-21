@@ -1735,6 +1735,7 @@ approved requirement and a spec update.
 | R-19 | Third-party decoder parses hostile media on the host | Risk | Code execution | ADR-0002 exception; OS mitigations; sandboxed renderer | Accepted |
 | R-20 | Watch history readable by the same OS user | Risk | Privacy | Per-user app data and per-user distro | Accepted |
 | R-21 | No HDR guarantee | Risk | Experience | Deferred with the playback ADR | P0-12 result |
+| R-22 | Executable file written to the download root by a torrent | Risk | **Code execution** | Pre-download name guard (ADR-0024): add paused, reject executable-bearing/empty/unreadable file lists, remove task with `deleteFiles=false` before any resume; existing post-download probe/Defender gates remain mandatory | Guard implemented + fake-driven tests pass; live qB rejection **NOT RUN** (no lawful source) |
 | O-01 | Project name / branding / package ID | **Decided 2026-11-18 / 2026-11-20** — MEDIA HAVEN is the name; package ID `com.mediahaven.desktop` (ADR-0016) | Blocks installer identity | Apply at P7-01 | Before P7-01 |
 | O-02 | Windows 10 support claim | **Decided 2026-11-18** — Windows 11 x64 only for v1 | Support surface | Development.md and installer must state it | Before P7-04 |
 | O-03 | Offline-indefinitely guarantee | **Decided 2026-11-20** — fully offline after install (ADR-0016); local playback/browsing never need a network | Metadata feature behaviour | Enforce opt-in egress in P2-06 | Before CP-2 |

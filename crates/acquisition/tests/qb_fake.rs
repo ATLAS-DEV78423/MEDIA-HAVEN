@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
 
+use media_acquisition::qbittorrent::add_form;
 use media_acquisition::{QbClient, QbError, TorrentApi};
 
 #[derive(Debug)]
@@ -100,6 +101,14 @@ const OK: Scripted = Scripted {
 };
 
 #[test]
+fn add_form_marks_every_new_torrent_paused() {
+    let form = add_form("magnet:?xt=urn:btih:ABC", "/downloads");
+    assert!(form.contains(&("paused", "true")));
+    assert!(form.contains(&("urls", "magnet:?xt=urn:btih:ABC")));
+    assert!(form.contains(&("savepath", "/downloads")));
+}
+
+#[test]
 fn add_sends_magnet_and_save_path_and_returns_hash() {
     let (listener, base) = loopback();
     let info = r#"[{"hash":"abc123","magnet_uri":"magnet:?xt=urn:btih:ABC&dn=ep","state":"downloading","progress":0.1}]"#;
@@ -137,6 +146,10 @@ fn add_sends_magnet_and_save_path_and_returns_hash() {
         .body
         .contains("urls=magnet%3A%3Fxt%3Durn%3Abtih%3AABC%26dn%3Dep"));
     assert!(requests[2].body.contains("savepath=%2Fdownloads"));
+    assert!(
+        requests[2].body.contains("paused=true"),
+        "add must pause the task"
+    );
     assert_eq!(requests[2].cookie.as_deref(), Some("QBT_SID_8080=testsid"));
     assert_eq!(requests[3].path, "/api/v2/torrents/info");
     assert_eq!(hash, "abc123");

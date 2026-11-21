@@ -25,6 +25,9 @@ impl TorrentApi for FakeApi {
     fn add(&self, _source: &str, _save_path: &str) -> Result<String, QbError> {
         Ok("h".to_string())
     }
+    fn resume(&self, _hash: &str) -> Result<(), QbError> {
+        Ok(())
+    }
     fn status(&self, hash: &str) -> Result<TorrentStatus, QbError> {
         Ok(TorrentStatus {
             hash: hash.to_string(),

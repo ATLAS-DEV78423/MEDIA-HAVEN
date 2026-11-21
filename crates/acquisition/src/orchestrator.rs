@@ -10,6 +10,7 @@ use std::sync::{Mutex, PoisonError};
 
 use app_core::domain::{DownloadItem, DownloadState};
 
+use crate::executables::has_executable_file;
 use crate::inspection::{
     combine_inspection, inspect_completed, DockerProbeRunner, InspectionState, ProbeRunner,
 };
@@ -40,6 +41,10 @@ pub enum AcquireError {
     Backend,
     #[error("the download was not found")]
     NotFound,
+    #[error(
+        "torrent contains an executable file or has no readable file list; nothing was downloaded"
+    )]
+    Rejected,
 }
 
 /// Validate an untrusted renderer string at the host trust boundary.
@@ -252,6 +257,29 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
             .api
             .add(&source, SAVE_PATH)
             .map_err(|_| AcquireError::Backend)?;
+
+        // Metadata for a freshly added magnet may lag; poll briefly, then fail
+        // closed. The task is paused, so no file bytes are written meanwhile.
+        let mut declared: Vec<String> = Vec::new();
+        for _ in 0..5 {
+            match self.api.files(&hash) {
+                Ok(files) if !files.is_empty() => {
+                    declared = files;
+                    break;
+                }
+                _ => std::thread::sleep(std::time::Duration::from_millis(200)),
+            }
+        }
+        if declared.is_empty() || has_executable_file(&declared) {
+            // Task-only removal: no file bytes exist, so delete_files=false.
+            let _ = self.api.remove(&hash, false);
+            return Err(AcquireError::Rejected);
+        }
+        self.api.resume(&hash).map_err(|_| {
+            let _ = self.api.remove(&hash, false);
+            AcquireError::Backend
+        })?;
+
         let status = self.api.status(&hash).map_err(|_| AcquireError::Backend)?;
         let item = DownloadItem {
             id: hash.clone(),
@@ -382,21 +410,47 @@ fn map_state(state: &str) -> DownloadState {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use crate::qbittorrent::{QbError, TorrentStatus};
 
     use super::*;
 
-    #[derive(Default)]
+    /// Fake with shareable call counters so a test can prove a rejected task
+    /// was never resumed and was removed task-only before it is consumed.
     struct FakeApi {
-        adds: AtomicUsize,
-        removed_files: AtomicUsize,
+        adds: Arc<AtomicUsize>,
+        removed_files: Arc<AtomicUsize>,
+        resumes: Arc<AtomicUsize>,
+        task_removes: Arc<AtomicUsize>,
+        files: Vec<String>,
+        files_error: bool,
+    }
+
+    impl Default for FakeApi {
+        fn default() -> Self {
+            Self {
+                adds: Arc::new(AtomicUsize::new(0)),
+                removed_files: Arc::new(AtomicUsize::new(0)),
+                resumes: Arc::new(AtomicUsize::new(0)),
+                task_removes: Arc::new(AtomicUsize::new(0)),
+                // A benign, non-empty list is the default so existing tests
+                // that only want a successful acquire still pass the guard.
+                files: vec!["show/e01.mkv".to_string()],
+                files_error: false,
+            }
+        }
     }
 
     impl TorrentApi for FakeApi {
         fn add(&self, source: &str, _save_path: &str) -> Result<String, QbError> {
             self.adds.fetch_add(1, Ordering::SeqCst);
             Ok(format!("hash-{}", source.len()))
+        }
+
+        fn resume(&self, _hash: &str) -> Result<(), QbError> {
+            self.resumes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         }
 
         fn status(&self, hash: &str) -> Result<TorrentStatus, QbError> {
@@ -408,18 +462,94 @@ mod tests {
         }
 
         fn files(&self, _hash: &str) -> Result<Vec<String>, QbError> {
-            Ok(vec![])
+            if self.files_error {
+                Err(QbError::Api(500))
+            } else {
+                Ok(self.files.clone())
+            }
         }
 
         fn remove(&self, _hash: &str, delete_files: bool) -> Result<(), QbError> {
             if delete_files {
                 self.removed_files.fetch_add(1, Ordering::SeqCst);
+            } else {
+                self.task_removes.fetch_add(1, Ordering::SeqCst);
             }
             Ok(())
         }
     }
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABC123&dn=episode";
+
+    #[test]
+    fn executable_torrent_is_removed_without_resuming_or_storing() {
+        let api = FakeApi {
+            files: vec!["show/S01E01.mkv".into(), "installer.exe".into()],
+            ..FakeApi::default()
+        };
+        let resumes = Arc::clone(&api.resumes);
+        let task_removes = Arc::clone(&api.task_removes);
+        let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default());
+
+        let err = orchestrator.acquire(MAGNET).unwrap_err();
+
+        assert!(matches!(err, AcquireError::Rejected));
+        assert_eq!(
+            resumes.load(Ordering::SeqCst),
+            0,
+            "never resume a rejected task"
+        );
+        assert_eq!(
+            task_removes.load(Ordering::SeqCst),
+            1,
+            "remove the task with delete_files=false"
+        );
+        assert!(
+            orchestrator.status().is_empty(),
+            "nothing may be stored on rejection"
+        );
+    }
+
+    #[test]
+    fn clean_torrent_is_resumed_and_stored() {
+        let api = FakeApi {
+            files: vec!["show/S01E01.mkv".into()],
+            ..FakeApi::default()
+        };
+        let resumes = Arc::clone(&api.resumes);
+        let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default());
+
+        let item = orchestrator.acquire(MAGNET).unwrap();
+
+        assert!(!item.id.is_empty());
+        assert_eq!(
+            resumes.load(Ordering::SeqCst),
+            1,
+            "resume an all-media task once"
+        );
+        assert_eq!(orchestrator.status().len(), 1);
+    }
+
+    #[test]
+    fn empty_or_unreadable_file_list_is_rejected() {
+        for (files, files_error) in [(vec![], false), (vec!["show/e01.mkv".into()], true)] {
+            let api = FakeApi {
+                files,
+                files_error,
+                ..FakeApi::default()
+            };
+            let resumes = Arc::clone(&api.resumes);
+            let task_removes = Arc::clone(&api.task_removes);
+            let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default());
+
+            assert!(matches!(
+                orchestrator.acquire(MAGNET),
+                Err(AcquireError::Rejected)
+            ));
+            assert_eq!(resumes.load(Ordering::SeqCst), 0);
+            assert_eq!(task_removes.load(Ordering::SeqCst), 1);
+        }
+    }
 
     #[test]
     fn acquire_persists_an_item_and_duplicate_add_calls_add_once() {
@@ -528,13 +658,21 @@ mod tests {
 
     // --- Completion-path inspection trigger (Task 1 finding 1) --------------
 
+    #[derive(Default)]
     struct ReadyApi {
         files: Vec<String>,
+        /// Simulate files vanishing between the acquire guard and completion
+        /// inspection, so the post-download fail-closed gate stays testable.
+        empty_on_completion: bool,
+        files_calls: Arc<AtomicUsize>,
     }
 
     impl TorrentApi for ReadyApi {
         fn add(&self, source: &str, _save_path: &str) -> Result<String, QbError> {
             Ok(format!("hash-{source}"))
+        }
+        fn resume(&self, _hash: &str) -> Result<(), QbError> {
+            Ok(())
         }
         fn status(&self, hash: &str) -> Result<TorrentStatus, QbError> {
             Ok(TorrentStatus {
@@ -544,7 +682,11 @@ mod tests {
             })
         }
         fn files(&self, _hash: &str) -> Result<Vec<String>, QbError> {
-            Ok(self.files.clone())
+            if self.empty_on_completion && self.files_calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                Ok(vec![])
+            } else {
+                Ok(self.files.clone())
+            }
         }
         fn remove(&self, _hash: &str, _delete_files: bool) -> Result<(), QbError> {
             Ok(())
@@ -577,6 +719,7 @@ mod tests {
     fn completed_download_is_inspected_automatically_on_acquire() {
         let api = ReadyApi {
             files: vec!["show/e01.mkv".to_string()],
+            ..ReadyApi::default()
         };
         let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default())
             .with_probe_runner(FakeProbe(InspectionState::Clean));
@@ -601,6 +744,7 @@ mod tests {
         ] {
             let api = ReadyApi {
                 files: vec!["e01.mkv".to_string()],
+                ..ReadyApi::default()
             };
             let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default())
                 .with_probe_runner(FakeProbe(probe_state));
@@ -624,9 +768,16 @@ mod tests {
 
     #[test]
     fn completed_torrent_with_no_files_fails_closed() {
-        let orchestrator =
-            Orchestrator::new(ReadyApi { files: vec![] }, InMemoryDownloadStore::default())
-                .with_probe_runner(FakeProbe(InspectionState::Clean));
+        // The pre-download guard needs a benign declared file to admit the
+        // task; the post-download gate must still fail closed if that file is
+        // gone by the time completion is inspected.
+        let api = ReadyApi {
+            files: vec!["e01.mkv".to_string()],
+            empty_on_completion: true,
+            ..ReadyApi::default()
+        };
+        let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default())
+            .with_probe_runner(FakeProbe(InspectionState::Clean));
         let item = orchestrator.acquire(MAGNET).expect("acquire");
         assert_eq!(
             orchestrator.inspection_state(&item.id),
