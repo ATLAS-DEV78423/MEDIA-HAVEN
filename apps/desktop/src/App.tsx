@@ -18,6 +18,7 @@ import { SetupPage } from "./pages/Setup/SetupPage";
 import { ProfileSelectionPage } from "./pages/Profiles/ProfileSelectionPage";
 import { PlayerPage } from "./pages/Player/PlayerPage";
 import { useSpatialFocus } from "./hooks/useSpatialFocus";
+import { useBackNavigation } from "./hooks/useBackNavigation";
 import { apiBase } from "./services/api";
 import { useAppState } from "./state/AppState";
 import styles from "./app.module.css";
@@ -85,6 +86,7 @@ export function App() {
   } = useAppState();
   const { pathname, key } = useLocation();
   useSpatialFocus();
+  useBackNavigation();
 
   if (status === "loading") return <BootScreen />;
   if (status === "error" || !data) {

@@ -79,23 +79,35 @@ export function useSpatialFocus(): void {
       // The player owns the arrow keys for seeking.
       if (document.documentElement.dataset.player === "active") return;
 
-      const target = event.target;
-      if (target instanceof HTMLElement) {
-        const tag = target.tagName;
-        if (
-          tag === "INPUT" ||
-          tag === "TEXTAREA" ||
-          tag === "SELECT" ||
-          target.isContentEditable
-        ) {
-          return;
-        }
-      }
-
       const items = Array.from(
         document.querySelectorAll<HTMLElement>(SELECTOR),
       ).filter(isVisible);
       if (items.length === 0) return;
+
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        const isTextInput =
+          (tag === "INPUT" &&
+            (target as HTMLInputElement).type !== "checkbox" &&
+            (target as HTMLInputElement).type !== "radio" &&
+            (target as HTMLInputElement).type !== "button") ||
+          tag === "TEXTAREA" ||
+          target.isContentEditable;
+        if (isTextInput) {
+          // Left/Right move the caret natively — never hijack text editing.
+          if (event.key === "ArrowLeft" || event.key === "ArrowRight") return;
+          // Up/Down do nothing in a single-line field; use them to step out to
+          // spatial navigation so a keyboard-only user is never trapped (P4-03).
+          if (tag === "TEXTAREA") return; // multi-line: arrows are native
+          event.preventDefault();
+          target.blur();
+          const next = nearest(items, target, event.key as "ArrowUp" | "ArrowDown");
+          (next ?? items[0])?.focus({ preventScroll: true });
+          return;
+        }
+        if (tag === "SELECT") return; // native option navigation
+      }
 
       const active =
         document.activeElement instanceof HTMLElement
