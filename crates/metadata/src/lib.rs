@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod imdb;
+pub mod imdb_artwork;
 pub mod model;
 pub mod nfo;
 pub mod omdb;
@@ -15,6 +16,9 @@ pub use cache::{RatingCache, CACHE_TTL, DEFAULT_IMDB_CACHE_MAX_BYTES};
 pub use imdb::{
     merge, parse_age_ratings, parse_basics, parse_ratings, FileImdbFetch, ImdbFetch, ImdbOptions,
     ImdbProvider, MemoryFetch, IMDB_ATTRIBUTION,
+};
+pub use imdb_artwork::{
+    fetch_image_bytes, imdb_search_fetch, validate_image_url, ArtworkFetchFn, ImdbArtworkProvider,
 };
 pub use model::{ImdbError, ImdbRecord, NfoDocument, NfoError, MAX_NFO_BYTES};
 pub use nfo::{parse, read_beside};

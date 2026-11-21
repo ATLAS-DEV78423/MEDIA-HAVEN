@@ -1,0 +1,192 @@
+//! Keyless IMDb poster lookup. Only a title and year are sent to IMDb's public
+//! suggestion endpoint; no library path or content is included.
+
+use serde_json::Value;
+use std::time::Duration;
+
+use crate::tmdb::{classify_image, MAX_ARTWORK_BYTES};
+
+pub type ArtworkFetchFn = dyn Fn(&str, Option<i64>) -> Result<String, String> + Send + Sync;
+
+const IMAGE_PREFIX: &str = "https://m.media-amazon.com/images/M/";
+
+/// Accept only IMDb's poster CDN over HTTPS. No traversal, no control chars.
+pub fn validate_image_url(url: &str) -> bool {
+    url.starts_with(IMAGE_PREFIX)
+        && url.len() <= 512
+        && !url.contains("..")
+        && !url.chars().any(char::is_control)
+}
+
+pub struct ImdbArtworkProvider {
+    fetch: Box<ArtworkFetchFn>,
+}
+
+impl ImdbArtworkProvider {
+    pub fn new() -> Self {
+        Self::with_fetch(Box::new(imdb_search_fetch))
+    }
+
+    pub fn with_fetch(fetch: Box<ArtworkFetchFn>) -> Self {
+        Self { fetch }
+    }
+
+    /// Return an allowlisted image URL, or `None` on any failure.
+    pub fn poster_url(&self, title: &str, year: Option<i64>) -> Option<String> {
+        let url = (self.fetch)(title, year).ok()?;
+        validate_image_url(&url).then_some(url)
+    }
+}
+
+impl Default for ImdbArtworkProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn percent_encode(raw: &str) -> String {
+    raw.bytes()
+        .map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (byte as char).to_string()
+            }
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
+}
+
+/// Pick a real title (`id` starts with `tt`), matching year and title first.
+/// All errors are fixed, URL-free strings so no identifier can leak.
+fn parse_suggestion(body: &str, title: &str, year: Option<i64>) -> Result<String, &'static str> {
+    let value: Value = serde_json::from_str(body).map_err(|_| "invalid IMDb response")?;
+    let list = value
+        .get("d")
+        .and_then(Value::as_array)
+        .ok_or("no IMDb results")?;
+    let wanted = title.trim().to_ascii_lowercase();
+    let is_title = |hit: &Value| {
+        hit.get("id")
+            .and_then(Value::as_str)
+            .map(|id| id.starts_with("tt"))
+            .unwrap_or(false)
+    };
+    let year_ok = |hit: &Value| {
+        year.map(|y| hit.get("y").and_then(Value::as_i64) == Some(y))
+            .unwrap_or(true)
+    };
+    let hit = list
+        .iter()
+        .find(|hit| {
+            is_title(hit)
+                && year_ok(hit)
+                && hit
+                    .get("l")
+                    .and_then(Value::as_str)
+                    .map(|l| l.to_ascii_lowercase() == wanted)
+                    .unwrap_or(false)
+        })
+        .or_else(|| list.iter().find(|hit| is_title(hit) && year_ok(hit)))
+        .ok_or("no IMDb title match")?;
+    hit.get("i")
+        .and_then(|image| image.get("imageUrl"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or("IMDb title has no image")
+}
+
+/// Fetch the KEYLESS suggestion JSON and return only the image URL string.
+pub fn imdb_search_fetch(title: &str, year: Option<i64>) -> Result<String, String> {
+    let clean = title.trim();
+    if clean.is_empty() {
+        return Err("empty title".to_string());
+    }
+    let letter = clean.chars().next().unwrap_or('a').to_ascii_lowercase();
+    let url = format!(
+        "https://v2.sg.media-imdb.com/suggestion/{letter}/{}.json",
+        percent_encode(clean)
+    );
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|_| "client unavailable".to_string())?;
+    let body = client
+        .get(url)
+        .send()
+        .map_err(|_| "IMDb request failed".to_string())?
+        .error_for_status()
+        .map_err(|_| "IMDb request failed".to_string())?
+        .text()
+        .map_err(|_| "IMDb response unreadable".to_string())?;
+    parse_suggestion(&body, clean, year).map_err(str::to_string)
+}
+
+/// Download only an allowlisted IMDb poster, bounded and type-checked.
+pub fn fetch_image_bytes(url: &str) -> Result<(Vec<u8>, String), String> {
+    if !validate_image_url(url) {
+        return Err("image URL refused".to_string());
+    }
+    let client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|_| "client unavailable".to_string())?;
+    let bytes = client
+        .get(url)
+        .send()
+        .map_err(|_| "image request failed".to_string())?
+        .error_for_status()
+        .map_err(|_| "image request failed".to_string())?
+        .bytes()
+        .map_err(|_| "image response unreadable".to_string())?;
+    if bytes.len() > MAX_ARTWORK_BYTES {
+        return Err("poster exceeds size cap".to_string());
+    }
+    let kind = classify_image(&bytes).ok_or_else(|| "poster is not an image".to_string())?;
+    Ok((bytes.to_vec(), kind.to_string()))
+}
+
+// shortcut: the IMDb suggestion endpoint is unofficial; a change in its JSON
+// shape degrades to bundled art rather than breaking the view — upgrade only
+// when an official keyless feed exists.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FAKE_URL: &str = "https://m.media-amazon.com/images/M/MV5Btest._V1_.jpg";
+    const SAMPLE: &str = r#"{"d":[
+        {"id":"/star-wars","l":"Star Wars","y":1977,"i":{"imageUrl":"https://evil.example/not-a-title.jpg"}},
+        {"id":"tt0086567","l":"Arrival","y":1984,"i":{"imageUrl":"https://m.media-amazon.com/images/M/MV5Bwrong-year._V1_.jpg"}},
+        {"id":"tt2543164","l":"Arrival","y":2016,"i":{"imageUrl":"https://m.media-amazon.com/images/M/MV5Btest._V1_.jpg"}}
+    ]}"#;
+
+    #[test]
+    fn picks_a_real_title_with_matching_year() {
+        assert_eq!(
+            parse_suggestion(SAMPLE, "Arrival", Some(2016)).unwrap(),
+            FAKE_URL
+        );
+        // The non-title entry has a poster and a matching year, but must never win.
+        assert_eq!(
+            parse_suggestion(SAMPLE, "Star Wars", Some(1977)).unwrap_err(),
+            "no IMDb title match"
+        );
+        assert_eq!(
+            parse_suggestion(SAMPLE, "Arrival", None).unwrap(),
+            "https://m.media-amazon.com/images/M/MV5Bwrong-year._V1_.jpg"
+        );
+    }
+
+    #[test]
+    fn parse_errors_are_fixed_and_url_free() {
+        for body in [
+            "not json",
+            r#"{"other":[]}"#,
+            r#"{"d":[]}"#,
+            r#"{"d":[{"id":"tt1","l":"Arrival","y":2016}]}"#,
+        ] {
+            let err = parse_suggestion(body, "Arrival", Some(2016)).unwrap_err();
+            assert!(!err.contains("http"));
+            assert!(!err.contains("Arrival"));
+        }
+    }
+}
