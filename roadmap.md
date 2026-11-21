@@ -1547,6 +1547,40 @@ these is unresolved, stop before implementation.
   a container upgrade that loses watch history.
 - **Status:** Not started
 
+### [~] P6-07 — TMDB artwork (opt-in)
+
+- **Goal:** Real movie/show posters from TMDB — off by default, cached locally,
+  attributed, and fully offline once cached.
+- **Scope:** Opt-in transport and hashed image cache (Task 1), loopback
+  `GET /artwork/:key` route with DTO enrichment (Task 2), and frontend preference
+  for the cached poster plus attribution and the one-origin CSP widening (Task 3).
+- **Out of scope:** Any scraper, indexer, catalogue or bundled content source;
+  any path or secret in a renderer DTO; a live TMDB call without an operator key.
+- **Dependencies:** ADR-0011 (Accepted); ADR-0023 (**Proposed**, pending human
+  acceptance) for the reqwest transport and the loopback `img-src` widening.
+- **Implementation areas:** `crates/metadata`, `crates/core`, `apps/desktop/src`,
+  `apps/desktop/src-tauri/tauri.conf.json`.
+- **Acceptance criteria:**
+  - [ ] Opt-in gate: `MEDIAHAVEN_TMDB_OPTIN=1` **and** a non-blank API key are
+        both required; otherwise zero requests and bundled art renders.
+  - [ ] Hashed cache: 64-lowercase-hex key, 2 MiB per image, 64 MiB total,
+        oldest-first eviction.
+  - [ ] Attribution: the exact TMDB credit string is rendered where TMDB art is
+        shown.
+  - [ ] Offline fallback: absent, malformed or failed artwork degrades to the
+        bundled placeholder; no view breaks.
+  - [ ] No path or key in DTO: the renderer receives only a relative
+        `/artwork/<64-hex>` URL and prefixes `apiBase`.
+- **Tests:** Fake-fetch Rust tests, loopback route tests and frontend
+  `artFromDto` tests are PASS; a live TMDB search/image download is **NOT RUN**
+  (no key supplied, no opt-in).
+- **Risks:** An HTTP client and a loopback image origin are now in the trust
+  surface, bounded by opt-in, loopback bind and opaque keys. ADR-0023 is
+  **Proposed** and must be accepted by the human partner; no ADR was
+  self-accepted.
+- **Status:** [~] Code complete for Tasks 1–3 with local gates green. Live key
+  call **NOT RUN**. ADR-0023 remains **Proposed** pending human acceptance.
+
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 
 - **Gate:** P6-01 … P6-03 complete; the mandatory backend boundary is verified.

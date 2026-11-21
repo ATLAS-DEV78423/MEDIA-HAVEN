@@ -4,13 +4,30 @@
 
 import { artFor, runtimeLabel, type Episode, type Media, type Season } from "@/data/catalog";
 
+import { apiBase } from "./errors";
 import type {
+  ArtworkRef,
   EpisodeSummary,
   MediaDetail,
   MediaSummary,
   PlaybackProgress,
   SeriesDetail,
 } from "./types";
+
+/** Only the exact relative, hashed form Task 2 emits is accepted. Anything else
+ * (script URLs, absolute third-party URLs, wrong-shape paths) is ignored so a
+ * hostile DTO cannot turn a poster into an external image source. */
+const RELATIVE_ARTWORK = /^\/artwork\/[0-9a-f]{64}$/;
+
+/** Prefer a cached backend poster; degrade to bundled art when absent, undefined
+ * or malformed. The DTO url is relative, so prefix the configured API base. */
+export function artFromDto(artwork: ArtworkRef[] | undefined, id: string, title: string) {
+  const url = artwork?.find((entry) => entry.variant === "poster")?.url;
+  const bundled = artFor(id, title);
+  return url && RELATIVE_ARTWORK.test(url)
+    ? { hero: `${apiBase}${url}`, still: `${apiBase}${url}` }
+    : bundled;
+}
 
 const ratio = (progress: PlaybackProgress | null | undefined): number | undefined => {
   if (!progress || progress.durationSeconds <= 0) return undefined;
@@ -33,7 +50,7 @@ export function toMedia(summary: MediaSummary): Media {
     minutes,
     synopsis: synopsisOf(summary.synopsis),
     about: synopsisOf(summary.synopsis),
-    art: artFor(summary.id, summary.title),
+    art: artFromDto(summary.artwork, summary.id, summary.title),
     ...(progress !== undefined ? { progress } : {}),
   };
 }
@@ -50,7 +67,7 @@ export function seriesToMedia(series: SeriesDetail): Media {
     minutes: null,
     synopsis: synopsisOf(series.synopsis),
     about: synopsisOf(series.synopsis),
-    art: artFor(series.id, series.title),
+    art: artFromDto(series.artwork, series.id, series.title),
     seasons: series.seasons.map((season) => ({
       number: season.number,
       title: season.title,

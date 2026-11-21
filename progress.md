@@ -2,9 +2,58 @@
 
 ## Last updated
 
-2026-11-20 (torrent-acquisition conversion + FINAL REVIEW FIX WAVE complete). The
-2026-11-19 entry and earlier sections are retained as history and are explicitly
+2026-11-21 (TMDB artwork Tasks 1–3 code complete; live key call NOT RUN). The
+2026-11-20 entry and earlier sections are retained as history and are explicitly
 superseded where they disagree with the newest entry.
+
+## 2026-11-21 — TMDB artwork (Tasks 1–3, opt-in; live call NOT RUN)
+
+Implemented per `docs/superpowers/plans/2026-11-21-tmdb-artwork.md` on the
+isolated worktree at `5aed36e`. Opt-in TMDB posters, off by default: fake-fetch
+Rust tests and loopback-only frontend tests; no scraper, no new npm dependency,
+no path/key in renderer DTOs, Playwright config and `vite.config.ts` untouched.
+Full detail and evidence: `.superpowers/sdd/2026-11-21-tmdb-artwork/task-{1,2,3}-report.md`.
+
+- **Task 1 (ADR-0023 + transport + hashed cache).** ADR-0023 written with status
+  **Proposed** (not self-accepted). `cargo test -p media-metadata --test tmdb`
+  RED then GREEN (`test result: ok. 12 passed; 0 failed`); `cargo fmt --all` exit 0;
+  `cargo clippy -p media-metadata --all-targets -- -D warnings` exit 0;
+  `cargo test -p media-metadata` exit 0. Fakes only.
+- **Task 2 (core wiring).** `cargo test -p mediahaven-core
+  state::tests::default_state_has_a_disabled_tmdb_provider` RED then
+  `routes::tests::artwork_route_rejects_non_hash_keys` RED, both GREEN after;
+  `cargo fmt --all -- --check` exit 0; `cargo clippy -p mediahaven-core
+  -p media-metadata --all-targets -- -D warnings` exit 0; `cargo test
+  -p mediahaven-core` (`13 passed; 0 failed` unit + `11 passed; 0 failed` route
+  tests); `cargo test -p mediahaven-contract` (`4 passed; 0 failed`, 24-command
+  route parity intact). Public `GET /artwork/:key` validates a 64-lowercase-hex
+  key before any path join; DTOs carry only `/artwork/<64-hex>`.
+- **Task 3 (frontend).** `artFromDto` RED (`4 failed`, `artFromDto is not a
+  function`) then GREEN (`4 passed`) via `npm test -- --run
+  src/services/adapt.artwork.test.ts`. The strict regex
+  `^\/artwork\/[0-9a-f]{64}$` accepts only Task 2's hashed relative URLs and
+  falls back to bundled art for `javascript:`, absolute third-party URLs,
+  uppercase/short/wrong-shape paths, empty or undefined artwork. Attribution
+  renders unconditionally in the Hero and gated on raw DTO artwork in Details,
+  reusing the token-only `.attribution` style from `imdbRating.module.css`.
+  CSP `img-src` widened by exactly one origin (`http://127.0.0.1:8080`, matching
+  `connect-src`); Settings privacy text states what is sent. Full frontend gates
+  (typecheck / lint / test / check:tokens / build / check:bundle) and the final
+  Rust gates for this task are recorded verbatim in `task-3-report.md`.
+
+### Honest verification note
+
+**Live TMDB search and live image download are NOT RUN** — no API key was
+supplied and `MEDIAHAVEN_TMDB_OPTIN` was not set. Every verification used fakes,
+pure helpers and loopback only. No poster was observed in a real WebView with a
+real key; no such claim is made. ADR-0023 is **Proposed** pending human
+acceptance. No checkpoint passed.
+
+### Single next action
+
+An operator supplies a TMDB key from the ADR-0007 secret store and sets
+`MEDIAHAVEN_TMDB_OPTIN=1`, then a single live call is run and its result recorded
+here (search + one cached poster). Until then this task stays `[~]`.
 
 ## 2026-11-20 — Final review fix wave (consolidated findings 1–10)
 

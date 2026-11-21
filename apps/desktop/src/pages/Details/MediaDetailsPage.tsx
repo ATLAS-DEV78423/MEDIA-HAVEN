@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ImdbRating } from "@/components/cards/ImdbRating";
 import { MediaCard } from "@/components/cards/MediaCard";
+import { TmdbAttribution } from "@/components/cards/TmdbAttribution";
 import { Shelf } from "@/components/shelf/Shelf";
 import { ActionButton, Chip, ProgressBar, buttonClass } from "@/components/ui/Controls";
 import { Icon } from "@/components/ui/Icon";
@@ -312,6 +313,9 @@ export function MediaDetailsPage() {
             voteCount={detail?.voteCount}
             ageRating={detail?.ageRating}
           />
+          {detail?.artwork?.some((entry) => Boolean(entry.url)) ? (
+            <TmdbAttribution />
+          ) : null}
         </div>
 
         <section className={styles.sourceSection} aria-label="Acquisition source">

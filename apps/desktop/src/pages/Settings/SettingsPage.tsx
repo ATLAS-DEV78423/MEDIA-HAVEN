@@ -200,8 +200,10 @@ export function SettingsPage() {
             </FieldRow>
             <p className={styles.rootHint}>
               Neither switch is wired to a backend command in this build, so both
-              stay off. Local NFO and TMDB metadata is unchanged. Ratings and age
-              ratings: IMDb / OMDb.
+              stay off. TMDB posters are off by default. If enabled, only a title,
+              year and poster path are sent to TMDB; images are cached locally and
+              attributed. Local NFO and IMDb behaviour is unchanged. Ratings and
+              age ratings: IMDb / OMDb.
             </p>
           </Panel>
         </section>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { TmdbAttribution } from "@/components/cards/TmdbAttribution";
 import { Icon } from "@/components/ui/Icon";
 import { buttonClass } from "@/components/ui/Controls";
 import type { Media } from "@/data/catalog";
@@ -104,6 +105,7 @@ export function Hero({ slides }: { slides: Media[] }) {
               <Icon name="chevronRight" />
             </Link>
           </div>
+          <TmdbAttribution />
         </div>
       </div>
 
