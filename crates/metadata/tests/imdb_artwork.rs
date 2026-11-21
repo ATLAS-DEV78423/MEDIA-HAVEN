@@ -1,8 +1,11 @@
 //! Keyless IMDb artwork provider. All fetch calls are fakes — no network is used.
 
-use media_metadata::imdb_artwork::{validate_image_url, ImdbArtworkProvider};
+use media_metadata::imdb_artwork::{resize_image_url, validate_image_url, ImdbArtworkProvider};
 
 const FAKE_URL: &str = "https://m.media-amazon.com/images/M/MV5Btest._V1_.jpg";
+const LIVE_URL: &str =
+    "https://m.media-amazon.com/images/M/MV5BMTExMzU0ODcxNDheQTJeQWpwZ15BbWU4MDE1OTI4MzAy._V1_.jpg";
+const LIVE_RESIZED: &str = "https://m.media-amazon.com/images/M/MV5BMTExMzU0ODcxNDheQTJeQWpwZ15BbWU4MDE1OTI4MzAy._V1_QL75_UX500_.jpg";
 
 #[test]
 fn passes_title_and_year_to_fetch_and_returns_the_url() {
@@ -69,4 +72,42 @@ fn provider_fails_closed_on_fetch_error_or_bad_url() {
     assert_eq!(bad.poster_url("x", None), None);
     let err = ImdbArtworkProvider::with_fetch(Box::new(|_, _| Err("boom".into())));
     assert_eq!(err.poster_url("x", None), None);
+}
+
+#[test]
+fn resize_image_url_uses_small_variant_and_stays_allowlisted() {
+    assert_eq!(resize_image_url(LIVE_URL), LIVE_RESIZED);
+    assert!(validate_image_url(&resize_image_url(LIVE_URL)));
+}
+
+#[test]
+fn resize_image_url_handles_at_suffix() {
+    let raw = "https://m.media-amazon.com/images/M/MV5Btest@._V1_.jpg";
+    assert_eq!(
+        resize_image_url(raw),
+        "https://m.media-amazon.com/images/M/MV5Btest@._V1_QL75_UX500_.jpg"
+    );
+}
+
+#[test]
+fn resize_image_url_uses_the_last_token() {
+    let raw = "https://m.media-amazon.com/images/M/MV5Bx._V1_y._V1_.jpg";
+    assert_eq!(
+        resize_image_url(raw),
+        "https://m.media-amazon.com/images/M/MV5Bx._V1_y._V1_QL75_UX500_.jpg"
+    );
+}
+
+#[test]
+fn resize_image_url_leaves_urls_without_the_token_unchanged() {
+    let plain = "https://m.media-amazon.com/images/M/MV5Btest.jpg";
+    assert_eq!(resize_image_url(plain), plain);
+}
+
+#[test]
+fn resize_does_not_rescue_an_evil_host() {
+    let evil = "https://evil.example/MV5Btest._V1_.jpg";
+    let resized = resize_image_url(evil);
+    assert_ne!(resized, evil);
+    assert!(!validate_image_url(&resized));
 }

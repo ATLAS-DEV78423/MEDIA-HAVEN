@@ -182,18 +182,32 @@ pub fn validate_image_bytes(bytes: &[u8]) -> Option<&'static str> {
     classify_image(bytes)
 }
 
+/// Rewrite an IMDb CDN URL to IMDb's own downscaled variant. The raw `._V1_`
+/// image is often over the 2 MiB cap; the `_QL75_UX500_` suffix keeps the same
+/// allowlisted host/path prefix but serves a small JPEG. URLs with no `._V1_`
+/// token are returned unchanged.
+pub fn resize_image_url(url: &str) -> String {
+    match url.rfind("._V1_") {
+        Some(pos) => format!("{}._V1_QL75_UX500_.jpg", &url[..pos]),
+        None => url.to_string(),
+    }
+}
+
 /// Download only an allowlisted IMDb poster, bounded and type-checked.
 pub fn fetch_image_bytes(url: &str) -> Result<(Vec<u8>, String), String> {
     if !validate_image_url(url) {
         return Err("image URL refused".to_string());
     }
+    // shortcut: normalize to IMDb's small variant rather than raising the byte
+    // cap; the suffix is fixed ASCII on the same host, so the URL stays valid.
+    let url = resize_image_url(url);
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "client unavailable".to_string())?;
     let bytes = client
-        .get(url)
+        .get(&url)
         .send()
         .map_err(|_| "image request failed".to_string())?
         .error_for_status()
