@@ -72,13 +72,15 @@ blocked, not passed. See ADR-0009.
 
 ## Current milestone
 
-- **Phase:** No checkpoint has passed. Work is concurrent across Phase 1 foundation
-  (WS-A host boundary), Phase 2 library, Phase 3 playback and Phase 4 frontend —
-  the product owner chose frontend-first (ADR-0009).
-- **Goal:** Close the container boundary — A6 engine build and A8 boundary evidence
-  remain open; A9 (media-root read-only mount override) already landed at `c23b06f`
-  and unblocks P1-07/P1-08. Also build real playback (B2/B3, which unblocks
-  P3-01/P3-02). These items remain open.
+- **Phase:** No checkpoint has passed. Substantial code now exists across Phases 2
+  (library, metadata), 3 (playback), 4 (frontend, keyboard navigation), 6
+  (acquisition + fail-closed media gates) and 7 (an unsigned installer was built),
+  but every checkpoint remains OPEN pending observed evidence and human review.
+- **Goal:** Convert shipped-but-unverified work into checkpoint evidence. The
+  newest code landed in the 2026-11-20/21 waves: authorized-media torrent
+  acquisition, fail-closed probe + Defender gates, R-01 per-item source mapping,
+  offline IMDb metadata, a Windows installer and full keyboard navigation. A TMDB
+  artwork plan exists but is unexecuted (P6-07).
 - **Exit criteria:** the next checkpoint reached passes only on observed evidence
   recorded in `progress.md`, including a human-readable checkpoint summary.
 - **Owner/agent:** unassigned. Any agent picking this up must first read
@@ -88,8 +90,10 @@ blocked, not passed. See ADR-0009.
   one requires a measurement or a human sign-off, not a document.
 - **Note:** a `[~]` marker means code or partial evidence exists, NOT that the
   acceptance criteria are met. `[x]` is reserved for checkpoint-verified tasks.
-- **Evidence:** `progress.md` 2026-11-19 entry records the live verification at
-  HEAD `7d48507` (Rust/frontend gates green; no engine or hardware evidence run).
+- **Evidence:** `progress.md` records the latest gates at HEAD `342addf`
+  (documents only). The last code-verification wave was `9b706fb` — see the
+  2026-11-21 entry in `progress.md`. Live engine, hardware, IMDb/OMDb, TMDB and
+  second-machine gates remain **NOT RUN**.
 
 ---
 
@@ -828,7 +832,14 @@ touching their files.
   tests with hostile strings and malformed images.
 - **Risks:** Privacy leak via filenames; cache growth; terms-of-service
   violation.
-- **Status:** In progress — local NFO reader landed 2026-11-18; TMDB opt-in provider, cache, egress flag and UI toggle remain.
+- **Status:** In progress — local NFO reader landed 2026-11-18; the opt-in TMDB
+  provider (text cache, sanitisation, `poster_path` parsing, network gate) landed
+  in the torrent-acquisition wave, and offline IMDb ratings landed 2026-11-21
+  (ADR-0022 **Proposed**). Still open: real TMDB/OMDb HTTPS transport and the
+  hashed artwork cache — an **unexecuted** plan exists at
+  `docs/superpowers/plans/2026-11-21-tmdb-artwork.md` (ADR-0023 Proposed). No live
+  metadata request has been made; opt-in text and attribution must be verified
+  before this task can be accepted.
 
 ### [~] P2-07 — Implement the local watchlist
 
@@ -1213,7 +1224,12 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Risks:** Focus traps, hidden focus behind overlays, unreachable controls.
   This is the highest-regression area in the app: every later phase must re-run
   the walkthrough.
-- **Status:** In progress — spatial focus implementation and unit tests exist; full keyboard-only walkthrough across every screen NOT RUN.
+- **Status:** In progress — spatial focus, a global Escape-to-back hook
+  (dialog/player-aware), Up/Down escaping text inputs into spatial navigation and
+  unit tests landed 2026-11-21; a browser walkthrough of
+  profile → Home → card → Details → Escape → nav → Movies was observed with zero
+  console errors (see `progress.md`). The every-screen automated walkthrough and
+  CP-4 sign-off remain **NOT RUN**.
 
 ### [~] P4-04 — Build details, settings and setup screens
 
@@ -1547,6 +1563,37 @@ these is unresolved, stop before implementation.
   a container upgrade that loses watch history.
 - **Status:** Not started
 
+### [ ] P6-07 — TMDB artwork transport (opt-in) — planned, not started
+
+- **Goal:** Serve real TMDB posters in the UI, off by default, cached on disk,
+  attributed, and fully offline once cached.
+- **Scope:** Fill the `TmdbProvider` HTTPS transport seam, add a SHA-256-keyed
+  size-capped image cache and a loopback `GET /artwork/:key` route, enrich the
+  existing `artwork` DTO, and prefer backend posters over bundled art in the
+  frontend. ADR-0023 (Proposed) widens the CSP `img-src` by one loopback origin
+  and declares the `reqwest`/`sha2` dependencies.
+- **Out of scope:** Any scraper, indexer, catalogue or downloader; any live call
+  before an operator supplies a key and opts in.
+- **Dependencies:** ADR-0023 accepted by the human; P2-06 (metadata provider).
+- **Implementation areas:** `crates/metadata`, `crates/core`, `apps/desktop`.
+- **Acceptance criteria:**
+  - [ ] Opt-in requires both `MEDIAHAVEN_TMDB_OPTIN=1` and a non-blank key;
+        absent either, zero requests, zero file reads and bundled art renders.
+  - [ ] Only title, year and poster path leave the machine — no path, token or
+        host detail in renderer DTOs (`/artwork/<64-hex>` only).
+  - [ ] Image cache caps at 2 MiB per image and 64 MiB total with oldest-first
+        eviction; non-image bytes are refused.
+  - [ ] The exact attribution string is rendered wherever TMDB art appears.
+  - [ ] Failure degrades to bundled art without breaking a view.
+- **Tests:** Fake-fetch unit tests only — no live TMDB call in any test. Live
+  search/image download is **NOT RUN** until an operator supplies a key.
+- **Risks:** A new HTTP client and loopback image origin enter the trust surface;
+  both are bounded by opt-in, loopback bind and opaque keys. Requires human
+  acceptance of ADR-0023 before implementation.
+- **Status:** Not started. Full step-by-step plan written 2026-11-21 at
+  `docs/superpowers/plans/2026-11-21-tmdb-artwork.md` — **every step unchecked,
+  no code written**. Do not report this as in progress or complete.
+
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 
 - **Gate:** P6-01 … P6-03 complete; the mandatory backend boundary is verified.
@@ -1588,7 +1635,14 @@ Purpose: a non-technical user installs, updates and uninstalls safely.
 - **Tests:** Rebuild-and-compare; install on a clean VM.
 - **Risks:** Signing cost and certificate handling; per-machine install forcing
   admin.
-- **Status:** Not started
+- **Status:** In progress — an unsigned per-user NSIS installer was **really
+  built and verified** 2026-11-21: `MEDIA_HAVEN_0.1.0_x64-setup.exe` (~3.60 MiB)
+  plus `SHA256SUMS.txt` and `THIRD_PARTY_NOTICES.md`; `build.ps1` gate exit 0.
+  Package ID `com.mediahaven.desktop` and version 0.1.0 come from one source.
+  Remaining: builds are **non-deterministic** across runs (documented, not
+  fixed — half of the rebuild criterion is met by disclosure); **SBOM NOT RUN**
+  (no tool installed without consent); clean-VM install unverified. Signing is
+  deliberately out of scope for v1 (O-08, ADR-0016). No CP-7 pass.
 
 ### [ ] P7-02 — Test install, upgrade, rollback and uninstall
 
@@ -1735,7 +1789,12 @@ approved requirement and a spec update.
 | R-19 | Third-party decoder parses hostile media on the host | Risk | Code execution | ADR-0002 exception; OS mitigations; sandboxed renderer | Accepted |
 | R-20 | Watch history readable by the same OS user | Risk | Privacy | Per-user app data and per-user distro | Accepted |
 | R-21 | No HDR guarantee | Risk | Experience | Deferred with the playback ADR | P0-12 result |
-| O-01 | Project name / branding / package ID | **Decided 2026-11-18 / 2026-11-20** — MEDIA HAVEN is the name; package ID `com.mediahaven.desktop` (ADR-0016) | Blocks installer identity | Apply at P7-01 | Before P7-01 |
+| R-22 | Downloaded-media gates depend on probe + Defender results | Risk | **Data safety / code execution** | Fail-closed `detail()`/`playback_start` gates landed in `0db2cc1`; live scan against real media NOT RUN | Live gate evidence before CP-5/CP-6 |
+| R-23 | Per-item R-01 source mapping could be mis-set | Risk | Lawful-use boundary | Operator-supplied source only; validation + fail-closed NULL verification guard landed in `4082920` (ADR-0021) | Human review before acquisition ships |
+| R-24 | IMDb/OMDb opt-in leaks metadata or fabricates values | Risk | Privacy / correctness | `MEDIAHAVEN_IMDB_DIR` opt-in with zero reads when off; OMDb seam unwired; live lookups NOT RUN (ADR-0022 **Proposed**) | ADR-0022 acceptance + live test |
+| R-25 | TMDB artwork client enlarges the trust surface | Risk | Privacy / supply chain | ADR-0023 **Proposed**, plan unexecuted; opt-in + loopback + opaque hashed keys bound it; no live call | ADR-0023 acceptance before P6-07 starts |
+| R-26 | Installer builds are non-deterministic; SBOM absent | Risk | Release / supply chain | Non-determinism documented with cause; SBOM NOT RUN (no tool installed) | Resolve before CP-7 |
+| O-01 | Project name / branding / package ID | **Decided 2026-11-18 / 2026-11-20** — MEDIA HAVEN is the name; package ID `com.mediahaven.desktop` (ADR-0016) | Blocks installer identity | Applied at P7-01 (installer built with this ID) | Before P7-01 |
 | O-02 | Windows 10 support claim | **Decided 2026-11-18** — Windows 11 x64 only for v1 | Support surface | Development.md and installer must state it | Before P7-04 |
 | O-03 | Offline-indefinitely guarantee | **Decided 2026-11-20** — fully offline after install (ADR-0016); local playback/browsing never need a network | Metadata feature behaviour | Enforce opt-in egress in P2-06 | Before CP-2 |
 | O-04 | Metadata provider selection and terms | **Accepted 2026-11-18** — TMDB primary, local NFO fallback (ADR-0011) | Legal/feature scope | Opt-in egress, attribution, secret-store key | Before P2-06 |

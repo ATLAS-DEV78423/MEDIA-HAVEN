@@ -2,9 +2,47 @@
 
 ## Last updated
 
-2026-11-20 (torrent-acquisition conversion + FINAL REVIEW FIX WAVE complete). The
-2026-11-19 entry and earlier sections are retained as history and are explicitly
-superseded where they disagree with the newest entry.
+2026-11-21 (documentation reconciliation at HEAD `342addf`). The newest dated
+entry is first; earlier sections are retained as history and are explicitly
+superseded where they disagree with it. See `roadmap.md` for sequencing and
+`CHANGELOG.md` for a feature summary.
+
+## 2026-11-21 — Documentation reconciliation (HEAD `342addf`)
+
+Brought the stale records in line with shipped code. Documentation only — no
+product requirement was added or changed, no code touched, no new ADR decision
+approved.
+
+- **What changed:** `CHANGELOG.md` gained a "Shipped features" section for the
+  2026-11-20/21 waves and its false "no application code exists" notes were
+  corrected; `docs/README.md` now indexes ADRs 0009–0023, the newer plans and
+  the security/testing/operations docs; `docs/decisions/README.md` gained
+  ADR-0023 (Proposed); `roadmap.md` now records P6-07 (TMDB artwork, planned,
+  not started), the keyboard-nav and installer progress, and risks R-22…R-26;
+  the stale "Current state"/"Active task" blocks below were refreshed.
+- **Verification:** `git diff --check` — see the final gate at the end of this
+  entry. These are document edits; no build, lint or test run was needed.
+- **Still NOT RUN:** live TMDB/IMDb/OMDb, real-media acquisition/cleanup, playback
+  engine, second-machine LAN and all checkpoint sign-offs. No checkpoint passed.
+
+### Gate (documentation reconciliation)
+
+| Check | Result |
+|-------|--------|
+| `git diff --check` | **PASS**, exit 0 |
+
+## 2026-11-21 — Keyboard navigation + TMDB artwork plan (HEAD `9b706fb`, `342addf`)
+
+- **Keyboard navigation (`9b706fb`):** full arrow/Enter/Escape navigation
+  landed — a global Escape-to-back hook that respects dialogs and the player,
+  Up/Down escaping text inputs into spatial navigation, and four unit tests. A
+  browser walkthrough of profile → Home → card → Details → Escape → nav →
+  Movies was observed with zero console errors. The every-screen automated
+  walkthrough remains **NOT RUN**.
+- **TMDB artwork plan (`342addf`):** `docs/superpowers/plans/2026-11-21-tmdb-artwork.md`
+  added — a 657-line step-by-step plan. **Unexecuted:** every step unchecked, no
+  code written, ADR-0023 Proposed pending human acceptance, no live TMDB call.
+  Recorded in `roadmap.md` as P6-07 (not started).
 
 ## 2026-11-20 — Final review fix wave (consolidated findings 1–10)
 
@@ -221,23 +259,32 @@ roadmap, the documentation baseline, a working React frontend, a working Rust
 backend, a Tauri host and a CI workflow. No checkpoint has passed: CP-0 evidence
 is still unmeasured and every later checkpoint is open.
 
-Built and verified at HEAD `7d48507`: React TV UI wired to the host through named
-Tauri commands; Rust workspace of seven crates including `app-core`, `core`,
+Built and verified through HEAD `342addf` (latest code commit `9b706fb`): React
+TV UI wired to the host through named Tauri commands, with full arrow/Enter/Escape
+navigation; a Rust workspace of seven crates including `app-core`, `core`,
 `media-library`, `metadata`, `persistence`, `contract` and `mediahaven-desktop`;
 SQLite migrations, scanner, watchlist, durable queue, settings/profiles; DPAPI
 per-install token, WSL supervisor and HMAC-signed command forwarder; CI with
-contract-drift and dependency-graph assertions.
+contract-drift and dependency-graph assertions. Later waves added authorized-media
+torrent acquisition (ADR-0017/0018/0019), fail-closed probe + Defender gates,
+R-01 per-item source mapping (ADR-0021), offline IMDb metadata (ADR-0022 Proposed)
+and an unsigned per-user NSIS installer.
 
 Written but NOT RUN on a live engine: the `core`/`probe` images, the rendered
 Compose override, mount scope, token forwarding into `core`, boundary evidence
-and all container-based checkpoints. These need explicit Docker/WSL2 consent.
+and all container-based checkpoints. Also NOT RUN: live acquisition against a
+lawful source, real-media playback/cleanup, live IMDb/OMDb/TMDB requests, clean-VM
+install and every checkpoint sign-off. These need operator data, engine consent
+or human review.
 
-Superseded 2026-11-20: playback is no longer only simulated — the Tauri host now
+Superseded 2026-11-20/21: playback is no longer only simulated — the Tauri host
 wires `crates/playback`/mpv and the renderer follows engine state; simulation is
-a dev-only fallback. See the 2026-11-20 entry above. TMDB provider, artwork
-cache, diagnostics bundle, safe mode, traversal CI suite, storage policy and
-installer are not built. (The original 2026-11-19 text said there was no
-playback crate or mpv adapter; that was true at that date.)
+a dev-only fallback. The earlier claim that "TMDB provider, artwork cache,
+diagnostics bundle, safe mode, traversal CI suite, storage policy and installer
+are not built" is **wrong**: the opt-in TMDB provider, diagnostics, storage
+policy and installer now exist; only the TMDB *artwork transport/cache* is
+unbuilt (P6-07, plan unexecuted). (The original 2026-11-19 text said there was
+no playback crate or mpv adapter; that was true at that date.)
 
 Superseded: earlier text in this file claimed "the backend does not yet exist",
 "No Rust workspace, no database" and "src-tauri is still empty". Those claims
@@ -246,16 +293,17 @@ again on 2026-11-19.
 
 ## Active task
 
-- **Task:** Documentation reconciliation + code check (2026-11-19); no product
-  feature is active until ADR-0015 is accepted and engine consent is given.
-- **Branch/HEAD:** `master`, HEAD `7d48507`.
+- **Task:** Documentation reconciliation (2026-11-21) — no product feature is
+  active. ADR-0022 (IMDb) and ADR-0023 (TMDB artwork transport) await human
+  acceptance; engine and live-source gates await operator consent.
+- **Branch/HEAD:** `master`, HEAD `342addf`, fully pushed to `origin/master`.
 - **Six newest commits** (`git log -6 --oneline`, verbatim):
-  - `7d48507` test(queue): make crash-consistency test exercise queue_reorder
-  - `033b71a` feat(queue): durable reorder and removal history
-  - `f5a379f` docs(adr): resolve B1 containment contradiction and HostPathMap naming
-  - `580f047` docs(adr): add proposed ADR-0015 for playback source token (B1)
-  - `16ff6b7` test(contract): make H2 route parser whitespace-tolerant and add independent POST count
-  - `39207fb` ci: add CI workflow, contract drift test and dependency-graph assertions
+  - `342addf` docs: add TMDB artwork implementation plan
+  - `9b706fb` feat(a11y): full arrow/Enter/Escape keyboard navigation
+  - `7ad7d47` chore: ignore live dev server logs
+  - `806ffd9` chore: ignore live demo data directory
+  - `4082920` feat: R-01 source mapping, offline IMDb ratings, Windows installer
+  - `0db2cc1` feat(security): fail-closed probe + Defender gates for downloaded media
 
 ## Completed this session
 

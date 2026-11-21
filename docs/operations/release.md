@@ -1,8 +1,12 @@
 # Release runbook - Windows (v1, unsigned)
 
-Status of this runbook/config work: **PARTIAL**. Files are authored; **no
-installer was built, no checksum of a real artifact exists, and nothing was
-published.** See "Not run / known limitations".
+Status: **installer built and checksummed locally; not published.** A real
+unsigned NSIS installer was produced on 2026-11-21 (recorded in `progress.md`):
+`MEDIA_HAVEN_0.1.0_x64-setup.exe` (~3.60 MiB) with `SHA256SUMS.txt` and
+`THIRD_PARTY_NOTICES.md`. The build output is gitignored, so it is not in the
+repository — run the command below and verify the checksum of the artifact you
+produce. Nothing has been published as a GitHub Release. SBOM and a clean-VM
+install remain NOT RUN; see "Not run / known limitations".
 
 ## Prerequisites (already installed; nothing is auto-installed)
 
@@ -13,18 +17,14 @@ published.** See "Not run / known limitations".
   Windows 11; **not verified** here.
 - No administrator rights are needed for the normal per-user install.
 
-## Controller prerequisites before a build will succeed
+## Build preconditions (now satisfied)
 
-`infrastructure/packaging/windows/build.ps1` refuses to build until
-`apps/desktop/src-tauri/tauri.conf.json` is corrected by the controller (Task 3
-was not permitted to edit it):
-
-| Setting | Current | Required |
-|---|---|---|
-| `identifier` | `app.mediahaven.desktop` | `com.mediahaven.desktop` (O-01) |
-| `bundle.active` | `false` | `true` |
-| `bundle.targets` | `all` | `["nsis"]` |
-| version | `0.1.0` | one source: `package.json` is `0.0.0`, `Cargo.toml` is `0.1.0` - align before release |
+The controller applied the packaging fixes recorded in `progress.md`, and a real
+build succeeded. `apps/desktop/src-tauri/tauri.conf.json` now has `identifier`
+`com.mediahaven.desktop` (O-01), `bundle.active: true`, `bundle.targets:
+["nsis"]` and version `0.1.0`; `package-lock` version and the `build.ps1` output
+path bug were also fixed. `build.ps1` still refuses a build that requests signing
+or a non-`currentUser` install mode, by design.
 
 NSIS defaults to `currentUser` (per-user, no admin) in Tauri CLI 2.12.5 - this
 was verified against the CLI's local `config.schema.json`. The build script
@@ -89,19 +89,23 @@ through the same channel as the binary.
   deterministic). 177 Rust licences are `unresolved offline` because those
   crate manifests are not in the local Cargo cache; resolving them needs an
   approved fetch.
-- IMDb/TMDB attribution is an explicit **PLACEHOLDER** in that notice, to be
-  filled by the IMDb metadata agent. Do not ship while it is empty.
+- IMDb attribution ("Ratings and age ratings: IMDb / OMDb") is rendered in the
+  UI where IMDb data appears. Verify the notice text against the shipped build
+  before release; TMDB artwork attribution is not yet implemented (the artwork
+  transport is an unexecuted plan, P6-07).
 - `infrastructure/packaging/windows/sbom/README.md` - SBOM **NOT RUN**; contains
   the exact operator commands (syft / cargo-cyclonedx / cyclonedx-npm) for an
   approved run. The notice is not a SBOM.
 
 ## Not run / known limitations
 
-- **Installer build: NOT RUN.** Config preconditions above are unmet; no
-  tooling was installed; no consent to fetch missing crates. No artifact and no
-  real checksum exist yet.
+- **Installer build: PASS (local, 2026-11-21).** A real artifact and its
+  `SHA256SUMS.txt` were produced; `build.ps1` gate exited 0. The output is
+  gitignored and has not been published.
 - **SBOM: NOT RUN** (all tools missing - see `sbom/README.md`).
-- **Reproducibility: UNVERIFIED.** No two builds were produced or compared.
+- **Reproducibility: UNVERIFIED.** The hash changed between builds; the cause is
+  documented rather than fixed, which meets only the disclosure half of the
+  rebuild criterion.
 - **No live media, no real download source, no hardware proof.** Codec, GPU,
   audio, subtitle and low-end-tier claims are unproven (CP gates outstanding).
 - **No CP sign-offs.** Product/reliability/security/performance/documentation

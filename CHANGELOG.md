@@ -6,6 +6,44 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Shipped features (2026-11-20 / 2026-11-21)
+
+Code-complete and covered by the gates recorded in `progress.md`. Behaviour that
+needs an operator, lawfully sourced media, a real playback engine or
+second-machine hardware remains **NOT RUN**; no checkpoint has passed.
+
+- **Authorized-media torrent acquisition** (ADR-0017/0018/0019): a qBittorrent
+  sandbox on an egress-only Docker network with no published port, loopback-only
+  control with secret-store credentials, user-supplied magnet/`.torrent` entry,
+  a rolling two-episode buffer with a 20 GiB cap, and cleanup of app-managed
+  media only. No tracker, indexer or catalogue is bundled.
+- **Fail-closed downloaded-media gates**: the file-inspection probe and a Windows
+  Defender gate (`MpCmdRun`) are wired into `detail()` and `playback_start`. A
+  downloaded item is playable only when both verifications are Clean and it is
+  tied to a `media_id`; a `NULL` verification never becomes an allow.
+- **R-01 per-item source mapping** (ADR-0021): an operator attaches a
+  magnet/`.torrent` source to a library item on its Details screen; `item_sources`
+  (migration 0007), the `source_set` command chain and a fail-closed verification
+  guard. No discovery or bundled sources.
+- **Offline IMDb metadata** (ADR-0022, **Proposed**): opt-in via
+  `MEDIAHAVEN_IMDB_DIR`, reading operator-supplied `title.basics`, `ratings` and
+  `age_ratings` TSVs; signed `/host/imdb_lookup`, a named renderer command, and
+  card + Details display with attribution. Zero file reads when off. OMDb HTTP
+  remains an unwired seam and needs its own ADR.
+- **Unsigned per-user Windows installer** built and verified (v0.1.0, x64, NSIS,
+  ~3.60 MiB) with checksums and third-party notices. The SmartScreen caveat
+  applies (O-08) and builds are non-deterministic across runs (documented, not
+  fixed). SBOM generation is **NOT RUN**.
+- **Full arrow/Enter/Escape keyboard navigation**: a global Escape-to-back hook,
+  Up/Down escaping text inputs into spatial navigation, and unit tests. A browser
+  walkthrough was observed (see `progress.md`); the every-screen automated
+  walkthrough remains open.
+- **TMDB artwork implementation plan** added
+  (`docs/superpowers/plans/2026-11-21-tmdb-artwork.md`). This is a **plan, not
+  implemented code**: ADR-0023 is Proposed pending human acceptance, the HTTPS
+  transport and hashed image cache are unwritten, and no live TMDB call has been
+  made.
+
 ### Changed
 - **Docker/Compose is now a mandatory v1 dependency.** The backend and the
   media-inspection workload run in containers; there is no host-side backend
@@ -63,14 +101,22 @@ All notable changes to this project are documented here. Format loosely follows
   revisit trigger; its decision was not rewritten.
 
 ### Notes
-- No application code exists yet. Nothing is runnable beyond the preflight script.
+- The earlier statement that "no application code exists yet" is **superseded** by
+  the shipped features above: a React frontend, a seven-crate Rust backend, a Tauri
+  host, SQLite persistence and a CI workflow all exist. See `progress.md` for the
+  current state.
 - The Compose file resolves cleanly and its static security posture is verified, but
-  it has **not** been run against a running engine.
-- The runtime distribution, the playback engine and its licence (O-09), and the
-  host↔container transport remain **Proposed** and require human acceptance.
+  it has **not** been run against a running engine (needs explicit Docker/WSL2
+  consent).
+- The runtime distribution (ADR-0001 Part 2) and playback engine (ADR-0002) are
+  **Accepted (provisional)** pending P0 measurement evidence; O-09 (libmpv LGPL
+  build) still needs confirmation of the shipped artefact. ADR-0022 (IMDb) and the
+  plan-derived ADR-0023 (TMDB artwork transport) are **Proposed** and require human
+  acceptance.
 - **CP-0 is not passed.** Every CP-0 criterion requires an observed measurement or a
   human sign-off; a document that says "recommended" is not evidence.
-- Project name, branding and package ID are not finalised.
+- Project name (MEDIA HAVEN) and package ID (`com.mediahaven.desktop`) are decided by
+  ADR-0016; the earlier "not finalised" note is superseded.
 
 ### Added (earlier in this cycle)
 - `Development.md` — the consolidated product and engineering specification.
