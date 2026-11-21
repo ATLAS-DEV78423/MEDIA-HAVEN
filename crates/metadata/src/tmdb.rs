@@ -252,6 +252,12 @@ fn sanitize_poster(raw: &str) -> Option<String> {
     Some(value.to_string())
 }
 
+/// Redact transport errors: reqwest's `Display` appends the request URL, which
+/// carries the ADR-0007 API key in its query string. Never surface it.
+pub fn request_error<E: std::fmt::Display>(_error: E) -> String {
+    "TMDB request failed".to_string()
+}
+
 /// Real TMDB v3 search transport. Only title/year/key are used; no path.
 pub fn http_search_fetch() -> Box<FetchFn> {
     Box::new(|title, year, key| {
@@ -265,10 +271,10 @@ pub fn http_search_fetch() -> Box<FetchFn> {
         if let Some(year) = year {
             request = request.query(&[("year", year.to_string())]);
         }
-        let response = request.send().map_err(|err| err.to_string())?;
+        let response = request.send().map_err(request_error)?;
         response
             .error_for_status()
-            .map_err(|err| err.to_string())?
+            .map_err(request_error)?
             .text()
             .map_err(|err| err.to_string())
     })

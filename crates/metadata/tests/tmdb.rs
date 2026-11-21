@@ -3,7 +3,8 @@
 
 use media_metadata::cache::Cache;
 use media_metadata::tmdb::{
-    classify_image, too_large, ArtworkCache, FetchFn, TmdbOptions, TmdbProvider, TMDB_ATTRIBUTION,
+    classify_image, request_error, too_large, ArtworkCache, FetchFn, TmdbOptions, TmdbProvider,
+    TMDB_ATTRIBUTION,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -219,4 +220,17 @@ fn artwork_cache_stores_and_evicts_oldest_first() {
     assert_eq!(bytes, fake_jpeg);
     assert_eq!(kind, "image/jpeg");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn transport_errors_never_leak_the_api_key_or_url() {
+    const KEY: &str = "super-secret-key-123";
+    let raw = format!(
+        "error sending request for url (https://api.themoviedb.org/3/search/movie?api_key={KEY}&query=Arrival)"
+    );
+    let redacted = request_error(raw);
+    assert_eq!(redacted, "TMDB request failed");
+    assert!(!redacted.contains(KEY));
+    assert!(!redacted.contains("api_key"));
+    assert!(!redacted.contains("http"));
 }
