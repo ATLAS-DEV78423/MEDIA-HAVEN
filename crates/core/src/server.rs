@@ -164,8 +164,11 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     if recovered > 0 {
         tracing::warn!(recovered, "marked interrupted library scans as errors");
     }
-    let state =
-        AppState::new(service, config.token).with_imdb(crate::state::imdb_provider_from_env());
+    let artwork_dir = config.data_dir.join("artwork");
+    let state = AppState::new(service, config.token)
+        .with_imdb(crate::state::imdb_provider_from_env())
+        .with_tmdb(crate::state::tmdb_provider_from_env(&config.data_dir))
+        .with_artwork_dir(artwork_dir);
 
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(config.bind)

@@ -7,9 +7,10 @@
 
 use app_core::domain::*;
 use axum::extract::{FromRequest, Path, Request, State};
-use axum::http::StatusCode;
+use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{async_trait, Json, Router};
+use media_metadata::{ArtworkCache, TmdbProvider, DEFAULT_MAX_CACHE_BYTES};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
@@ -189,6 +190,144 @@ fn check_search(query: &SearchQuery) -> Result<(), ApiError> {
 }
 
 // ---------------------------------------------------------------------------
+// Artwork (opt-in)
+// ---------------------------------------------------------------------------
+
+/// Serve a cached poster. `:key` is a 64-char SHA-256 hex digest, never a path,
+/// so a request cannot traverse the artwork directory. The key is validated
+/// here, before the join — `ArtworkCache` does not validate its own keys.
+async fn artwork(State(state): State<AppState>, Path(key): Path<String>) -> Response {
+    let valid = key.len() == 64
+        && key
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    if !valid {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let path = state.artwork_dir.as_ref().join(&key);
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let content_type = if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else {
+        "image/png"
+    };
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, "public, max-age=604800"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+/// Fill one item's artwork with a relative `/artwork/<hash>` URL. Shared by
+/// every DTO shape so lookup/cache/fetch logic lives in exactly one place.
+fn fill_poster(
+    tmdb: &TmdbProvider,
+    cache: &ArtworkCache,
+    title: &str,
+    year: Option<i64>,
+    artwork: &mut Vec<ArtworkRef>,
+) {
+    let Some(found) = tmdb.lookup_full(title, year) else {
+        return;
+    };
+    let Some(poster_path) = found.poster_path else {
+        return;
+    };
+    let key = media_metadata::artwork_key(&poster_path);
+    if cache.get(&key).is_none() {
+        let Ok((bytes, kind)) = media_metadata::fetch_artwork_bytes(&poster_path) else {
+            return;
+        };
+        if cache.put(&key, &bytes, &kind).is_err() {
+            return;
+        }
+    }
+    artwork.push(ArtworkRef {
+        variant: ArtworkVariant::Poster,
+        url: Some(format!("/artwork/{key}")),
+        alt: format!("{title} poster"),
+    });
+}
+
+/// One `spawn_blocking` for the whole batch: the TMDB provider and image cache
+/// are synchronous and may do disk I/O, but no tokio worker may block.
+async fn enrich_artwork(state: &AppState, mut items: Vec<MediaSummary>) -> Vec<MediaSummary> {
+    if !state.tmdb.options().enabled {
+        return items;
+    }
+    let fallback = items.clone();
+    let tmdb = state.tmdb.clone();
+    let artwork_dir = state.artwork_dir.clone();
+    let filled = tokio::task::spawn_blocking(move || {
+        let cache = ArtworkCache::new(artwork_dir.as_ref().clone(), DEFAULT_MAX_CACHE_BYTES);
+        for item in &mut items {
+            fill_poster(&tmdb, &cache, &item.title, item.year, &mut item.artwork);
+        }
+        items
+    })
+    .await;
+    filled.unwrap_or(fallback)
+}
+
+/// Series detail has the same title/year/artwork shape but a different DTO.
+async fn enrich_series_artwork(
+    state: &AppState,
+    mut items: Vec<SeriesDetail>,
+) -> Vec<SeriesDetail> {
+    if !state.tmdb.options().enabled {
+        return items;
+    }
+    let fallback = items.clone();
+    let tmdb = state.tmdb.clone();
+    let artwork_dir = state.artwork_dir.clone();
+    let filled = tokio::task::spawn_blocking(move || {
+        let cache = ArtworkCache::new(artwork_dir.as_ref().clone(), DEFAULT_MAX_CACHE_BYTES);
+        for item in &mut items {
+            fill_poster(&tmdb, &cache, &item.title, item.year, &mut item.artwork);
+        }
+        items
+    })
+    .await;
+    filled.unwrap_or(fallback)
+}
+
+/// Movie and series detail are enriched in the same blocking batch.
+async fn enrich_detail_artwork(state: &AppState, mut detail: MediaDetail) -> MediaDetail {
+    if !state.tmdb.options().enabled {
+        return detail;
+    }
+    let fallback = detail.clone();
+    let tmdb = state.tmdb.clone();
+    let artwork_dir = state.artwork_dir.clone();
+    let filled = tokio::task::spawn_blocking(move || {
+        let cache = ArtworkCache::new(artwork_dir.as_ref().clone(), DEFAULT_MAX_CACHE_BYTES);
+        match &mut detail {
+            MediaDetail::Movie(movie) => {
+                fill_poster(&tmdb, &cache, &movie.title, movie.year, &mut movie.artwork);
+            }
+            MediaDetail::Series(series) => {
+                fill_poster(
+                    &tmdb,
+                    &cache,
+                    &series.title,
+                    series.year,
+                    &mut series.artwork,
+                );
+            }
+        }
+        detail
+    })
+    .await;
+    filled.unwrap_or(fallback)
+}
+
+// ---------------------------------------------------------------------------
 // Routers
 // ---------------------------------------------------------------------------
 
@@ -196,7 +335,11 @@ fn check_search(query: &SearchQuery) -> Result<(), ApiError> {
 pub fn public_router() -> Router<AppState> {
     use axum::routing::get;
 
-    Router::new().route("/healthz", get(healthz))
+    Router::new()
+        .route("/healthz", get(healthz))
+        // Public: cached bytes are already-public TMDB images and the listener
+        // is loopback-only. GET keeps it out of the 24 POST renderer commands.
+        .route("/artwork/:key", get(artwork))
 }
 
 /// Every route that requires the install token and a valid signature.
@@ -261,21 +404,34 @@ async fn readyz(State(state): State<AppState>) -> Result<Json<Value>, ApiError> 
 }
 
 async fn library_home(State(state): State<AppState>) -> Result<Json<HomeScreen>, ApiError> {
-    Ok(Json(state.service.home().await?))
+    let mut screen = state.service.home().await?;
+    screen.hero = match screen.hero {
+        Some(mut hero) => {
+            hero.media = enrich_artwork(&state, vec![hero.media]).await.remove(0);
+            Some(hero)
+        }
+        None => None,
+    };
+    for shelf in &mut screen.shelves {
+        shelf.items = enrich_artwork(&state, std::mem::take(&mut shelf.items)).await;
+    }
+    Ok(Json(screen))
 }
 
 async fn library_movies(
     State(state): State<AppState>,
     ApiJson(args): ApiJson<QueryArgs>,
 ) -> Result<Json<Vec<MediaSummary>>, ApiError> {
-    Ok(Json(state.service.movies(&args.query).await?))
+    let items = state.service.movies(&args.query).await?;
+    Ok(Json(enrich_artwork(&state, items).await))
 }
 
 async fn library_shows(
     State(state): State<AppState>,
     ApiJson(args): ApiJson<QueryArgs>,
 ) -> Result<Json<Vec<SeriesDetail>>, ApiError> {
-    Ok(Json(state.service.shows(&args.query).await?))
+    let items = state.service.shows(&args.query).await?;
+    Ok(Json(enrich_series_artwork(&state, items).await))
 }
 
 async fn library_detail(
@@ -283,7 +439,8 @@ async fn library_detail(
     ApiJson(args): ApiJson<IdArgs>,
 ) -> Result<Json<MediaDetail>, ApiError> {
     check_id(&args.id, "id")?;
-    Ok(Json(state.service.detail(&args.id).await?))
+    let detail = state.service.detail(&args.id).await?;
+    Ok(Json(enrich_detail_artwork(&state, detail).await))
 }
 
 async fn library_episodes(
@@ -307,7 +464,9 @@ async fn library_search(
     ApiJson(args): ApiJson<SearchArgs>,
 ) -> Result<Json<SearchResults>, ApiError> {
     check_search(&args.query)?;
-    Ok(Json(state.service.search(&args.query).await?))
+    let mut results = state.service.search(&args.query).await?;
+    results.items = enrich_artwork(&state, std::mem::take(&mut results.items)).await;
+    Ok(Json(results))
 }
 
 async fn library_roots(State(state): State<AppState>) -> Result<Json<LibraryScreen>, ApiError> {
@@ -594,4 +753,122 @@ async fn queue_reorder(
     check_ordered_ids(&args.ordered_ids)?;
     state.service.queue_reorder(&args.ordered_ids).await?;
     Ok(Json(Value::Null))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use app_core::application::LibraryService;
+    use axum::body::Body;
+    use axum::http::Request;
+    use media_persistence::sqlite::{connect_path, SqliteLibraryRepository};
+    use tower::ServiceExt;
+
+    async fn service_for_test() -> crate::state::LibraryServiceHandle {
+        let dir = std::env::temp_dir().join(format!("mh-artwork-route-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let pool = connect_path(&dir.join("library.db"))
+            .await
+            .expect("connect and migrate");
+        LibraryService::new(SqliteLibraryRepository::new(pool))
+    }
+
+    fn summary_for_test() -> MediaSummary {
+        MediaSummary {
+            id: "m1".into(),
+            kind: MediaKind::Movie,
+            title: "Arrival".into(),
+            year: Some(2016),
+            synopsis: None,
+            runtime_minutes: None,
+            genres: vec![],
+            artwork: vec![],
+            availability: MediaAvailability::Available,
+            progress: None,
+            imdb_rating: None,
+            vote_count: None,
+            age_rating: None,
+        }
+    }
+
+    /// A non-hash key is refused before any filesystem join. A `../` URI is
+    /// deliberately avoided: a client or router could normalise it away.
+    #[tokio::test]
+    async fn artwork_route_rejects_non_hash_keys() {
+        let app =
+            crate::server::build_router(AppState::new(service_for_test().await, "test-token"));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/artwork/not-a-hash")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn disabled_tmdb_adds_no_artwork() {
+        let state = AppState::new(service_for_test().await, "test-token");
+        let items = enrich_artwork(&state, vec![summary_for_test()]).await;
+        assert!(items[0].artwork.is_empty());
+    }
+
+    /// Happy path with fakes only: a fake search body and a pre-seeded poster,
+    /// so no network call occurs. The DTO carries only a relative hashed URL.
+    #[tokio::test]
+    async fn enabled_tmdb_adds_only_a_relative_hashed_url() {
+        use media_metadata::TmdbOptions;
+
+        let dir = std::env::temp_dir().join(format!("mh-artwork-enabled-{}", uuid::Uuid::new_v4()));
+        let artwork_dir = dir.join("artwork");
+        std::fs::create_dir_all(&artwork_dir).expect("create temp dir");
+        let poster_path = "/fake-poster.jpg";
+        let key = media_metadata::artwork_key(poster_path);
+        std::fs::write(artwork_dir.join(&key), [0xFF, 0xD8, 0xFF, 0x00]).expect("seed poster");
+
+        let fetch = Box::new(|_title: &str, _year: Option<i64>, _key: &str| {
+            Ok::<_, String>(
+                r#"{"results":[{"title":"Arrival","release_date":"2016-11-11","poster_path":"/fake-poster.jpg"}]}"#
+                    .to_string(),
+            )
+        });
+        let provider = TmdbProvider::with_fetch(
+            TmdbOptions {
+                enabled: true,
+                api_key: Some("fake-key-never-logged".into()),
+                cache_dir: dir.join("tmdb-cache"),
+                max_bytes: media_metadata::DEFAULT_MAX_CACHE_BYTES,
+            },
+            fetch,
+        );
+        let state = AppState::new(service_for_test().await, "test-token")
+            .with_tmdb(provider)
+            .with_artwork_dir(artwork_dir);
+
+        let items = enrich_artwork(&state, vec![summary_for_test()]).await;
+        let refs = &items[0].artwork;
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].variant, ArtworkVariant::Poster);
+        let expected = format!("/artwork/{key}");
+        assert_eq!(refs[0].url.as_deref(), Some(expected.as_str()));
+        let json = serde_json::to_string(&items[0]).unwrap();
+        assert!(!json.contains("fake-key-never-logged"));
+        assert!(!json.contains("tmdb.org"));
+
+        let response = crate::server::build_router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(expected.as_str())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
