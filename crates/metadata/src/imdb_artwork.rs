@@ -2,13 +2,17 @@
 //! suggestion endpoint; no library path or content is included.
 
 use serde_json::Value;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::tmdb::{classify_image, MAX_ARTWORK_BYTES};
 
 pub type ArtworkFetchFn = dyn Fn(&str, Option<i64>) -> Result<String, String> + Send + Sync;
 
 const IMAGE_PREFIX: &str = "https://m.media-amazon.com/images/M/";
+const URL_CACHE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const URL_CACHE_MAX: usize = 512;
 
 /// Accept only IMDb's poster CDN over HTTPS. No traversal, no control chars.
 pub fn validate_image_url(url: &str) -> bool {
@@ -20,6 +24,9 @@ pub fn validate_image_url(url: &str) -> bool {
 
 pub struct ImdbArtworkProvider {
     fetch: Box<ArtworkFetchFn>,
+    /// Bounded title/year -> validated URL cache. A warm shelf makes zero
+    /// suggestion requests; each entry expires after 30 days.
+    urls: Mutex<HashMap<String, (String, Instant)>>,
 }
 
 impl ImdbArtworkProvider {
@@ -28,13 +35,43 @@ impl ImdbArtworkProvider {
     }
 
     pub fn with_fetch(fetch: Box<ArtworkFetchFn>) -> Self {
-        Self { fetch }
+        Self {
+            fetch,
+            urls: Mutex::new(HashMap::new()),
+        }
     }
 
     /// Return an allowlisted image URL, or `None` on any failure.
+    /// Cache hits are re-validated before use, so an entry can never become a
+    /// disallowed URL without being refused.
     pub fn poster_url(&self, title: &str, year: Option<i64>) -> Option<String> {
+        let key = format!("{title}|{year:?}");
+        {
+            let mut urls = self.urls.lock().ok()?;
+            let cached = urls
+                .get(&key)
+                .map(|(url, stamped)| (url.clone(), stamped.elapsed() <= URL_CACHE_TTL));
+            if let Some((url, fresh)) = cached {
+                if fresh {
+                    return validate_image_url(&url).then_some(url);
+                }
+                urls.remove(&key);
+            }
+        }
+
         let url = (self.fetch)(title, year).ok()?;
-        validate_image_url(&url).then_some(url)
+        if !validate_image_url(&url) {
+            return None;
+        }
+        if let Ok(mut urls) = self.urls.lock() {
+            // shortcut: clear-on-cap instead of LRU — a full cache drops every
+            // warm entry once, then refills. Upgrade to LRU if that cost matters.
+            if urls.len() >= URL_CACHE_MAX {
+                urls.clear();
+            }
+            urls.insert(key, (url.clone(), Instant::now()));
+        }
+        Some(url)
     }
 }
 
@@ -94,19 +131,35 @@ fn parse_suggestion(body: &str, title: &str, year: Option<i64>) -> Result<String
         .ok_or("IMDb title has no image")
 }
 
+/// First ASCII letter of a title, or `'a'` for digit-leading/non-ASCII titles.
+/// IMDb's suggestion path is keyed by an ASCII letter; anything else 404s.
+fn suggestion_letter(title: &str) -> char {
+    title
+        .chars()
+        .next()
+        .filter(|c| c.is_ascii_alphabetic())
+        .unwrap_or('a')
+        .to_ascii_lowercase()
+}
+
 /// Fetch the KEYLESS suggestion JSON and return only the image URL string.
+///
+/// The returned URL is UNVALIDATED by contract. Callers MUST run
+/// `validate_image_url` before using it; prefer `ImdbArtworkProvider::poster_url`,
+/// which validates on both cache hits and fresh lookups.
 pub fn imdb_search_fetch(title: &str, year: Option<i64>) -> Result<String, String> {
     let clean = title.trim();
     if clean.is_empty() {
         return Err("empty title".to_string());
     }
-    let letter = clean.chars().next().unwrap_or('a').to_ascii_lowercase();
+    let letter = suggestion_letter(clean);
     let url = format!(
         "https://v2.sg.media-imdb.com/suggestion/{letter}/{}.json",
         percent_encode(clean)
     );
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "client unavailable".to_string())?;
     let body = client
@@ -120,6 +173,15 @@ pub fn imdb_search_fetch(title: &str, year: Option<i64>) -> Result<String, Strin
     parse_suggestion(&body, clean, year).map_err(str::to_string)
 }
 
+/// Return the content type for real JPEG/PNG magic bytes, or `None` for
+/// anything else — including non-images and bodies over `MAX_ARTWORK_BYTES`.
+pub fn validate_image_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() > MAX_ARTWORK_BYTES {
+        return None;
+    }
+    classify_image(bytes)
+}
+
 /// Download only an allowlisted IMDb poster, bounded and type-checked.
 pub fn fetch_image_bytes(url: &str) -> Result<(Vec<u8>, String), String> {
     if !validate_image_url(url) {
@@ -127,6 +189,7 @@ pub fn fetch_image_bytes(url: &str) -> Result<(Vec<u8>, String), String> {
     }
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "client unavailable".to_string())?;
     let bytes = client
@@ -137,10 +200,7 @@ pub fn fetch_image_bytes(url: &str) -> Result<(Vec<u8>, String), String> {
         .map_err(|_| "image request failed".to_string())?
         .bytes()
         .map_err(|_| "image response unreadable".to_string())?;
-    if bytes.len() > MAX_ARTWORK_BYTES {
-        return Err("poster exceeds size cap".to_string());
-    }
-    let kind = classify_image(&bytes).ok_or_else(|| "poster is not an image".to_string())?;
+    let kind = validate_image_bytes(&bytes).ok_or_else(|| "poster is not an image".to_string())?;
     Ok((bytes.to_vec(), kind.to_string()))
 }
 
@@ -188,5 +248,36 @@ mod tests {
             assert!(!err.contains("http"));
             assert!(!err.contains("Arrival"));
         }
+    }
+
+    #[test]
+    fn validate_image_bytes_accepts_jpeg_and_png_magic() {
+        assert_eq!(
+            validate_image_bytes(&[0xFF, 0xD8, 0xFF, 0x00]),
+            Some("image/jpeg")
+        );
+        assert_eq!(
+            validate_image_bytes(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A]),
+            Some("image/png")
+        );
+    }
+
+    #[test]
+    fn validate_image_bytes_rejects_non_images_and_oversize() {
+        assert_eq!(
+            validate_image_bytes(b"<html><script>alert(1)</script></html>"),
+            None
+        );
+        let mut huge = vec![0xFF, 0xD8, 0xFF];
+        huge.resize(MAX_ARTWORK_BYTES + 1, 0);
+        assert_eq!(validate_image_bytes(&huge), None);
+    }
+
+    #[test]
+    fn suggestion_letter_falls_back_for_non_alpha_titles() {
+        assert_eq!(suggestion_letter("Arrival"), 'a');
+        assert_eq!(suggestion_letter("1979"), 'a');
+        assert_eq!(suggestion_letter("Étoile"), 'a');
+        assert_eq!(suggestion_letter("  Alien"), 'a');
     }
 }

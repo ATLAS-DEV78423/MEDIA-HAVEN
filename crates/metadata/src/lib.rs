@@ -18,8 +18,11 @@ pub use imdb::{
     merge, parse_age_ratings, parse_basics, parse_ratings, FileImdbFetch, ImdbFetch, ImdbOptions,
     ImdbProvider, MemoryFetch, IMDB_ATTRIBUTION,
 };
+// `imdb_search_fetch` returns an UNVALIDATED URL by contract: callers MUST run
+// `validate_image_url` before using it (prefer `ImdbArtworkProvider::poster_url`).
 pub use imdb_artwork::{
-    fetch_image_bytes, imdb_search_fetch, validate_image_url, ArtworkFetchFn, ImdbArtworkProvider,
+    fetch_image_bytes, imdb_search_fetch, validate_image_bytes, validate_image_url, ArtworkFetchFn,
+    ImdbArtworkProvider,
 };
 pub use model::{ImdbError, ImdbRecord, NfoDocument, NfoError, MAX_NFO_BYTES};
 pub use nfo::{parse, read_beside};
