@@ -1547,38 +1547,48 @@ these is unresolved, stop before implementation.
   a container upgrade that loses watch history.
 - **Status:** Not started
 
-### [~] P6-07 — TMDB artwork (opt-in)
+### [~] P6-07 — Keyless IMDb posters
 
-- **Goal:** Real movie/show posters from TMDB — off by default, cached locally,
-  attributed, and fully offline once cached.
-- **Scope:** Opt-in transport and hashed image cache (Task 1), loopback
-  `GET /artwork/:key` route with DTO enrichment (Task 2), and frontend preference
-  for the cached poster plus attribution and the one-origin CSP widening (Task 3).
+- **Goal:** Real movie/show posters from IMDb's keyless public suggestion JSON —
+  cached locally, attributed exactly "Posters: IMDb", and fully offline once
+  cached. No API key and no Python runtime.
+- **Scope:** Keyless provider and URL allowlist (Task 1), core wiring through
+  the existing hashed cache and loopback `GET /artwork/:key` route (Task 2),
+  and the frontend attribution/privacy text. All existing artwork controls are
+  preserved unchanged.
 - **Out of scope:** Any scraper, indexer, catalogue or bundled content source;
-  any path or secret in a renderer DTO; a live TMDB call without an operator key.
-- **Dependencies:** ADR-0011 (Accepted); ADR-0023 (**Accepted (2026-11-21,
-  human-approved)**) for the reqwest transport and the loopback `img-src` widening.
-- **Implementation areas:** `crates/metadata`, `crates/core`, `apps/desktop/src`,
-  `apps/desktop/src-tauri/tauri.conf.json`.
+  runtime HTML scraping; any path, token, host or API key in a renderer DTO;
+  a full-library live IMDb seed.
+- **Dependencies:** ADR-0025 (**Accepted (2026-11-21, human-approved)**)
+  supersedes the artwork clauses of ADR-0011 and ADR-0023 only. IMDb ratings
+  remain opt-in via offline dataset files; OMDb stays opt-in with a key; local
+  NFO stays the offline fallback. ADR-0007 still governs the API token.
+- **Implementation areas:** `crates/metadata`, `crates/core`, `apps/desktop/src`.
 - **Acceptance criteria:**
-  - [ ] Opt-in gate: `MEDIAHAVEN_TMDB_OPTIN=1` **and** a non-blank API key are
-        both required; otherwise zero requests and bundled art renders.
+  - [ ] Keyless: only a title and year go to IMDb's public JSON endpoint; no
+        key, no Python, no HTML scraping. Image URLs must pass the
+        `https://m.media-amazon.com/images/M/` allowlist before any request.
   - [ ] Hashed cache: 64-lowercase-hex key, 2 MiB per image, 64 MiB total,
-        oldest-first eviction.
-  - [ ] Attribution: the exact TMDB credit string is rendered where TMDB art is
-        shown.
+        oldest-first eviction; 12-item-per-request cap; key validated before
+        the filesystem join.
+  - [ ] Attribution: the exact string "Posters: IMDb" is rendered where poster
+        art is shown.
   - [ ] Offline fallback: absent, malformed or failed artwork degrades to the
         bundled placeholder; no view breaks.
-  - [ ] No path or key in DTO: the renderer receives only a relative
+  - [ ] No path, key or host in DTO: the renderer receives only a relative
         `/artwork/<64-hex>` URL and prefixes `apiBase`.
-- **Tests:** Fake-fetch Rust tests, loopback route tests and frontend
-  `artFromDto` tests are PASS; a live TMDB search/image download is **NOT RUN**
-  (no key supplied, no opt-in).
-- **Risks:** An HTTP client and a loopback image origin are now in the trust
-  surface, bounded by opt-in, loopback bind and opaque keys. ADR-0023 is
-  **Accepted (2026-11-21, human-approved)**; no ADR was self-accepted.
-- **Status:** [~] Code complete for Tasks 1–3 with local gates green. Live key
-  call **NOT RUN**. ADR-0023 is **Accepted (2026-11-21, human-approved)**.
+- **Tests:** Fake-fetch Rust tests with a pre-seeded JPEG cache byte file,
+  loopback route tests, frontend `artFromDto` tests and all six frontend gates
+  are PASS. A **full-library live IMDb seed is NOT RUN** (no live endpoint call
+  was made; offline fakes only).
+- **Risks:** The suggestion endpoint is unofficial and may change or be
+  rate-limited; failures degrade to bundled art. The trust surface is bounded
+  by the host allowlist, 12-item cap, 64-hex key validation, loopback bind and
+  host-free DTO URLs. ADR-0025 is **Accepted (2026-11-21, human-approved)**;
+  no ADR was self-accepted.
+- **Status:** [~] Code complete for Tasks 1–2 with local gates green. No key,
+  no Python. A full-library live IMDb seed is **NOT RUN**. ADR-0025 is
+  **Accepted (2026-11-21, human-approved)**. No checkpoint passed.
 
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 

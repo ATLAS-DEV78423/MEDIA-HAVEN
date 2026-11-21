@@ -1,15 +1,12 @@
 //! Shared server state: the library application service, the install token,
-//! and the opt-in, offline IMDb provider.
+//! the offline IMDb ratings provider, and the keyless IMDb poster provider.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use app_core::application::LibraryService;
 use media_acquisition::AcquisitionState;
-use media_metadata::tmdb::{api_key_from_env as tmdb_api_key_from_env, DEFAULT_MAX_CACHE_BYTES};
-use media_metadata::{
-    http_search_fetch, FileImdbFetch, ImdbOptions, ImdbProvider, TmdbOptions, TmdbProvider,
-};
+use media_metadata::{FileImdbFetch, ImdbArtworkProvider, ImdbOptions, ImdbProvider};
 use media_persistence::sqlite::SqliteLibraryRepository;
 
 /// The application service over the SQLite adapter. `core` never talks to
@@ -19,9 +16,6 @@ pub type LibraryServiceHandle = LibraryService<SqliteLibraryRepository>;
 /// Setting both the opt-in and the operator-supplied dataset directory. Unset
 /// means disabled: no TSV file is opened and no lookup is served.
 pub const IMDB_DIR_ENV: &str = "MEDIAHAVEN_IMDB_DIR";
-
-/// Opt-in flag for the TMDB artwork provider. Requires a key as well (ADR-0011).
-pub const TMDB_OPTIN_ENV: &str = "MEDIAHAVEN_TMDB_OPTIN";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -34,9 +28,9 @@ pub struct AppState {
     /// Opt-in offline IMDb provider. `new` builds it disabled; the server
     /// process attaches the operator-configured one via `imdb_provider_from_env`.
     pub imdb: Arc<ImdbProvider>,
-    /// Opt-in TMDB provider. `new` builds it disabled; the server attaches the
-    /// operator-configured one via `tmdb_provider_from_env`.
-    pub tmdb: Arc<TmdbProvider>,
+    /// Keyless IMDb poster provider (title and year only, no API key). Always
+    /// available; a failed lookup degrades to bundled art.
+    pub imdb_artwork: Arc<ImdbArtworkProvider>,
     /// Directory of hashed, cached poster bytes. Set by the server; defaults to
     /// a temp dir so existing `AppState::new(...)` test callers still work.
     pub artwork_dir: Arc<PathBuf>,
@@ -49,7 +43,7 @@ impl AppState {
             token: Arc::from(token.into()),
             acquisition: Arc::new(AcquisitionState::new()),
             imdb: Arc::new(ImdbProvider::new(ImdbOptions::default())),
-            tmdb: Arc::new(TmdbProvider::new(TmdbOptions::default())),
+            imdb_artwork: Arc::new(ImdbArtworkProvider::new()),
             artwork_dir: Arc::new(std::env::temp_dir().join("media-haven-artwork")),
         }
     }
@@ -61,10 +55,10 @@ impl AppState {
         self
     }
 
-    /// Attach a configured TMDB provider. Test seam: exercises enrichment with
-    /// a fake transport, no network and no process environment.
-    pub fn with_tmdb(mut self, provider: TmdbProvider) -> Self {
-        self.tmdb = Arc::new(provider);
+    /// Attach a configured IMDb poster provider. Test seam: exercises
+    /// enrichment with a fake fetch, no network and no process environment.
+    pub fn with_imdb_artwork(mut self, provider: ImdbArtworkProvider) -> Self {
+        self.imdb_artwork = Arc::new(provider);
         self
     }
 
@@ -73,25 +67,6 @@ impl AppState {
         self.artwork_dir = Arc::new(dir);
         self
     }
-}
-
-/// Build the TMDB provider only when the operator opted in AND supplied a key.
-/// Either condition missing leaves it disabled: zero requests, zero file reads.
-pub fn tmdb_provider_from_env(data_dir: &Path) -> TmdbProvider {
-    let opted_in = std::env::var(TMDB_OPTIN_ENV).as_deref() == Ok("1");
-    let (enabled, api_key) = match (opted_in, tmdb_api_key_from_env()) {
-        (true, Some(key)) => (true, Some(key)),
-        _ => (false, None),
-    };
-    TmdbProvider::with_fetch(
-        TmdbOptions {
-            enabled,
-            api_key,
-            cache_dir: data_dir.join("tmdb-cache"),
-            max_bytes: DEFAULT_MAX_CACHE_BYTES,
-        },
-        http_search_fetch(),
-    )
 }
 
 /// Build the IMDb provider from the operator's opt-in directory variable.
@@ -124,17 +99,23 @@ mod tests {
         LibraryService::new(SqliteLibraryRepository::new(pool))
     }
 
+    /// Adapt the existing async helper for synchronous state tests.
+    fn service_for_test_blocking() -> LibraryServiceHandle {
+        tokio::runtime::Runtime::new()
+            .expect("build test runtime")
+            .block_on(service_for_test())
+    }
+
+    #[test]
+    fn imdb_artwork_provider_is_available_without_a_key() {
+        let state = AppState::new(service_for_test_blocking(), "test-token");
+        assert!(state.imdb_artwork.poster_url("", None).is_none()); // empty title is refused
+    }
+
     #[test]
     fn default_state_has_a_disabled_imdb_provider() {
         // No AppSettings literal is touched: an unconfigured provider is a
         // zero-fetch no-op, so a store-less construction is safe to assert.
         assert!(!ImdbProvider::new(ImdbOptions::default()).options().enabled);
-    }
-
-    #[tokio::test]
-    async fn default_state_has_a_disabled_tmdb_provider() {
-        let state = AppState::new(service_for_test().await, "test-token");
-        assert!(!state.tmdb.options().enabled);
-        assert!(state.tmdb.lookup_full("Anything", None).is_none());
     }
 }

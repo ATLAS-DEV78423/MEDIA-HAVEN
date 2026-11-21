@@ -2,9 +2,62 @@
 
 ## Last updated
 
-2026-11-21 (TMDB artwork Tasks 1–3 code complete; live key call NOT RUN). The
-2026-11-20 entry and earlier sections are retained as history and are explicitly
-superseded where they disagree with the newest entry.
+2026-11-21 (Keyless IMDb posters Tasks 1–2 code complete; full-library live
+IMDb seed NOT RUN). The 2026-11-21 TMDB artwork entry and earlier sections are
+retained as history and are explicitly superseded where they disagree with the
+newest entry.
+
+## 2026-11-21 — Keyless IMDb posters (Tasks 1–2; full-library live seed NOT RUN)
+
+Implemented per `docs/superpowers/plans/2026-11-21-imdb-keyless-posters.md` on
+the isolated worktree `ea5b46` (branch `tmdb-artwork-and-exe-guard`, base
+`efd5e73`). No key, no Python runtime, no HTML scraping, no new dependency, no
+push/merge/install. Full detail: `.superpowers/sdd/2026-11-21-imdb-keyless-posters/task-{1,2}-report.md`.
+
+- **Task 1 (ADR-0025 + keyless provider).** ADR-0025 is **Accepted
+  (2026-11-21, human-approved)** and indexes in `docs/decisions/README.md`.
+  `ImdbArtworkProvider` returns an image URL from IMDb's keyless suggestion
+  JSON only after the `https://m.media-amazon.com/images/M/` allowlist passes;
+  `fetch_image_bytes` re-checks the allowlist, the 2 MiB cap and real
+  JPEG/PNG headers. Fake-fetch tests, no network.
+- **Task 2 (core wiring + attribution).** `AppState` now holds
+  `imdb_artwork: Arc<ImdbArtworkProvider>` with the `with_imdb_artwork(...)` test
+  seam; `TMDB_OPTIN_ENV`, `tmdb`, `with_tmdb` and `tmdb_provider_from_env` are
+  removed from `core` (the TMDB crate code stays, unwired). `fill_poster` uses
+  `poster_url` — never the unvalidated `imdb_search_fetch` — and the existing
+  `artwork_key`/`ArtworkCache`. The 12-item cap, pre-join 64-lowercase-hex
+  validation, relative `/artwork/<hash>` DTO URL, host-free DTO assertion and
+  frontend `onError` fallback are unchanged. Attribution is exactly
+  "Posters: IMDb" (component name and import sites kept). The stale
+  `crates/metadata` crate doc was corrected. No checkpoint passed.
+
+### Verified commands (observed)
+
+All Rust commands used `CARGO_TARGET_DIR=target/verify`.
+
+| Check | Result |
+|-------|--------|
+| `cargo test -p mediahaven-core state::tests::imdb_artwork_provider_is_available_without_a_key` | **RED** exit 101 (`error[E0609]: no field imdb_artwork`), then **GREEN** exit 0 (`1 passed; 0 failed`) |
+| `cargo fmt --all -- --check` (after `cargo fmt --all`) | **PASS**, exit 0 |
+| `cargo clippy -p mediahaven-core -p media-metadata --all-targets -- -D warnings` | **PASS**, exit 0 |
+| `cargo test -p mediahaven-core -p media-metadata` | **PASS**, exit 0 — metadata 49 passed, core 25 passed, 0 failed; route/failure tests `imdb_artwork_adds_only_a_relative_hashed_url`, `imdb_artwork_failure_adds_no_artwork`, `enrichment_is_bounded_but_returns_every_item`, `artwork_route_rejects_non_hash_keys` all ok |
+| `cargo test -p mediahaven-contract` (extra parity check) | **PASS**, exit 0 — 8 passed, 0 failed; `command_lists_derive_from_one_source ... ok` |
+| `npm run typecheck` / `npm run lint` / `npm test -- --run` / `npm run check:tokens` / `npm run build` / `npm run check:bundle` (from `apps/desktop`) | **PASS**, exit 0 × 6 — Vitest 13 files / 36 tests; tokens 77 files / 0 violations; build 97 modules; bundle clean |
+
+### Honest verification note
+
+**A full-library live IMDb seed is NOT RUN.** Every Rust test used a fake fetch
+returning an allowlisted URL plus a pre-seeded JPEG byte file; no live
+suggestion request, no live image download and no real library title were
+exercised. No poster was observed rendering in a real WebView, and no such
+claim is made. ADR-0025 is **Accepted (2026-11-21, human-approved)**. No
+checkpoint passed.
+
+### Single next action
+
+Run one real lookup against a real library title and confirm the cached poster
+renders in the WebView; record the observed result here. Until then P6-07 stays
+`[~]`.
 
 ## 2026-11-21 — TMDB artwork (Tasks 1–3, opt-in; live call NOT RUN)
 

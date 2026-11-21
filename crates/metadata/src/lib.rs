@@ -1,8 +1,9 @@
 //! Offline metadata: Kodi-style `.nfo` sidecars read beside the media file.
 //!
-//! This crate performs no network access and never writes beside the media. A
-//! network provider (TMDB) is a separate implementor of the same port, added
-//! only behind an explicit, off-by-default opt-in.
+//! The NFO and offline IMDb paths need no network and never write beside the
+//! media. Network-capable providers (TMDB, OMDb, keyless IMDb artwork) live in
+//! their own modules behind explicit seams; poster URLs are allowlisted, bytes
+//! are cached locally, and bundled art is the fallback.
 
 pub mod cache;
 pub mod imdb;
