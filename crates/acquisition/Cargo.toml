@@ -12,3 +12,4 @@ description = "Loopback qBittorrent WebUI client and acquisition orchestration"
 app-core = { path = "../app-core" }
 serde_json.workspace = true
 thiserror.workspace = true
+tracing.workspace = true

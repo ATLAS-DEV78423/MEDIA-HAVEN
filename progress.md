@@ -14,8 +14,8 @@ Rust tests and loopback-only frontend tests; no scraper, no new npm dependency,
 no path/key in renderer DTOs, Playwright config and `vite.config.ts` untouched.
 Full detail and evidence: `.superpowers/sdd/2026-11-21-tmdb-artwork/task-{1,2,3}-report.md`.
 
-- **Task 1 (ADR-0023 + transport + hashed cache).** ADR-0023 written with status
-  **Proposed** (not self-accepted). `cargo test -p media-metadata --test tmdb`
+- **Task 1 (ADR-0023 + transport + hashed cache).** ADR-0023 is
+  **Accepted (2026-11-21, human-approved)**. `cargo test -p media-metadata --test tmdb`
   RED then GREEN (`test result: ok. 12 passed; 0 failed`); `cargo fmt --all` exit 0;
   `cargo clippy -p media-metadata --all-targets -- -D warnings` exit 0;
   `cargo test -p media-metadata` exit 0. Fakes only.
@@ -46,8 +46,8 @@ Full detail and evidence: `.superpowers/sdd/2026-11-21-tmdb-artwork/task-{1,2,3}
 **Live TMDB search and live image download are NOT RUN** — no API key was
 supplied and `MEDIAHAVEN_TMDB_OPTIN` was not set. Every verification used fakes,
 pure helpers and loopback only. No poster was observed in a real WebView with a
-real key; no such claim is made. ADR-0023 is **Proposed** pending human
-acceptance. No checkpoint passed.
+real key; no such claim is made. ADR-0023 is **Accepted (2026-11-21,
+human-approved)**. No checkpoint passed.
 
 ### Single next action
 

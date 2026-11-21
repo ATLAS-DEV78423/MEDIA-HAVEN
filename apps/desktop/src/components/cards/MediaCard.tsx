@@ -2,7 +2,7 @@ import { Link } from "react-router-dom";
 
 import { ProgressBar } from "@/components/ui/Controls";
 import { Icon } from "@/components/ui/Icon";
-import type { Media } from "@/data/catalog";
+import { artFor, type Media } from "@/data/catalog";
 import styles from "./card.module.css";
 import { ImdbRating, type ImdbDisplayFields } from "./ImdbRating";
 
@@ -42,6 +42,12 @@ export function MediaCard({
           loading="lazy"
           decoding="async"
           draggable={false}
+          onError={(event) => {
+            const image = event.currentTarget;
+            if (image.dataset.artFallback) return;
+            image.dataset.artFallback = "true";
+            image.src = artFor(media.id, media.title).still;
+          }}
         />
         <span className={styles.scrim} aria-hidden="true" />
         {badge ? <span className={styles.badge}>{badge}</span> : null}

@@ -272,12 +272,15 @@ impl TorrentApi for QbClient {
             return Ok(added[0].clone());
         }
 
-        // Fallback for a source already present (no diff) or several new rows:
-        // prefer an exact magnet URI, then a lone result.
+        // No-diff fallback: a source already in qB resolves only by its exact
+        // magnet URI. Never fall back to a lone unrelated torrent — resuming it
+        // would write bytes for something the user never requested. Duplicate
+        // sources are already suppressed by the orchestrator's download_exists
+        // pre-check; a bare .torrent with no diff has no magnet to match and so
+        // fails closed (the diff path above resolves genuinely new .torrents).
         let info = self.info()?;
         info.iter()
             .find(|item| item.get("magnet_uri").and_then(Value::as_str) == Some(source))
-            .or_else(|| if info.len() == 1 { info.first() } else { None })
             .and_then(|item| item.get("hash").and_then(Value::as_str))
             .map(str::to_string)
             .ok_or(QbError::NotFound)

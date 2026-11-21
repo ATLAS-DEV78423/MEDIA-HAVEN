@@ -30,6 +30,7 @@ Never rewrite an accepted ADR's decision.
 | [0021](0021-r01-source-mapping.md) | R-01 per-item operator-supplied source mapping | **Accepted** (2026-11-21, reversible; human delegated "solve whatever you can", agent chose option A) | Task 0 |
 | [0022](0022-imdb-metadata.md) | IMDb ratings, age ratings and listings (additive, opt-in) | **Proposed** (2026-11-21) | IMDb plan Task 0 |
 | [0023](0023-tmdb-artwork-transport.md) | TMDB artwork transport and loopback image serving | **Accepted (2026-11-21)** | TMDB artwork plan Task 1 |
+| [0024](0024-no-executable-downloads.md) | Reject executable-bearing torrents before download | **Accepted (2026-11-21)** | Task 4 (executable guard) |
 
 **Two decisions are already binding and are not reopened by Phase 0:**
 

@@ -236,6 +236,12 @@ export function MediaDetailsPage() {
           src={media.art.hero}
           alt=""
           decoding="async"
+          onError={(event) => {
+            const image = event.currentTarget;
+            if (image.dataset.artFallback) return;
+            image.dataset.artFallback = "true";
+            image.src = artFor(media.id, media.title).hero;
+          }}
         />
         <div className={styles.backdropScrim} aria-hidden="true" />
         <button
@@ -409,7 +415,17 @@ export function MediaDetailsPage() {
                       data-focusable="true"
                     >
                       <span className={styles.episodeThumb}>
-                        <img src={media.art.still} alt="" loading="lazy" />
+                        <img
+                          src={media.art.still}
+                          alt=""
+                          loading="lazy"
+                          onError={(event) => {
+                            const image = event.currentTarget;
+                            if (image.dataset.artFallback) return;
+                            image.dataset.artFallback = "true";
+                            image.src = artFor(media.id, media.title).still;
+                          }}
+                        />
                         <span className={styles.episodePlay} aria-hidden="true">
                           <Icon name="play" />
                         </span>

@@ -1556,8 +1556,8 @@ these is unresolved, stop before implementation.
   for the cached poster plus attribution and the one-origin CSP widening (Task 3).
 - **Out of scope:** Any scraper, indexer, catalogue or bundled content source;
   any path or secret in a renderer DTO; a live TMDB call without an operator key.
-- **Dependencies:** ADR-0011 (Accepted); ADR-0023 (**Proposed**, pending human
-  acceptance) for the reqwest transport and the loopback `img-src` widening.
+- **Dependencies:** ADR-0011 (Accepted); ADR-0023 (**Accepted (2026-11-21,
+  human-approved)**) for the reqwest transport and the loopback `img-src` widening.
 - **Implementation areas:** `crates/metadata`, `crates/core`, `apps/desktop/src`,
   `apps/desktop/src-tauri/tauri.conf.json`.
 - **Acceptance criteria:**
@@ -1576,10 +1576,9 @@ these is unresolved, stop before implementation.
   (no key supplied, no opt-in).
 - **Risks:** An HTTP client and a loopback image origin are now in the trust
   surface, bounded by opt-in, loopback bind and opaque keys. ADR-0023 is
-  **Proposed** and must be accepted by the human partner; no ADR was
-  self-accepted.
+  **Accepted (2026-11-21, human-approved)**; no ADR was self-accepted.
 - **Status:** [~] Code complete for Tasks 1–3 with local gates green. Live key
-  call **NOT RUN**. ADR-0023 remains **Proposed** pending human acceptance.
+  call **NOT RUN**. ADR-0023 is **Accepted (2026-11-21, human-approved)**.
 
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 

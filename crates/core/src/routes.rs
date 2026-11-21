@@ -218,11 +218,17 @@ async fn artwork(State(state): State<AppState>, Path(key): Path<String>) -> Resp
         [
             (header::CONTENT_TYPE, content_type),
             (header::CACHE_CONTROL, "public, max-age=604800"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         bytes,
     )
         .into_response()
 }
+
+/// Cap on TMDB lookups plus CDN downloads in one enrichment batch. Each poster
+/// costs a search (10 s timeout) and a fetch, done sequentially in one blocking
+/// task, so an uncapped cold shelf could stall the response for tens of seconds.
+const MAX_ENRICH_PER_REQUEST: usize = 12;
 
 /// Fill one item's artwork with a relative `/artwork/<hash>` URL. Shared by
 /// every DTO shape so lookup/cache/fetch logic lives in exactly one place.
@@ -266,7 +272,8 @@ async fn enrich_artwork(state: &AppState, mut items: Vec<MediaSummary>) -> Vec<M
     let artwork_dir = state.artwork_dir.clone();
     let filled = tokio::task::spawn_blocking(move || {
         let cache = ArtworkCache::new(artwork_dir.as_ref().clone(), DEFAULT_MAX_CACHE_BYTES);
-        for item in &mut items {
+        // shortcut: only the first MAX_ENRICH_PER_REQUEST items get a poster; the rest keep bundled art. Upgrade to a bounded-concurrency pool or a background refresh when shelves regularly exceed this cap or near-real-time freshness matters.
+        for item in items.iter_mut().take(MAX_ENRICH_PER_REQUEST) {
             fill_poster(&tmdb, &cache, &item.title, item.year, &mut item.artwork);
         }
         items
@@ -288,7 +295,8 @@ async fn enrich_series_artwork(
     let artwork_dir = state.artwork_dir.clone();
     let filled = tokio::task::spawn_blocking(move || {
         let cache = ArtworkCache::new(artwork_dir.as_ref().clone(), DEFAULT_MAX_CACHE_BYTES);
-        for item in &mut items {
+        // shortcut: only the first MAX_ENRICH_PER_REQUEST items get a poster; the rest keep bundled art. Upgrade to a bounded-concurrency pool or a background refresh when shelves regularly exceed this cap or near-real-time freshness matters.
+        for item in items.iter_mut().take(MAX_ENRICH_PER_REQUEST) {
             fill_poster(&tmdb, &cache, &item.title, item.year, &mut item.artwork);
         }
         items
@@ -869,6 +877,58 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
+        assert_eq!(
+            response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+            "nosniff"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A cold 50-item shelf must not stall the response: enrichment is capped,
+    /// but every input item is still returned (the rest keep bundled art).
+    #[tokio::test]
+    async fn enrichment_is_bounded_but_returns_every_item() {
+        use media_metadata::TmdbOptions;
+
+        let dir = std::env::temp_dir().join(format!("mh-artwork-bound-{}", uuid::Uuid::new_v4()));
+        let artwork_dir = dir.join("artwork");
+        std::fs::create_dir_all(&artwork_dir).expect("create temp dir");
+        let poster_path = "/fake-poster.jpg";
+        let key = media_metadata::artwork_key(poster_path);
+        std::fs::write(artwork_dir.join(&key), [0xFF, 0xD8, 0xFF, 0x00]).expect("seed poster");
+
+        let fetch = Box::new(|_title: &str, _year: Option<i64>, _key: &str| {
+            Ok::<_, String>(
+                r#"{"results":[{"title":"Arrival","release_date":"2016-11-11","poster_path":"/fake-poster.jpg"}]}"#
+                    .to_string(),
+            )
+        });
+        let provider = TmdbProvider::with_fetch(
+            TmdbOptions {
+                enabled: true,
+                api_key: Some("fake-key-never-logged".into()),
+                cache_dir: dir.join("tmdb-cache"),
+                max_bytes: media_metadata::DEFAULT_MAX_CACHE_BYTES,
+            },
+            fetch,
+        );
+        let state = AppState::new(service_for_test().await, "test-token")
+            .with_tmdb(provider)
+            .with_artwork_dir(artwork_dir);
+
+        let items: Vec<MediaSummary> = (0..20)
+            .map(|index| MediaSummary {
+                id: format!("m{index}"),
+                ..summary_for_test()
+            })
+            .collect();
+        let enriched = enrich_artwork(&state, items).await;
+        assert_eq!(enriched.len(), 20, "no item may be dropped or truncated");
+        let with_art = enriched
+            .iter()
+            .filter(|item| !item.artwork.is_empty())
+            .count();
+        assert_eq!(with_art, MAX_ENRICH_PER_REQUEST);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

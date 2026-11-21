@@ -272,11 +272,16 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
         }
         if declared.is_empty() || has_executable_file(&declared) {
             // Task-only removal: no file bytes exist, so delete_files=false.
-            let _ = self.api.remove(&hash, false);
+            // Fail closed either way, but surface a lingering paused task.
+            if let Err(error) = self.api.remove(&hash, false) {
+                tracing::warn!(hash = %hash, %error, "rejected torrent task could not be removed; it may remain paused in qB");
+            }
             return Err(AcquireError::Rejected);
         }
         self.api.resume(&hash).map_err(|_| {
-            let _ = self.api.remove(&hash, false);
+            if let Err(error) = self.api.remove(&hash, false) {
+                tracing::warn!(hash = %hash, %error, "failed torrent task could not be removed; it may remain paused in qB");
+            }
             AcquireError::Backend
         })?;
 

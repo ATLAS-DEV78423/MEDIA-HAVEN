@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { TmdbAttribution } from "@/components/cards/TmdbAttribution";
 import { Icon } from "@/components/ui/Icon";
 import { buttonClass } from "@/components/ui/Controls";
-import type { Media } from "@/data/catalog";
+import { artFor, type Media } from "@/data/catalog";
 import { useAppState } from "@/state/AppState";
 import styles from "./hero.module.css";
 
@@ -59,6 +59,12 @@ export function Hero({ slides }: { slides: Media[] }) {
             draggable={false}
             decoding="async"
             fetchPriority={slideIndex === 0 ? "high" : "low"}
+            onError={(event) => {
+              const image = event.currentTarget;
+              if (image.dataset.artFallback) return;
+              image.dataset.artFallback = "true";
+              image.src = artFor(slide.id, slide.title).hero;
+            }}
           />
         ))}
         <div className={styles.scrimTop} />

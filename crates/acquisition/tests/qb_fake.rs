@@ -189,6 +189,79 @@ fn add_resolves_a_bare_dot_torrent_by_the_info_diff() {
 }
 
 #[test]
+fn add_no_diff_resolves_only_by_exact_magnet_uri() {
+    let (listener, base) = loopback();
+    let info = r#"[{"hash":"present-hash","magnet_uri":"magnet:?xt=urn:btih:MATCH","state":"downloading","progress":1.0}]"#;
+    let handle = serve(
+        listener,
+        vec![
+            LOGIN,
+            Scripted {
+                status: "200 OK",
+                body: info,
+                set_cookie: None,
+            },
+            OK,
+            Scripted {
+                status: "200 OK",
+                body: info,
+                set_cookie: None,
+            },
+            Scripted {
+                status: "200 OK",
+                body: info,
+                set_cookie: None,
+            },
+        ],
+    );
+
+    let client = QbClient::new(&base, "admin", "secret").unwrap();
+    // No hash diff (torrent already present); the exact magnet URI identifies it.
+    let hash = client
+        .add("magnet:?xt=urn:btih:MATCH", "/downloads")
+        .unwrap();
+    handle.join().unwrap();
+    assert_eq!(hash, "present-hash");
+}
+
+#[test]
+fn add_no_diff_rejects_an_unrelated_lone_torrent() {
+    let (listener, base) = loopback();
+    let info = r#"[{"hash":"unrelated-hash","magnet_uri":"magnet:?xt=urn:btih:OTHER","state":"downloading","progress":1.0}]"#;
+    let handle = serve(
+        listener,
+        vec![
+            LOGIN,
+            Scripted {
+                status: "200 OK",
+                body: info,
+                set_cookie: None,
+            },
+            OK,
+            Scripted {
+                status: "200 OK",
+                body: info,
+                set_cookie: None,
+            },
+            Scripted {
+                status: "200 OK",
+                body: info,
+                set_cookie: None,
+            },
+        ],
+    );
+
+    let client = QbClient::new(&base, "admin", "secret").unwrap();
+    // The only torrent in qB is a different magnet: must fail closed, never
+    // resume an unrelated task just because it is the lone row.
+    let error = client
+        .add("magnet:?xt=urn:btih:WANTED", "/downloads")
+        .unwrap_err();
+    handle.join().unwrap();
+    assert_eq!(error, QbError::NotFound);
+}
+
+#[test]
 fn remove_passes_delete_files_only_when_asked() {
     let (listener, base) = loopback();
     let handle = serve(listener, vec![LOGIN, OK, OK]);
