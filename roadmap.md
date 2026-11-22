@@ -1803,6 +1803,7 @@ approved requirement and a spec update.
 | O-07 | Whether to reuse an existing Docker Desktop engine instead of a dedicated distro | **Decided 2026-11-18** — no reuse; the product ships its own dedicated distro | Isolation vs install friction | Detection still reported to the user, never silent | Before CP-0 |
 | O-08 | Installer signing certificate | **Decided 2026-11-20** — ship unsigned in v1, publish the SmartScreen caveat; a signed build needs a future human budget decision (ADR-0016) | Trust/SmartScreen | Document caveat at P7-03 | Before P7-01 |
 | O-09 | libmpv LGPL vs GPL build | **Decided 2026-11-18** — LGPL build (ADR-0002 acceptance record) | **Project licence compatibility** | Confirm the shipped artefact really is LGPL-configured | Before CP-0 |
+| O-10 | Source discovery with operator confirmation | **Proposed 2026-11-21 (ADR-0024, minimal-change variant)** — host-side Torznab search → ranked top-N → user picks → existing `source_set`; no core/network/schema/gate change; would supersede ADR-0021's no-discovery clause and amend ADR-0018 §5 | Legal gate + one HTTP/Torznab client dependency approval | Human accepts ADR-0024 and the legal/dependency gates; TMDB catalog deferred to ADR-0023/P6-07 | Before any discovery work starts |
 
 **Rule:** an agent may propose options for any `O-*` item and must record the
 proposal in `docs/decisions/`. An agent may not mark one accepted. Only the

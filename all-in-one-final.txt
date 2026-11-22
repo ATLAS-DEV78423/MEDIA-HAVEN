@@ -1,0 +1,1000 @@
+================================================================================
+                         M E D I A _ H A V E N
+                    ALL-IN-ONE FINAL DOCUMENTATION
+================================================================================
+
+Version of this compilation: 2026-11-22
+Repository: https://github.com/ATLAS-DEV78423/MEDIA-HAVEN
+Product identity: MEDIA_HAVEN (decided by ADR-0016)
+Package identifier: com.mediahaven.desktop
+Application version: 0.1.0
+Licence: MIT (see LICENSE)
+
+--------------------------------------------------------------------------------
+READ THIS FIRST - HONEST STATUS
+--------------------------------------------------------------------------------
+
+MEDIA_HAVEN is a FUNCTIONAL PROTOTYPE. It is not a released product and no
+roadmap checkpoint (CP-0 through CP-7) has passed. The React interface, the Rust
+backend, the Tauri host, the SQLite persistence layer and the automated test
+suites run today. Several end-to-end behaviours - real video playback, the
+running Docker boundary, live metadata/provider requests, and a clean-VM
+install - remain NOT RUN. No GitHub Release has been published and no installer
+has been publicly distributed.
+
+Throughout this document:
+  PASS      = observed and recorded in progress.md
+  NOT RUN   = specified and coded where noted, but not actually executed
+  Proposed  = a design decision that has NOT been accepted by the human owner
+
+Source-of-truth order when documents disagree:
+  1. This file for a plain-language overview
+  2. Development.md  - the binding product and engineering contract
+  3. roadmap.md      - approved sequencing and acceptance criteria
+  4. progress.md     - what was actually observed, with PASS / NOT RUN evidence
+  5. docs/           - architecture, ADRs, security, design, testing, operations
+
+Use of this software is intended ONLY for media the operator owns or is
+authorised to download and distribute. No trackers, indexers, content catalogues
+or instructions for unlawful acquisition are bundled, and none may be added.
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS
+--------------------------------------------------------------------------------
+
+PART 1 - HOW EVERYTHING WORKS
+  1.1  The one-sentence mental model
+  1.2  System shape
+  1.3  The deciding/pixels split
+  1.4  Startup, shutdown and failure behaviour
+  1.5  Data flows (setup, library, playback, prefetch, cleanup)
+  1.6  Security and privacy model
+  1.7  Technology stack
+
+PART 2 - FILE STRUCTURE, SPECIAL FEATURES, AND WHY CHOOSE US
+  2.1  Repository map
+  2.2  What is in the box today
+  2.3  What makes MEDIA_HAVEN different
+  2.4  Why choose MEDIA_HAVEN
+  2.5  Design and accessibility commitments
+
+PART 3 - WHAT WE REQUIRE FROM YOU
+  3.1  Hard requirements
+  3.2  Recommended hardware
+  3.3  What you must provide
+  3.4  What you must approve
+  3.5  What we explicitly do NOT require
+  3.6  Your responsibilities
+
+PART 4 - INSTALLATION AND FIRST USE
+  4.1  Path A - end-user installer (intended flow; not yet published)
+  4.2  Path B - run from source today (verified contributor path)
+  4.3  The nine-step first-run experience
+  4.4  Adding media and starting to watch
+  4.5  Verification commands
+  4.6  Troubleshooting and recovery
+  4.7  Uninstall
+  4.8  Quick command reference
+
+PART 5 - REFERENCE
+  5.1  Document map
+  5.2  Architecture decision records
+  5.3  Evidence ledger - PASS and NOT RUN
+  5.4  Glossary
+  5.5  Legal and third-party notices
+
+================================================================================
+PART 1 - HOW EVERYTHING WORKS
+================================================================================
+
+1.1 THE ONE-SENTENCE MENTAL MODEL
+----------------------------------
+
+MEDIA_HAVEN turns a spare Windows laptop connected to a TV into a local media
+appliance: you point it at folders you already own, it indexes and presents them
+in a full-screen TV-style interface, and it plays them on that same machine -
+with no account, no cloud, no subscription and no deletion of your source files.
+
+Everything that DECIDES, STORES, AUTHORISES or PARSES UNTRUSTED BYTES runs inside
+a mandatory Docker boundary. Only the final step - turning already-authorised
+bytes into pixels and sound - runs on the Windows host.
+
+1.2 SYSTEM SHAPE
+-----------------
+
+  Windows 11 laptop / TV via HDMI
+  +--------------------------------------------------------------------------+
+  | Windows host                                                             |
+  |   Tauri 2 shell                                                          |
+  |    +-- React 19 / TypeScript UI (WebView2), full-screen TV interface     |
+  |    +-- Named product commands (validated, typed; no Docker access)       |
+  |    +-- Runtime supervisor (starts/stops only the containers it owns)     |
+  |    +-- Windows playback component (mpv via JSON IPC - host-side)         |
+  |               |                                                         |
+  |               |  one host/container API boundary                         |
+  |               |  loopback only, per-install bearer token + HMAC-SHA256   |
+  +---------------+----------------------------------------------------------+
+                  |
+                  v
+  +--------------------------------------------------------------------------+
+  | Required Docker / Compose workspace (internal; invisible to the user)    |
+  |   core  - Rust backend: product rules, API, SQLite, jobs, storage policy |
+  |   probe - isolated, networkless media inspection (only untrusted parser) |
+  +---------------+----------------------------------------------------------+
+                  |
+                  |  narrowly selected, per-root, READ-ONLY mounts
+                  v
+      user-selected original media folders (never modified by the app)
+
+Containers are an internal implementation detail. There is exactly ONE product
+surface: one window, one navigation model, one library. The user never sees a
+container dashboard, a media-server UI, or a terminal.
+
+1.3 THE DECIDING / PIXELS SPLIT
+--------------------------------
+
+This is the architectural idea that explains every other choice.
+
+Runs in Docker `core` (the authority):
+  - Library records, watch history, resume positions, queue and watchlist
+  - All product policy: what is playable, what is deletable, what is verified
+  - SQLite persistence, migrations, storage budgets and job orchestration
+  - The signed HTTP API consumed by the UI
+
+Runs in Docker `probe` (the quarantine):
+  - ffprobe metadata extraction, thumbnails and trickplay generation
+  - The ONLY component that opens untrusted media bytes
+  - Distinct non-root UID, read-only root filesystem, size-capped tmpfs,
+    no credentials, no database handle, no gateway and no outbound network
+
+Runs on the Windows host (the presentation):
+  - Native window, compositor, input and lifecycle
+  - The playback engine: the GPU, audio endpoint and vsync exist only here;
+    WSL2 offers no cross-vendor hardware video-decode path (ADR-0002)
+  - The supervisor that drives the Docker CLI inside the WSL2 distro
+
+Why this matters: if the UI is tricked into displaying something, the backend
+has already validated it. The frontend never enforces a security rule, never
+computes completion, never decides what may be deleted, and never receives a
+raw filesystem path it could act on.
+
+1.4 STARTUP, SHUTDOWN AND FAILURE BEHAVIOUR
+-------------------------------------------
+
+Startup:
+  1. Read and validate configuration. On failure: quarantine, load defaults,
+     warn, continue.
+  2. Open SQLite; take a backup before pending migrations; on failure enter
+     recovery state.
+  3. Reconcile durable state through the required backend when ready.
+  4. Detect the supported Docker-compatible runtime read-only. If absent or
+     unhealthy: keep the UI available in recovery mode; backend-dependent
+     features stay unavailable. There is NO host-side backend fallback.
+  5. Start the workspace only through the approved supervisor lifecycle.
+
+Shutdown:
+  1. Persist playback position and queue state transactionally.
+  2. Stop services this session started, in reverse order, with a bounded
+     timeout. The supervisor uses `compose stop`, never `compose down`, so a
+     mistaken exit cannot remove a volume.
+  3. Close the database cleanly, flush logs, exit with no orphaned children.
+
+Failure handling (designed):
+  Corrupt config       -> quarantine, defaults, warn
+  Failed migration     -> roll back, keep backup, recovery state, no data loss
+  Player crash         -> surface error, offer retry, never mark complete
+  Runtime unavailable  -> recovery UI, backend features off, no bypass
+  Disk full            -> refuse the write, keep prior state intact, warn
+  Power loss           -> recover to last consistent state on next start
+
+There is no autostart service. A media application has no business running when
+nobody is watching.
+
+1.5 DATA FLOWS
+---------------
+
+(a) First run / preflight
+    A read-only PowerShell script reports Windows edition/build, architecture,
+    RAM, CPU, GPU, free disk, virtualisation capability, Docker/WSL2 presence
+    and networking mode, WSL2 mirrored-mode blocking, shared-runtime detection,
+    port availability, WebView2 presence and existing app data. It installs
+    nothing, enables no Windows feature, edits no firewall rule and never asks
+    for administrator rights. Nothing is written until the final confirmation.
+
+(b) Library scan
+    The user selects specific folders. One root = one read-only bind mount
+    (/media/root-0, /media/root-1, ...). Roots that are drive roots, reparse
+    points, missing paths, duplicates or nested inside another root are refused
+    before any mount is emitted. Paths are containment-checked twice (lexically
+    and after canonicalisation); the read-only mount is the third layer.
+    Scanning never moves, renames or deletes original media, and never scans
+    the whole profile, Desktop, Documents or all drives by default.
+
+(c) Browsing the library
+    UI asks for shelves via a typed command -> command validates arguments ->
+    application use case queries the repository port -> SQLite adapter runs
+    indexed queries -> DTOs are assembled -> UI renders and lazily loads
+    artwork. The UI never receives an actionable filesystem path.
+
+(d) Playback, resume and completion
+    The backend remains the authority for what may play. The host resolves the
+    playback source from the media id only - no path or token is placed in the
+    renderer (ADR-0015). Resume checkpoints are persisted. A single seek-to-end
+    event does not mark an item watched; completion uses multi-signal rules and
+    preserves progress on crash. Stopping early never triggers deletion.
+
+(e) Acquisition and rolling two-episode buffer (shipped code; live run NOT RUN)
+    For lawfully sourced media only: the operator attaches a magnet or .torrent
+    to an item on its Details screen (ADR-0021). A qBittorrent sandbox runs on
+    an egress-only Docker network with no published port; its control API is
+    loopback-only and uses secret-store credentials. A verified download is
+    playable only when it is tied to a media_id AND passes both the file
+    inspection probe and a Windows Defender (MpCmdRun) gate. A NULL
+    verification is never treated as an allow. While an episode plays, the next
+    two episodes are prepared in the background under a 20 GiB cap. No tracker,
+    indexer or catalogue is bundled.
+
+(f) Cleanup (fail-safe by design)
+    1. UI requests a PREVIEW.
+    2. Backend enumerates candidates and applies exclusions: source media,
+       currently playing, unfinished, unverified, outside root.
+    3. UI shows exact paths and counts.
+    4. User confirms explicitly.
+    5. An audit event is written; the file is staged to managed trash and
+       verified. For downloaded media, deletion is delegated to qBittorrent,
+       not performed by `core` (which only has a read-only download mount).
+    6. A zero-file result is reported as `failed`, never as success.
+    There is no code path from "watched" to "deleted" that skips these steps.
+
+1.6 SECURITY AND PRIVACY MODEL
+-------------------------------
+
+Local-first by construction:
+  - No account, no subscription, no telemetry, no mandatory paid API.
+  - No library data leaves the machine without explicit opt-in.
+  - One loopback-only API port with a per-install random token and HMAC
+    request signing (ADR-0005). No cookies, no permissive CORS.
+  - Docker socket is never mounted into a workload container; no privileged
+    containers; all Linux capabilities dropped; no-new-privileges enforced.
+  - Distinct non-root UIDs for core and probe; read-only root filesystems;
+    explicit tmpfs and named volumes; CPU/memory/PID limits.
+  - WSL2 must stay in NAT networking mode. Mirrored mode is a preflight failure
+    because it would make the published port reachable from the LAN.
+  - Secrets live in Windows Credential Manager, never in source, logs or DTOs.
+  - Diagnostic exports redact tokens, passwords, private URLs and personal
+    paths. Media is never executed, and file type is not trusted from the
+    extension alone.
+
+Honest limits (documented, not hidden):
+  - Docker is a process/filesystem boundary, not a security guarantee.
+  - A WSL2 kernel exploit defeats the container boundary.
+  - The WSL2 filesystem is readable and writable from Windows via \\wsl$, so a
+    named volume is not a secret store and is not confidential against the
+    same Windows user. No secret is stored there.
+  - AppArmor is NOT available on the WSL2 kernel (observed). Seccomp and cgroup
+    namespaces remain; probe's networkless design carries the weight.
+  - There is no kernel-enforced storage quota on volumes; budgets are enforced
+    in application policy instead.
+
+Optional external data (all off by default):
+  - Local NFO sidecars are read beside media. TMDB is the primary network
+    provider when the operator opts in (ADR-0011).
+  - Offline IMDb ratings/age ratings read operator-supplied TSVs locally
+    (ADR-0022, Proposed). Zero file reads when off. The only lookup key is an
+    IMDb id; no path, folder name or library content is sent.
+  - OMDb age ratings are off by default and unwired in this build; enabling
+    later requires an operator-supplied key and its own ADR.
+  - In the current build the IMDb and OMDb switches are visibly disabled and
+    labelled "Not available" - no backend command exists to flip them.
+
+1.7 TECHNOLOGY STACK
+---------------------
+
+  Frontend        React 19 + TypeScript + Vite 7 + React Router 7
+  Shell           Tauri 2 (Windows), WebView2
+  Backend         Rust (async Tokio, Axum), compiled into `core`
+  Persistence     SQLite via SQLx, in the `core-data` named volume
+  Isolation       Docker Engine / Compose on Windows with WSL2 (NAT mode)
+  Inspection      ffprobe in the networkless `probe` container
+  Downloader      qBittorrent sandbox (optional, lawful sources only)
+  Playback        Windows host component, mpv via JSON IPC (engine provisional)
+  Toolchain       Rust 1.99.0 pinned in CI; Node >= 22
+  Testing         cargo test / clippy / fmt; Vitest; ESLint; Playwright;
+                  token and bundle guards; dependency-graph and route-parity
+                  contract checks
+
+================================================================================
+PART 2 - FILE STRUCTURE, SPECIAL FEATURES, AND WHY CHOOSE US
+================================================================================
+
+2.1 REPOSITORY MAP
+-------------------
+
+  MEDIA-HAVEN/
+  |
+  +-- AGENTS.md                    Contributor contract; what needs permission
+  +-- Development.md               BINDING product + engineering specification
+  +-- roadmap.md                   8 phases, 8 checkpoints, open decisions
+  +-- progress.md                  Observed state, evidence and handover
+  +-- CHANGELOG.md                 Shipped features and honest limitations
+  +-- PRODUCT.md                   Product definition, positioning, UX contract
+  +-- README.md                    Short entry point
+  +-- SECURITY.md / CONTRIBUTING.md / LICENSE
+  +-- all-in-one-final.txt         This document
+  +-- Cargo.toml / Cargo.lock      Rust workspace (10 members), pinned versions
+  +-- rust-toolchain.toml
+  |
+  +-- apps/desktop/                THE PRODUCT SURFACE (one window)
+  |   +-- src/                     React UI: pages, components, hooks, services
+  |   |   +-- pages/               Home, Movies, Shows, Anime, Details, Player,
+  |   |   |                       Library, Watchlist, Downloads, Search,
+  |   |   |                       Settings, Setup, Profiles
+  |   |   +-- components/          nav, hero, cards, shelf, browse, UI primitives
+  |   |   +-- hooks/               useSpatialFocus - geometry-based arrow focus
+  |   |   +-- services/            api.ts (only network boundary; HMAC signing),
+  |   |   |                       types (DTOs), adapt (view model)
+  |   |   +-- state/               AppState provider (server snapshot + prefs)
+  |   |   +-- styles/              tokens.css = the ONLY colour/spacing literals
+  |   |   +-- data/                View-model types, deterministic artwork map
+  |   +-- src-tauri/               Rust host: named commands, supervisor, mounts
+  |   |   +-- src/mounts.rs        Per-root read-only mount rendering + refusals
+  |   +-- scripts/                 check-tokens.mjs, check-bundle.mjs
+  |   +-- package.json             npm scripts and pinned frontend dependencies
+  |
+  +-- crates/                      THE RULES (all product policy lives here)
+  |   +-- app-core/                domain (no I/O), application use cases, ports
+  |   +-- persistence/             SQLite queries, migrations, transactions
+  |   +-- media-library/           Safe scanning, roots, containment, indexing
+  |   +-- metadata/                Provider adapters and local cache
+  |   +-- acquisition/             qBittorrent boundary, buffer, cleanup policy
+  |   +-- playback/                Playback/completion state and player adapter
+  |   +-- contract/                Typed command/DTO contract + route parity
+  |   +-- core/                    The backend binary deployed in `core`
+  |   +-- diagnostics/             Health snapshot, redacted bundle export
+  |
+  +-- infrastructure/
+  |   +-- containers/
+  |   |   +-- compose.yaml         The required core/probe workspace
+  |   +-- packaging/windows/
+  |       +-- build.ps1            Unsigned per-user NSIS build + SHA-256
+  |       +-- collect_licenses.py  Offline third-party notice generation
+  |       +-- THIRD_PARTY_NOTICES.md
+  |       +-- sbom/README.md       SBOM procedure (NOT RUN)
+  |
+  +-- scripts/windows/preflight.ps1    Read-only compatibility checks
+  +-- docs/
+  |   +-- architecture/            overview, process model, docker workspace
+  |   +-- decisions/               ADR-0001 ... ADR-0024 (no ADR-0020 exists)
+  |   +-- design/                  design-system.md, navigation-spec.md
+  |   +-- security/                threat model, Compose checklist, evidence
+  |   +-- setup/first-run.md       First-run flow and preflight rationale
+  |   +-- testing/                 test matrix, frontend evidence, gaps
+  |   +-- operations/              backup/recovery/uninstall, release, privacy
+  +-- tests/                       Integration, e2e, security, fixtures
+  +-- .github/workflows/           ci.yml; release.yml (artifacts only)
+
+Dependency direction is INWARD ONLY: domain depends on nothing; application
+depends on ports; adapters depend on the inner layers. A container SDK or a
+player SDK appearing in `domain` is an architectural defect, enforced by
+`tests/dependency_graph.sh` in CI.
+
+2.2 WHAT IS IN THE BOX TODAY
+-----------------------------
+
+  SHIPPED CODE (gates recorded in progress.md):
+  - Full TV-style React interface with Home, Movies, Shows, Details, Player,
+    Library, Watchlist, Search, Downloads, Settings, Setup and Profiles screens
+  - Library scan and indexing of user-selected folders; movies, series,
+    episodes, search, sorting and filtering
+  - SQLite persistence, versioned migrations and backup-before-migration
+  - Durable queue and Up Next, resume checkpoints and completion tracking
+  - Watchlist: manual order, works offline, missing files shown as unavailable
+  - Profiles (stored in backend settings)
+  - Full arrow / Enter / Escape keyboard navigation with focus restoration
+  - Offline IMDb metadata plumbing (ADR-0022 Proposed): opt-in via
+    MEDIAHAVEN_IMDB_DIR, signed /host/imdb_lookup, card + Details attribution
+  - Authorized-media acquisition: qBittorrent sandbox, user-supplied
+    magnet/.torrent, rolling two-episode buffer with a 20 GiB cap
+  - Fail-closed probe + Windows Defender gates on detail() and playback_start
+  - R-01 per-item source mapping via the existing source_set command chain
+  - Read-only preflight script and documented first-run flow
+  - Container workspace definition with digest-pinned images and hard limits
+  - Unsigned per-user Windows NSIS installer built locally (v0.1.0, x64,
+    ~3.60 MiB) with SHA-256 checksums and third-party notices
+  - Automated tests: 122 Rust tests passed in the final review wave; 18 Vitest
+    tests; 66 files checked for token compliance with 0 violations
+
+  NOT RUN (do not treat as verified):
+  - Real video playback with an actual engine and real media
+  - The running container boundary (Docker/WSL2 needs explicit consent)
+  - Live TMDB / IMDb / OMDb provider requests
+  - Live acquisition, live search, real cleanup with lawful media
+  - A clean-VM install, uninstall behaviour against a built installer
+  - Second-machine LAN reachability tests, SBOM generation, all CP sign-offs
+  - The every-screen automated keyboard walkthrough
+
+2.3 WHAT MAKES MEDIA_HAVEN DIFFERENT
+-------------------------------------
+
+These are deliberate design commitments, not marketing claims. Each one has a
+concrete implementation or an ADR behind it.
+
+  1. LOCAL-FIRST, NOT CLOUD-FIRST
+     Your library, watch history and preferences stay on your machine. No
+     account, no sync, no telemetry, no device registration.
+
+  2. NO AI AT RUNTIME
+     AI may help build and set up the product. After setup the application needs
+     no AI model, API key or agent. It works fully offline (Development.md #1.3).
+
+  3. A REAL TRUST BOUNDARY FOR UNTRUSTED FILES
+     File-format parsers are the highest-risk code in any media app. Only `probe`
+     opens untrusted bytes, with no credentials, no database, no network and a
+     throwaway filesystem. A compromise has nowhere to go.
+
+  4. READ-ONLY BY DEFAULT, EVERYWHERE
+     Your original folders are mounted :ro into containers. A path-traversal bug
+     in the backend can at worst disclose files inside a root you chose - it
+     cannot damage your library. The app never deletes source media.
+
+  5. DESTRUCTIVE ACTIONS REQUIRE A PREVIEW AND A HUMAN
+     Cleanup enumerates exact paths and counts, shows them, waits for explicit
+     confirmation, stages to trash, writes an audit event and verifies. A zero
+     deletion is reported as a failure. There is no watched-to-deleted shortcut.
+
+  6. FAIL-CLOSED DOWNLOADED-MEDIA GATES
+     A downloaded file is playable only when tied to a media_id AND both the
+     probe and Windows Defender report Clean. Missing verification is a denial,
+     never an implicit allow.
+
+  7. CONTENT-SOURCE NEUTRAL
+     No bundled trackers, indexers, catalogues or "where to download" guidance.
+     The operator supplies the source; MEDIA_HAVEN manages what they lawfully
+     have. The proposed search variant (ADR-0024) still requires an
+     operator-supplied endpoint and an operator confirmation.
+
+  8. INFRASTRUCTURE YOU NEVER SEE
+     Docker is mandatory but completely hidden. No second dashboard, no terminal
+     commands, no container concepts in the UI. The supervisor starts and stops
+     only what it owns, and uses `stop` instead of `down` to protect volumes.
+
+  9. INDEPENDENT FROM PROPRIETARY RUNTIME LICENCES
+     The proposed runtime is Docker Engine in a dedicated WSL2 distro rather
+     than Docker Desktop, avoiding a paid-subscription cliff and an unrelated
+     shared daemon. (Distribution is Proposed; the mandatory boundary is accepted.)
+
+ 10. TV DISTANCE IS A FIRST-CLASS REQUIREMENT
+     No essential text below 16 CSS px in TV mode, deterministic spatial focus,
+     tabular numerals for times, focus that never relies on colour alone,
+     reduced-motion support, and no autoplaying trailers on focus.
+
+ 11. HONEST REPORTING AS A CULTURE
+     NOT RUN is a distinct result from PASS. An unexecuted plan stays a plan; a
+     Proposed ADR is never treated as approved. progress.md records what was
+     actually observed.
+
+ 12. SMALL, EXPLAINABLE WORKSPACE
+     Two containers, each with one job. SQLite is a file, not a network service.
+     Playback stays on the host for GPU/audio/vsync reasons. Every extra service
+     needs a measured need and an ADR.
+
+2.4 WHY CHOOSE MEDIA_HAVEN
+---------------------------
+
+  If you want a streaming service -> this is the opposite: it is your own
+  appliance for media you already own, with no account and no monthly fee.
+
+  If you want a general media server -> MEDIA_HAVEN deliberately does one thing:
+  a single, excellent, couch-usable local experience on the laptop plugged into
+  your TV. No LAN streaming, no phone app, no multi-user server; those are
+  deferred until the local appliance is dependable.
+
+  If you have been assembling scripts and containers yourself -> the hard parts
+  are already decided and documented: safe roots, read-only mounts, per-install
+  credentials, HMAC signing, fail-closed verification, preview-before-delete,
+  bounded cleanup and redacted diagnostics.
+
+  If you care about privacy -> there is no telemetry path by default, no
+  mandatory provider, and the optional ones disclose exactly what leaves the
+  machine (title/year for search; an IMDb id for ratings).
+
+  If you care about your files -> the application can remove a library root
+  without deleting a single original file. Cleanup never touches source media,
+  unfinished items, currently playing items or unverified downloads.
+
+  If you care about maintainability -> one codebase, inward-only dependencies,
+  a frozen typed command contract, contract-drift guards in CI, and ADRs that
+  record why each boundary exists.
+
+  The honest caveat: this is a prototype. Choose it if you want to follow or
+  contribute to a carefully engineered local-first media appliance. Do not
+  choose it today if you require a verified, supported, signed, one-click
+  consumer product - those gates are still open.
+
+2.5 DESIGN AND ACCESSIBILITY COMMITMENTS
+-----------------------------------------
+
+  - Near-black ground, centred floating glass navigation, full-bleed cinematic
+    hero, landscape Up Next cards and quiet surfaces so artwork carries colour.
+  - Tokens only: no literal colour or spacing outside styles/tokens.css,
+    enforced in CI by `npm run check:tokens` (66 files, 0 violations observed).
+  - Motion is a signal: focus ~140 ms, overlays ~180 ms, hero ~240 ms;
+    prefers-reduced-motion zeroes non-essential motion; nothing autoplays on
+    focus.
+  - Exactly one focused element; deterministic spatial focus; shelf edge
+    clamping; column preservation between shelves; Escape unwinds one overlay
+    level and restores focus to the originating element.
+  - WCAG AA contrast for text over actual rendered artwork; focus always
+    visible and never colour-only; complete keyboard-only path on every screen.
+  - Full-bleed TV layout plus laptop and narrow-window breakpoints; no per-screen
+    colour or spacing inventions.
+
+================================================================================
+PART 3 - WHAT WE REQUIRE FROM YOU
+================================================================================
+
+3.1 HARD REQUIREMENTS
+----------------------
+
+  - Windows 11 x64. Windows 10 x64 and ARM64 are NOT claimed until tested
+    (roadmap O-02). The preflight reports what it finds; below the supported
+    build it warns rather than silently pretending support.
+  - A Docker Engine-compatible runtime for any backend-dependent feature. The
+    backend and media-inspection workloads run in containers; there is no
+    host-side backend fallback. The app detects the runtime read-only and asks
+    before using an existing shared engine. It never silently installs one.
+  - WSL2 in its default NAT networking mode. A mirrored .wslconfig is a blocking
+    preflight condition because it would expose the API port to the LAN.
+  - WebView2 (present on Windows 11; the preflight gives an actionable message
+    with the official installer link if missing).
+  - Enough RAM to carry Windows + the WSL2 VM + core + probe + playback. 8 GB is
+    the entry CANDIDATE; 4 GB is explicitly NOT a support target.
+  - Free disk space on the drive chosen for managed storage and on the media
+    drive. Storage budgets are enforced in application policy.
+  - Media you own or are authorised to use. For any download feature, you must
+    supply your own lawful source; nothing is bundled.
+
+3.2 RECOMMENDED HARDWARE
+-------------------------
+
+  Tier                RAM       Status (all UNTESTED as support claims)
+  ------------------  --------  --------------------------------------------
+  Minimum experiment  4 GB      Not a support target
+  Entry               8 GB      Candidate: library + playback; optional
+                               services only after measurement
+  Recommended         16 GB     Candidate: full MVP experience
+  Higher              32 GB+    Candidate for heavier workloads; no headless
+                               or streaming claim
+
+  A reference development machine observed: Windows 11 Pro build 26300,
+  16 GB RAM, Intel i7-13700H (14C/20T), Iris Xe, Docker Engine 29.9.3 on WSL2
+  with an 8 GB VM cap and no AppArmor. These are baseline measurements, not a
+  published minimum specification.
+
+3.3 WHAT YOU MUST PROVIDE
+--------------------------
+
+  - One or more specific media folders. The app will not scan your whole
+    profile, Desktop, Documents or all drives by default.
+  - A managed-storage location for app data, staging, cache and (if used)
+    downloaded media. It may be a different drive.
+  - Explicit consent before any host change: runtime provisioning, WSL2 or
+    virtualisation enablement, administrator elevation, firewall changes, or
+    reuse of an existing shared container engine. Setup will not do these
+    silently; declining is always a clean abort.
+  - A human decision on Proposed ADRs before their features are relied on
+    (IMDb ADR-0022, TMDB artwork ADR-0023, source discovery ADR-0024).
+  - For building from source: Node >= 22 with npm, Rust 1.99.0 with rustfmt and
+    clippy, the local Tauri CLI, and approved network access for `npm ci`.
+
+3.4 WHAT YOU MUST APPROVE
+--------------------------
+
+  - The final setup review: exactly what will be created, where, and which
+    runtime/workspace changes will be made. Nothing is written before this.
+  - The first cleanup and any change to deletion policy.
+  - Removal of app data on uninstall (a separate confirmation from removing
+    the application only).
+  - Any optional provider: there is no default-on network or download feature.
+
+3.5 WHAT WE EXPLICITLY DO NOT REQUIRE
+-------------------------------------
+
+  No account, email, phone number, subscription, credit card, paid API, paid
+  VPN, cloud storage, AI service, AI API key, telemetry consent, administrator
+  rights for normal use, Docker Desktop GUI, terminal use, or Docker commands.
+  You never have to open a container dashboard or manage the runtime yourself.
+
+3.6 YOUR RESPONSIBILITIES
+--------------------------
+
+  - Use the software only for media you lawfully possess or are authorised to
+    obtain. MEDIA_HAVEN bundles no content sources and provides no legal advice.
+  - Back up your own source media. The app never modifies it, but it is not a
+    backup tool.
+  - Supply an operator-configured Torznab endpoint and API key yourself if the
+    Proposed discovery feature is ever accepted; no endpoint is bundled.
+  - Keep Windows, WSL2 and the container runtime updated. Docker is a boundary,
+    not a security guarantee.
+  - Verify the SHA-256 checksum of any installer you download against a
+    checksum obtained from a different channel. The v1 build is UNSIGNED;
+    Windows SmartScreen will warn, and that warning must not be hidden.
+
+================================================================================
+PART 4 - INSTALLATION AND FIRST USE
+================================================================================
+
+4.1 PATH A - END-USER INSTALLER (INTENDED FLOW; NOT YET PUBLISHED)
+------------------------------------------------------------------
+
+STATUS: A real unsigned NSIS installer was BUILT and checksummed locally on
+2026-11-21 (v0.1.0, x64, ~3.60 MiB, identifier com.mediahaven.desktop). It is
+gitignored, NOT published as a GitHub Release, and has NOT been tested on a
+clean VM. The steps below describe the intended flow, not a verified consumer
+experience. No installer is available to download from this repository today.
+
+When an installer is published, the steps will be:
+
+  1. Obtain the installer and its SHA256SUMS.txt from the official release
+     source. Do not accept a checksum relayed through the same channel as the
+     binary.
+
+  2. Verify the file on Windows:
+
+       powershell -NoProfile -Command "Get-FileHash -Algorithm SHA256 .\MEDIA_HAVEN_0.1.0_x64-setup.exe"
+
+     Compare the lowercase hash with the line for that filename in
+     SHA256SUMS.txt. `certutil -hashfile <file> SHA256` also works.
+
+  3. Run the installer. It is per-user (NSIS currentUser): it does not require
+     administrator rights and does not install or enable system software.
+
+  4. Expect a SmartScreen "Windows protected your PC" / "unknown publisher"
+     warning on first run. This is expected for the unsigned v1 build. The
+     published guidance is: verify the checksum, then More Info > Run anyway.
+     Do not disable Defender or SmartScreen to make installation easier.
+
+  5. Complete the guided first-run setup described in section 4.3.
+
+  6. Back up the database and configuration before any update. Updates preserve
+     settings and queue and never overwrite user media.
+
+4.2 PATH B - RUN FROM SOURCE TODAY (VERIFIED CONTRIBUTOR PATH)
+---------------------------------------------------------------
+
+This is the path that works in this checkout now. Commands are run from the
+repository root unless stated. It requires Node >= 22, Rust 1.99.0 and approved
+network access for `npm ci`.
+
+  Step 1 - Read-only environment check (changes nothing):
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/preflight.ps1
+
+    Add -Json -MediaPath 'D:\Media' to emit machine-readable output and check
+    free space on a candidate media drive.
+
+  Step 2 - Install frontend dependencies once:
+
+    cd apps/desktop
+    npm ci
+    cd ../..
+
+  Step 3 - Start the backend with a seeded demo library and a local data dir:
+
+    MEDIAHAVEN_DEV=1 MEDIAHAVEN_SEED=1 \
+    MEDIAHAVEN_DATA_DIR="$PWD/.mediahaven-dev" \
+    cargo run -p mediahaven-core
+
+    In a second terminal, start the interface:
+
+    cd apps/desktop && npm run dev
+    # open http://localhost:5173/
+
+    MEDIAHAVEN_DEV=1 uses the documented development-only token. Outside
+    development the service refuses to start without a real
+    MEDIAHAVEN_API_TOKEN of at least 32 characters.
+
+  Step 4 - Or run the real window with the Tauri host:
+
+    cd apps/desktop
+    npm run tauri:dev
+
+    NOTE: the current host exposes only `get_app_info`; the renderer still calls
+    the API over HTTP as in the browser. Do not treat this window as the final
+    production transport. Real playback in this mode is NOT RUN.
+
+  Environment reference:
+
+    MEDIAHAVEN_API_TOKEN     dev token when MEDIAHAVEN_DEV=1; required >=32 chars otherwise
+    MEDIAHAVEN_BIND          default 127.0.0.1:8080
+    MEDIAHAVEN_DATA_DIR      default platform data dir; SQLite location in dev
+    MEDIAHAVEN_SEED          off by default; seeds demo library once
+    VITE_MEDIAHAVEN_API      default http://127.0.0.1:8080
+    VITE_MEDIAHAVEN_TOKEN    dev token in npm run dev
+
+  To build an unsigned installer locally (tools must already be installed;
+  the build script installs and publishes nothing):
+
+    powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure\packaging\windows\build.ps1
+
+  It verifies the Tauri config, runs the frontend build, runs the NSIS bundle,
+  writes SHA256SUMS.txt beside the installer and copies THIRD_PARTY_NOTICES.md.
+  Exit codes: 0 success, 2 config precondition, 3 missing tool, 4 build failure.
+  See docs/operations/release.md for the full runbook and caveats.
+
+4.3 THE NINE-STEP FIRST-RUN EXPERIENCE
+---------------------------------------
+
+  1. WELCOME - what the app does and what it will never do: no uploads, no
+     deletion of your files, no account.
+  2. COMPATIBILITY SUMMARY - preflight results in plain language, grouped as
+     ready / recommended / needs attention.
+  3. MEDIA FOLDERS - pick one or more folders; the app reports how many files
+     were found. Nothing is read until you confirm.
+  4. MANAGED STORAGE - choose where downloads, staging and trash live, with
+     free-space validation. May be on a different drive.
+  5. REQUIRED BACKEND RUNTIME - a plain-language explanation that the backend
+     needs a Docker-compatible runtime, that it runs headlessly with no Docker
+     interface, and that your media is never modified. Every prerequisite and
+     host change is shown; explicit consent is required. Declining leaves
+     backend-dependent features unavailable; there is no fallback.
+  6. OPTIONAL SERVICES - only separately approved providers are listed.
+  7. REVIEW - one summary of exactly what will be created, where, and which
+     runtime/workspace changes will occur.
+  8. CONFIRM - an explicit action. Nothing is written before this point.
+  9. DONE - the library opens only when the required backend is ready;
+     otherwise you get recovery guidance.
+
+  Setup never: installs software, enables WSL2/Hyper-V/virtualisation or any
+  Windows feature, requests administrator rights, changes firewall/proxy/DNS,
+  scans broad personal folders, writes configuration before final confirmation,
+  or pretends the required runtime is optional.
+
+4.4 ADDING MEDIA AND STARTING TO WATCH
+---------------------------------------
+
+  1. Open Settings > Library folders (or the Setup screen on first run) and add
+     a specific folder containing your movies or TV shows.
+  2. Wait for the scan. Only selected folders are read; originals are not
+     changed. Missing/offline files are reported, not silently dropped.
+  3. Go to Home. Continue Watching, Recently Added, Up Next and a deterministic
+     Recommendation shelf are built from local data.
+  4. Browse Movies or TV Shows, or use Search (local library first).
+  5. Open a Details view to see metadata, season chips, episode progress and -
+     for authorized media you supply - the Source field.
+  6. Press Play. Use arrows, Enter, Escape, mouse or a mapped remote/controller.
+     Escape unwinds one overlay level and restores focus.
+  7. Progress and resume position are saved. Stopping early keeps your place.
+  8. Add items to Watchlist from any card or Details view. It keeps your order,
+     works offline, and never deletes media.
+
+  Honest note: in the current prototype the player displays artwork with a
+  simulated 4x clock and labels itself "Playback preview". Real video playback,
+  live provider artwork and live downloads are NOT RUN. Library scanning,
+  persistence, search, watchlist, profiles, sessions and checkpoints are real.
+
+4.5 VERIFICATION COMMANDS
+--------------------------
+
+  Rust:
+
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo test --workspace
+    bash tests/dependency_graph.sh
+
+  Frontend (from apps/desktop):
+
+    npm run typecheck
+    npm run lint
+    npm test
+    npm run check:tokens
+    npm run check:bundle
+    npm run build
+
+  Observed results in the final review wave: Rust gates PASS; 122 Rust tests
+  passed with 0 failed and 1 ignored; 18 Vitest tests across 6 files PASS;
+  66 files scanned by the token check with 0 violations; frontend build 93
+  modules PASS. These are local results - CI and clean-VM runs are NOT RUN.
+
+4.6 TROUBLESHOOTING AND RECOVERY
+--------------------------------
+
+  Symptom: backend-dependent features unavailable
+    The runtime is absent or unhealthy. The UI stays available for diagnostics;
+    use preflight to see which check failed. There is no host fallback.
+
+  Symptom: mirrored WSL2 networking reported as blocking
+    WSL2 mirrored mode makes the instance LAN-reachable. Return to NAT mode.
+    Do not work around this check.
+
+  Symptom: a shared Docker engine is detected
+    The app reports it and asks before use. A dedicated engine is preferred so
+    an unrelated project's `docker compose down` cannot stop our workspace.
+
+  Symptom: port already in use
+    Preflight reports availability. Resolve the conflict on loopback; never
+    publish the API to the LAN or add a netsh portproxy rule.
+
+  Symptom: config corrupt
+    The file is quarantined, defaults are loaded and a warning is shown. The
+    quarantined file is kept for inspection.
+
+  Symptom: migration failed
+    The migration rolls back, the backup is retained and the app enters
+    recovery state. No data is discarded without explicit confirmation.
+
+  Symptom: player crashes
+    The error is surfaced with a retry; the item is NOT marked complete and the
+    resume position is preserved.
+
+  Symptom: download item not playable
+    Both the probe and Windows Defender verifications must be Clean and the item
+    must be tied to a media_id. A missing (NULL) verification is a denial.
+
+  Symptom: setup was interrupted
+    The next launch detects the incomplete state and offers resume or restart.
+    Configuration is never half-applied.
+
+4.7 UNINSTALL
+--------------
+
+  The installer offers two distinct choices:
+
+  - REMOVE APPLICATION ONLY (default): removes program files, shortcuts,
+    services and scheduled tasks. Keeps the database, config, artwork, logs and
+    any managed media so a reinstall resumes where you left off.
+  - REMOVE APPLICATION AND MANAGED DATA: additionally removes app data. It shows
+    the exact paths and requires a separate explicit confirmation.
+
+  It never removes your source media or a folder you selected as a library root.
+  It never uninstalls WSL2, Docker Desktop or a shared runtime that other
+  applications may depend on. If MEDIA_HAVEN owns a dedicated distro or volume,
+  removing it is a separate confirmed action after a verified backup.
+
+  NOTE: uninstall behaviour against the built installer is NOT RUN (P7-02).
+
+4.8 QUICK COMMAND REFERENCE
+----------------------------
+
+  Read-only preflight
+    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/preflight.ps1
+
+  Dev backend + UI
+    MEDIAHAVEN_DEV=1 MEDIAHAVEN_SEED=1 MEDIAHAVEN_DATA_DIR="$PWD/.mediahaven-dev" cargo run -p mediahaven-core
+    cd apps/desktop && npm run dev
+
+  Real Tauri window
+    cd apps/desktop && npm run tauri:dev
+
+  All quality gates
+    cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+    (in apps/desktop) npm run typecheck && npm run lint && npm test && npm run check:tokens && npm run check:bundle && npm run build
+
+  Unsigned installer build
+    powershell -NoProfile -ExecutionPolicy Bypass -File infrastructure\packaging\windows\build.ps1
+
+  Compose parse-only check (no engine needed)
+    MEDIAHAVEN_CORE_IMAGE="example/core@sha256:<64 zeroes>" \
+    MEDIAHAVEN_PROBE_IMAGE="example/probe@sha256:<64 ones>" \
+    MEDIAHAVEN_API_PORT=18081 MEDIAHAVEN_API_TOKEN=placeholder \
+      docker compose -f infrastructure/containers/compose.yaml config --quiet
+
+  `docker compose up` is NOT a supported entry point. The Windows supervisor
+  owns the lifecycle, token provisioning and per-root mount rendering.
+
+================================================================================
+PART 5 - REFERENCE
+================================================================================
+
+5.1 DOCUMENT MAP
+-----------------
+
+  Start here            this file (all-in-one-final.txt)
+  Binding contract      Development.md
+  Sequencing            roadmap.md (phases, checkpoints, open decisions)
+  Observed evidence     progress.md (PASS / NOT RUN, handover)
+  Change summary        CHANGELOG.md
+  Contributors          AGENTS.md, CONTRIBUTING.md
+  Product definition    PRODUCT.md
+  Architecture          docs/architecture/{overview,process-model,docker-workspace}.md
+  Decisions             docs/decisions/ (ADR index in README.md there)
+  Design                docs/design/{design-system,navigation-spec}.md
+  Security              docs/security/{threat-model,compose-security-checklist,boundary-evidence,socket-inventory}.md
+  Setup                 docs/setup/first-run.md
+  Testing               docs/testing/{test-matrix,frontend-evidence,acquisition-matrix,phase0-measurements}.md
+  Operations            docs/operations/{backup-recovery-uninstall,release,privacy}.md
+  Specification source  media_haven_consolidated_specification.md (design intent)
+  UI design brief       .cloud-attachments/...txt (comparison input, not shipped)
+
+5.2 ARCHITECTURE DECISION RECORDS
+----------------------------------
+
+  ADR-0001  Docker mandatory in v1; runtime distribution Accepted (provisional)
+  ADR-0002  Playback engine / host placement Accepted (provisional); engine open
+  ADR-0003  Modular monolith (deployment boundary reconciled by ADR-0008)
+  ADR-0004  Local playback first - Accepted
+  ADR-0005  Host/container transport, bearer + HMAC - Accepted
+  ADR-0006  Filesystem / volume policy - Accepted (provisional)
+  ADR-0007  Secrets management - Accepted (provisional)
+  ADR-0008  One codebase across host and Docker backend - Accepted
+  ADR-0009  Frontend-first, contract-driven - Accepted
+  ADR-0010  Library entity deviations - Accepted
+  ADR-0011  Metadata provider selection (TMDB, local NFO, opt-in) - Accepted
+  ADR-0012  Profiles - Accepted
+  ADR-0013  Backend completion sequencing - Accepted
+  ADR-0014  Host token storage via DPAPI - Accepted
+  ADR-0015  Playback descriptor (no path/token in renderer) - Accepted
+  ADR-0016  Blanket human acceptance 2026-11-20 - Accepted
+  ADR-0017  Authorized-media acquisition conversion - Accepted
+  ADR-0018  qBittorrent sandbox / trust boundary - Accepted
+  ADR-0019  App-managed cleanup only - Accepted
+  ADR-0021  R-01 per-item operator-supplied source mapping - Accepted (reversible)
+  ADR-0022  Offline IMDb metadata - PROPOSED
+  ADR-0023  TMDB artwork transport - PROPOSED
+  ADR-0024  Host-side search with operator confirmation - PROPOSED
+
+  No ADR-0020 exists - the number was skipped, not lost.
+  Only the human owner may accept a Proposed ADR. No agent may self-accept one.
+
+5.3 EVIDENCE LEDGER - PASS AND NOT RUN
+---------------------------------------
+
+  PASS (observed; see progress.md for commands and dates):
+  - Rust fmt, clippy and workspace tests (122 passed in the final review wave)
+  - Frontend typecheck, lint, tests, token check, bundle check and build
+  - Contract route parity (24 commands) and dependency graph assertions
+  - Real unsigned per-user NSIS installer build + SHA-256 checksums (local)
+  - Compose configuration parse (`docker compose config --quiet`)
+  - Read-only preflight behaviour
+  - Keyboard navigation browser walkthrough with zero console errors
+  - Static container security posture review (not a running engine)
+
+  NOT RUN (specified or coded, but not executed):
+  - Real video playback, codec/GPU/audio/subtitle matrix
+  - Container startup and the live host/container boundary
+  - Live TMDB / IMDb / OMDb / Torznab requests
+  - Live acquisition, prefetch and cleanup with lawful media
+  - Clean-VM install, uninstall against the built installer, upgrade/rollback
+  - Second-machine LAN reachability, low-disk and power-interruption tests
+  - SBOM generation, signed build, reproducibility confirmation
+  - Every-screen automated keyboard walkthrough, all CP-0..CP-7 sign-offs
+
+5.4 GLOSSARY
+-------------
+
+  core             The required Rust backend container; sole product authority.
+  probe            The required networkless container that opens untrusted media.
+  named command    A typed, validated operation exposed by the Tauri host.
+  DTO              Data transfer object; path-free data sent to the renderer.
+  root             A user-selected media folder mounted read-only into `core`.
+  managed media    App-owned files under incoming/ready/quarantine/trash.
+  source_set       The existing command chain that attaches a source to an item.
+  fail-closed      Missing or unverified evidence is treated as a denial.
+  HMAC             Per-request signature over timestamp, method, path and body.
+  ADR              Architecture Decision Record; Proposed is not binding.
+  CP               Checkpoint; all eight remain OPEN.
+  NAT mode         WSL2 default networking; required to keep the API off the LAN.
+
+5.5 LEGAL AND THIRD-PARTY NOTICES
+----------------------------------
+
+  - Project licence: MIT (LICENSE).
+  - Third-party notices: infrastructure/packaging/windows/THIRD_PARTY_NOTICES.md
+    covers 536 Rust crates and 343 npm packages. 177 Rust licences remain
+    "unresolved offline" because those manifests are not in the local Cargo
+    cache; resolving them needs an approved fetch.
+  - IMDb attribution ("Ratings and age ratings: IMDb / OMDb") is rendered where
+    IMDb data appears. TMDB attribution is not yet implemented.
+  - SBOM is NOT RUN; infrastructure/packaging/windows/sbom/README.md has the
+    exact operator commands.
+  - The v1 installer is UNSIGNED; see docs/operations/release.md for the
+    SmartScreen caveat and known limitations.
+  - No third-party design assets are shipped. Reference screenshots and the
+    UI design brief are comparison inputs only, not production artwork.
+  - Security issues: report privately per SECURITY.md; do not open a public
+    issue.
+
+================================================================================
+END OF ALL-IN-ONE DOCUMENTATION
+================================================================================

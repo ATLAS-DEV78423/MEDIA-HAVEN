@@ -31,6 +31,25 @@ approved.
 |-------|--------|
 | `git diff --check` | **PASS**, exit 0 |
 
+## 2026-11-21 — Discovery-direction ADR (ADR-0024, Proposed)
+
+The human asked whether MEDIA-HAVEN could adopt miauflix's method (TMDB catalog,
+Torznab indexer, automatic source selection). Assessed from its README/ToDo, not
+by running or copying its code (PolyForm Noncommercial 1.0 is incompatible with
+the intended permissive licence). Wrote ADR-0024 as **Proposed**, indexed it in
+both decision indexes, added O-10 to `roadmap.md`, and noted it in `CHANGELOG.md`.
+
+Key finding: `core` has `MEDIAHAVEN_EGRESS: "none"`, but the **Windows host and
+the qBittorrent container already have egress**. ADR-0024 was therefore rewritten
+as a minimal-change variant: run Torznab search in the host as a named command,
+return a ranked shortlist, let the operator pick on the existing Details screen,
+and feed the choice through the existing `source_set` chain. No container,
+network, schema or gate change; the probe/Defender gates and manual Source field
+stay. Only a legal gate and one HTTP/Torznab client dependency approval remain
+(if both ADR-0023 and ADR-0024 are accepted, one dependency serves both). A TMDB
+catalog is deferred. No code, network call or host change. Nothing implemented,
+no live search — **NOT RUN**. Next safe action: human decides O-10.
+
 ## 2026-11-21 — Keyboard navigation + TMDB artwork plan (HEAD `9b706fb`, `342addf`)
 
 - **Keyboard navigation (`9b706fb`):** full arrow/Enter/Escape navigation

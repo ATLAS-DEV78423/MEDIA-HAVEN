@@ -43,6 +43,12 @@ second-machine hardware remains **NOT RUN**; no checkpoint has passed.
   implemented code**: ADR-0023 is Proposed pending human acceptance, the HTTPS
   transport and hashed image cache are unwritten, and no live TMDB call has been
   made.
+- **ADR-0024 (Proposed, minimal-change variant)** — host-side Torznab search
+  returning a ranked shortlist that the operator confirms through the **existing**
+  `source_set` command. No container, network, schema or gate change; no code or
+  network call. Would supersede ADR-0021's no-discovery clause and amend ADR-0018
+  §5 if accepted. O-10 tracks the open decision. A TMDB catalog is a separate
+  follow-up. miauflix code was **not** used (PolyForm Noncommercial 1.0 licence).
 
 ### Changed
 - **Docker/Compose is now a mandatory v1 dependency.** The backend and the

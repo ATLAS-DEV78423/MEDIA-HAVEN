@@ -46,6 +46,7 @@ Architecture Decision Records. One file per decision, immutable once accepted
 | `0021-r01-source-mapping.md` | R-01 per-item operator-supplied source mapping | **Accepted** (2026-11-21, reversible) |
 | `0022-imdb-metadata.md` | IMDb ratings, age ratings and listings (additive, opt-in) | **Proposed** (2026-11-21) |
 | `0023-tmdb-artwork-transport.md` | TMDB artwork transport and loopback image serving | **Proposed** (2026-11-21) — from an unexecuted plan; human acceptance required |
+| `0024-catalog-discovery-and-source-selection.md` | Host-side Torznab search + operator confirmation (minimal change) | **Proposed** (2026-11-21) — would supersede ADR-0021's no-discovery clause; legal + dependency gate |
 
 There is no ADR-0020 — the number was skipped, not lost.
 
