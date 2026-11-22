@@ -45,16 +45,27 @@ export function SettingsPage() {
   const [tokenDraft, setTokenDraft] = useState("");
   const [tokenConfigured, setTokenConfigured] = useState(false);
   const [tokenNotice, setTokenNotice] = useState<string | null>(null);
+  const [prowlarrUrlDraft, setProwlarrUrlDraft] = useState("");
+  const [prowlarrUrlConfigured, setProwlarrUrlConfigured] = useState(false);
+  const [prowlarrUrlNotice, setProwlarrUrlNotice] = useState<string | null>(null);
+  const [prowlarrKeyDraft, setProwlarrKeyDraft] = useState("");
+  const [prowlarrKeyConfigured, setProwlarrKeyConfigured] = useState(false);
+  const [prowlarrKeyNotice, setProwlarrKeyNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    void hasProviderSecret("tmdb")
-      .then((value) => {
-        if (active) setTokenConfigured(value);
-      })
-      .catch(() => {
-        if (active) setTokenConfigured(false);
-      });
+    const load = (kind: string, setConfigured: (value: boolean) => void) => {
+      void hasProviderSecret(kind)
+        .then((value) => {
+          if (active) setConfigured(value);
+        })
+        .catch(() => {
+          if (active) setConfigured(false);
+        });
+    };
+    load("tmdb", setTokenConfigured);
+    load("prowlarr_url", setProwlarrUrlConfigured);
+    load("prowlarr_key", setProwlarrKeyConfigured);
     return () => {
       active = false;
     };
@@ -108,6 +119,50 @@ export function SettingsPage() {
       setTokenNotice("Token removed. Restart the app to stop using it.");
     } catch {
       setTokenNotice("The token could not be removed. Try again.");
+    }
+  };
+
+  const saveProwlarrUrl = async () => {
+    try {
+      await setProviderSecret("prowlarr_url", prowlarrUrlDraft);
+      setProwlarrUrlDraft("");
+      setProwlarrUrlConfigured(true);
+      setProwlarrUrlNotice("Saved. Restart the app so Prowlarr reaches the backend.");
+    } catch {
+      setProwlarrUrlNotice("The Prowlarr address could not be stored. Try again.");
+    }
+  };
+
+  const clearProwlarrUrl = async () => {
+    try {
+      await clearProviderSecret("prowlarr_url");
+      setProwlarrUrlDraft("");
+      setProwlarrUrlConfigured(false);
+      setProwlarrUrlNotice("Prowlarr address removed. Restart the app to stop using it.");
+    } catch {
+      setProwlarrUrlNotice("The Prowlarr address could not be removed. Try again.");
+    }
+  };
+
+  const saveProwlarrKey = async () => {
+    try {
+      await setProviderSecret("prowlarr_key", prowlarrKeyDraft);
+      setProwlarrKeyDraft("");
+      setProwlarrKeyConfigured(true);
+      setProwlarrKeyNotice("Saved. Restart the app so Prowlarr reaches the backend.");
+    } catch {
+      setProwlarrKeyNotice("The Prowlarr API key could not be stored. Try again.");
+    }
+  };
+
+  const clearProwlarrKey = async () => {
+    try {
+      await clearProviderSecret("prowlarr_key");
+      setProwlarrKeyDraft("");
+      setProwlarrKeyConfigured(false);
+      setProwlarrKeyNotice("Prowlarr API key removed. Restart the app to stop using it.");
+    } catch {
+      setProwlarrKeyNotice("The Prowlarr API key could not be removed. Try again.");
     }
   };
 
@@ -291,6 +346,102 @@ export function SettingsPage() {
               back to IMDb otherwise; IMDb needs no key. Only a title and year
               are looked up, and images are cached locally. Local NFO and IMDb
               behaviour is unchanged. Ratings and age ratings: IMDb / OMDb.
+            </p>
+          </Panel>
+        </section>
+
+        <section className={styles.group}>
+          <h2 className={styles.groupTitle}>Prowlarr (opt-in)</h2>
+          <Panel tone="quiet">
+            <FieldRow
+              label="Prowlarr address"
+              hint="Optional. The address of a Prowlarr instance you run yourself. Restart the app after saving so the backend can use it."
+            >
+              <div className={styles.rootRow}>
+                <input
+                  className={styles.rootInput}
+                  type="text"
+                  autoComplete="off"
+                  aria-label="Prowlarr address"
+                  value={prowlarrUrlDraft}
+                  onChange={(event) => {
+                    setProwlarrUrlDraft(event.target.value);
+                    setProwlarrUrlNotice(null);
+                  }}
+                  placeholder="Prowlarr address"
+                />
+                <span className={styles.tokenStatus} aria-live="polite">
+                  {prowlarrUrlConfigured ? "Configured" : "Not configured"}
+                </span>
+                <button
+                  type="button"
+                  className={buttonClass("glass")}
+                  data-focusable="true"
+                  onClick={() => void saveProwlarrUrl()}
+                >
+                  Save address
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass("quiet")}
+                  data-focusable="true"
+                  onClick={() => void clearProwlarrUrl()}
+                >
+                  Clear address
+                </button>
+              </div>
+            </FieldRow>
+            {prowlarrUrlNotice ? (
+              <p className={styles.rootHint} role="status">
+                {prowlarrUrlNotice}
+              </p>
+            ) : null}
+            <FieldRow
+              label="Prowlarr API key"
+              hint="Optional. Stored only in this computer's secret store; never shown again. Restart the app after saving."
+            >
+              <div className={styles.rootRow}>
+                <input
+                  className={styles.rootInput}
+                  type="password"
+                  autoComplete="off"
+                  aria-label="Prowlarr API key"
+                  value={prowlarrKeyDraft}
+                  onChange={(event) => {
+                    setProwlarrKeyDraft(event.target.value);
+                    setProwlarrKeyNotice(null);
+                  }}
+                  placeholder="Prowlarr API key"
+                />
+                <span className={styles.tokenStatus} aria-live="polite">
+                  {prowlarrKeyConfigured ? "Configured" : "Not configured"}
+                </span>
+                <button
+                  type="button"
+                  className={buttonClass("glass")}
+                  data-focusable="true"
+                  onClick={() => void saveProwlarrKey()}
+                >
+                  Save key
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass("quiet")}
+                  data-focusable="true"
+                  onClick={() => void clearProwlarrKey()}
+                >
+                  Clear key
+                </button>
+              </div>
+            </FieldRow>
+            {prowlarrKeyNotice ? (
+              <p className={styles.rootHint} role="status">
+                {prowlarrKeyNotice}
+              </p>
+            ) : null}
+            <p className={styles.rootHint}>
+              Prowlarr is not contacted until you configure it here. No site
+              list, indexer or catalogue is bundled with the app.
             </p>
           </Panel>
         </section>

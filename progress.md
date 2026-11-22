@@ -2,9 +2,79 @@
 
 ## Last updated
 
-2026-11-22 (TMDB discovery catalogue Tasks 1–3 code complete; live catalogue
-with token NOT RUN). Earlier 2026-11-21 entries are retained as history and are
-explicitly superseded where they disagree with the newest entry.
+2026-11-22 (app startup on mount + Prowlarr inputs, Task 2 of this plan complete;
+live WSL/Docker start and real Prowlarr connection NOT RUN). Earlier 2026-11-22
+and 2026-11-21 entries are retained as history and are explicitly superseded
+where they disagree with the newest entry.
+
+## 2026-11-22 — App startup on mount and Prowlarr inputs (plan Task 2; live runtime NOT RUN)
+
+Implemented per `docs/superpowers/plans/2026-11-22-app-startup-and-inputs.md`
+on worktree `ea5b46` (branch `tmdb-artwork-and-exe-guard`, base `8225102`, which
+already carried plan Task 1). No new dependency, no push/merge/install;
+Playwright config and `vite.config.ts` untouched. Full detail:
+`.superpowers/sdd/2026-11-22-app-startup-and-inputs/task-2-report.md`.
+
+- **Controller fixes.** `runtime_start` no longer calls `wait_ready()`; it
+  stages the compiled-in compose file at an absolute temp path
+  (`std::env::temp_dir().join("mediahaven-compose.yaml")`) and returns right
+  after `ensure_running()` with one fixed string via `startup_status`. No path,
+  distro, env value or engine detail is in the output. New tests assert the
+  staged path is absolute and the file exists.
+- **Secrets and environment.** One `account_for(kind)` allowlist maps `tmdb`,
+  `prowlarr_url` and `prowlarr_key` to distinct DPAPI accounts; all three named
+  commands use it. `build_wsl_env` forwards the two Prowlarr inputs only when
+  present, with `WSLENV` entries, leaving the no-input case unchanged. Engine
+  redaction now masks all four provider assignments. `core.environment`
+  declares both variables with `:-` defaults; an assertion test guards it.
+- **Settings.** Prowlarr address (text) and API key (password) fields mirror the
+  TMDB field: Save/Clear, `Configured` / `Not configured`, fixed notices, drafts
+  cleared on success, saved values never rendered. `providerSecrets.ts` uses a
+  three-name union and a per-kind session-only dev shim. Production bundle scan
+  found no dev shim keys or storage writes.
+- **Docs.** ADR-0028 recorded **Accepted (2026-11-22, human instruction)** by
+  the agent as scribe and indexed in `docs/decisions/README.md`; P6-10 added to
+  `roadmap.md`; no checkpoint passed.
+
+### Verified commands (observed)
+
+Rust used `CARGO_TARGET_DIR=target/verify`. One transient `LNK1104` linker
+file-lock occurred when `cargo test` ran immediately after clippy/check; a
+straight retry exited 0 with no code change (pre-existing MSVC toolchain quirk).
+
+| Check | Result |
+|-------|--------|
+| `cargo test -p mediahaven-desktop --lib` (before implementation) | **RED**, exit 1 — 20 compile errors on the new test seams (`account_for`, `build_wsl_env` arity, `PROWLARR_*_ENV`, `stage_compose`) |
+| same command after implementation | **GREEN**, exit 0 — `52 passed; 0 failed` (was 46) |
+| `cargo fmt --all -- --check` (after `cargo fmt --all`) | **PASS**, exit 0 |
+| `cargo clippy -p mediahaven-desktop --all-targets -- -D warnings` | **PASS**, exit 0 |
+| `cargo check -p mediahaven-desktop --all-targets` | **PASS**, exit 0 |
+| `cargo test -p mediahaven-contract` (extra parity check) | **PASS**, exit 0 — 8 passed, 0 failed; contract stays 25 commands |
+| targeted Vitest (providerSecrets + SettingsPage, before implementation) | **RED**, exit 1 — 4 failed / 4 passed |
+| same targeted Vitest after implementation | **GREEN**, exit 0 — 8 passed |
+| `npm run typecheck` / `npm run lint` / `npm test -- --run` | **PASS**, exit 0 × 3 — 17 files / 50 tests passed |
+| `npm run check:tokens` | **PASS**, exit 0 — 85 UI files scanned, 0 violations |
+| `npm run build` | **PASS**, exit 0 — 101 modules transformed |
+| `npm run check:bundle` | **PASS**, exit 0 — production bundle clean; no dev shim key or storage write |
+| `git diff --check` | **PASS**, exit 0 |
+
+### Honest verification note
+
+**No live WSL/Docker start, backend readiness check or Prowlarr connection was
+run.** No engine consent and no operator Prowlarr instance were supplied; no
+real secret was stored or read in any test. The compose staging test writes and
+removes the compiled-in file under the temp directory; it does not invoke WSL.
+Readiness-after-start through the UI's normal API calls is therefore **NOT RUN**
+even though the non-blocking command and its fixed strings are unit-tested. No
+checkpoint passed; no ADR was self-accepted (ADR-0028 records a human
+instruction).
+
+### Single next action
+
+With explicit engine consent and an operator Prowlarr instance, open the app,
+observe `runtime_start` return a fixed status, confirm the UI reaches the API
+without the command blocking, supply all three values in Settings, restart and
+confirm the forwarded variables are used; record the observed result here.
 
 ## 2026-11-22 — TMDB discovery catalogue (Tasks 1–3; live catalogue with token NOT RUN)
 

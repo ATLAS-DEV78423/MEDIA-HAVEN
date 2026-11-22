@@ -1675,6 +1675,52 @@ these is unresolved, stop before implementation.
 - **Status:** [~] Code complete for Tasks 1–3 with local gates green. Live
   catalogue with token **NOT RUN**. No new dependency, no push/merge/install.
 
+### [~] P6-10 — App startup on mount and Prowlarr inputs
+
+- **Goal:** Opening the installed app starts its own backend, and Settings lets
+  the operator supply a Prowlarr address and API key alongside the TMDB token.
+- **Scope:** One host-only `runtime_start` Tauri command called on UI mount; a
+  compiled-in compose definition staged at an absolute temp path; a non-blocking
+  start that returns only fixed status strings. Extend the DPAPI secret allowlist
+  to `tmdb` / `prowlarr_url` / `prowlarr_key` via one `account_for` helper,
+  forward the two Prowlarr inputs through `WSLENV` into `core.environment`, and
+  add matching Settings fields with Save/Clear and configured status.
+- **Out of scope:** Any Prowlarr/Jackett orchestration, site list, indexer,
+  catalogue or auto-download; a new dependency/runtime; a new renderer command
+  (the contract stays at 25); any live WSL/Docker start in tests.
+- **Dependencies:** ADR-0005 (named commands), ADR-0007/0014 (DPAPI secrets),
+  ADR-0026 (TMDB token), ADR-0028 (**Accepted (2026-11-22, human instruction)**).
+- **Implementation areas:** `apps/desktop/src-tauri/src`, `apps/desktop/src`,
+  `infrastructure/containers/compose.yaml`.
+- **Acceptance criteria:**
+  - [ ] `runtime_start` returns only `ready` / `setup-required` / `failed`; no
+        path, distro, env value or engine detail reaches the renderer. It does
+        not block on `wait_ready`; readiness is detected by the UI's API calls.
+  - [ ] The staged compose path is absolute and the file exists; no path is in
+        the command's output.
+  - [ ] All three kinds are accepted; unknown kinds are rejected with the fixed
+        `unsupported provider` string before any store access. No value appears
+        in a DTO, log, error string, source or the renderer after save.
+  - [ ] Prowlarr variables are forwarded only when present, with `WSLENV`
+        entries; compose declares both with `:-` defaults. Blank inputs leave
+        the two-entry base environment byte-for-byte unchanged.
+  - [ ] Settings shows text address / password key fields, Save/Clear and
+        `Configured` / `Not configured` only; drafts clear on success. Browser
+        dev uses a per-kind session-only shim tree-shaken from production.
+  - [ ] Frontend gates typecheck / lint / test / check:tokens / build /
+        check:bundle PASS; Rust fmt / clippy / lib test / all-targets check PASS;
+        no new dependency.
+- **Tests:** Rust RED then GREEN (52 lib tests), frontend targeted RED then GREEN
+  (8 tests), full Rust and frontend gates green. **A live WSL/Docker start and
+  a real Prowlarr connection are NOT RUN** — no engine consent or operator
+  instance was supplied.
+- **Risks:** A saved value reaches `core` only after an app restart (Settings
+  says so). Engine output could echo a forwarded variable; redaction now masks
+  all four provider assignments as defence in depth. No checkpoint passed.
+- **Status:** [~] Code complete with local gates green. Live startup with a real
+  runtime and Prowlarr instance **NOT RUN**. No new dependency, no
+  push/merge/install.
+
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 
 - **Gate:** P6-01 … P6-03 complete; the mandatory backend boundary is verified.

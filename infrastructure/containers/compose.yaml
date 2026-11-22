@@ -68,6 +68,10 @@ services:
       # declared variables; the blank default keeps the no-token case startable
       # and api_key_from_env() treats blank as absent.
       MEDIAHAVEN_TMDB_API_KEY: "${MEDIAHAVEN_TMDB_API_KEY:-}"
+      # Operator Prowlarr inputs, forwarded by the supervisor. Blank-safe
+      # defaults keep the workspace startable before they are configured.
+      MEDIAHAVEN_PROWLARR_URL: "${MEDIAHAVEN_PROWLARR_URL:-}"
+      MEDIAHAVEN_PROWLARR_API_KEY: "${MEDIAHAVEN_PROWLARR_API_KEY:-}"
       MEDIAHAVEN_DATA_DIR: "/var/lib/mediahaven"
       MEDIAHAVEN_STAGING_DIR: "/var/lib/mediahaven/staging"
       MEDIAHAVEN_CACHE_DIR: "/var/cache/mediahaven"

@@ -34,6 +34,7 @@ Never rewrite an accepted ADR's decision.
 | [0025](0025-imdb-keyless-posters.md) | Keyless IMDb posters | **Accepted (2026-11-21)** — human: no TMDB key; supersedes artwork clauses of ADR-0011/0023 | IMDb keyless posters plan, Task 1 |
 | [0026](0026-operator-tmdb-token.md) | Optional operator-supplied TMDB token | **Accepted (2026-11-22)** — human: supply own TMDB token; TMDB primary, IMDb fallback; Jackett/Prowlarr out of scope | Operator TMDB token plan, Task 1 |
 | [0027](0027-tmdb-discovery.md) | TMDB discovery catalogue (display-only) | **Accepted (2026-11-22)** — human: use TMDB for the catalogue too; anime approximated, coverage incomplete | TMDB discovery catalogue plan, Task 1 |
+| [0028](0028-app-startup-and-provider-inputs.md) | App startup wiring and Prowlarr inputs | **Accepted (2026-11-22)** — human instruction: start the backend on mount; let the operator supply Prowlarr address and key | App startup and inputs plan, Tasks 1–2 |
 
 **Two decisions are already binding and are not reopened by Phase 0:**
 

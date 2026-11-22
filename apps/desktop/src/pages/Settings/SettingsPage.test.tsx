@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,20 +33,21 @@ vi.mock("@/state/AppState", () => ({
 }));
 
 let invoke: ReturnType<typeof vi.fn>;
-let tmdbConfigured: boolean;
+let configured: Record<string, boolean>;
 
 beforeEach(() => {
-  tmdbConfigured = false;
+  configured = {};
   invoke = vi.fn((command: string, args?: Record<string, unknown>) => {
     if (command === "download_root_get") return Promise.resolve("C:\\Media\\Downloads");
     if (command === "download_root_set") return Promise.resolve(args?.path);
     if (command === "provider_secret_set") {
-      tmdbConfigured = true;
+      configured[args?.kind as string] = true;
       return Promise.resolve(null);
     }
-    if (command === "provider_secret_has") return Promise.resolve(tmdbConfigured);
+    if (command === "provider_secret_has")
+      return Promise.resolve(Boolean(configured[args?.kind as string]));
     if (command === "provider_secret_clear") {
-      tmdbConfigured = false;
+      configured[args?.kind as string] = false;
       return Promise.resolve(null);
     }
     return Promise.resolve(null);
@@ -96,7 +97,8 @@ describe("operator TMDB token", () => {
 
     const input = await screen.findByLabelText("TMDB read access token");
     expect(input).toHaveAttribute("type", "password");
-    expect(await screen.findByText("Not configured")).toBeInTheDocument();
+    const row = input.parentElement!;
+    expect(await within(row).findByText("Not configured")).toBeInTheDocument();
 
     await user.type(input, token);
     await user.click(screen.getByRole("button", { name: "Save token" }));
@@ -108,8 +110,70 @@ describe("operator TMDB token", () => {
       }),
     );
     expect(input).toHaveValue("");
-    expect(await screen.findByText("Configured")).toBeInTheDocument();
-    expect(screen.queryByText("Not configured")).toBeNull();
+    expect(within(row).getByText("Configured")).toBeInTheDocument();
+    expect(within(row).queryByText("Not configured")).toBeNull();
     expect(document.body.innerHTML).not.toContain(token);
+  });
+});
+
+describe("Prowlarr provider inputs", () => {
+  it("saves and clears the address without ever rendering the saved value", async () => {
+    const user = userEvent.setup();
+    const value = "http://127.0.0.1:9696";
+    mount();
+
+    const input = await screen.findByLabelText("Prowlarr address");
+    expect(input).toHaveAttribute("type", "text");
+    const row = input.parentElement!;
+    expect(await within(row).findByText("Not configured")).toBeInTheDocument();
+
+    await user.type(input, value);
+    await user.click(screen.getByRole("button", { name: "Save address" }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("provider_secret_set", {
+        kind: "prowlarr_url",
+        value,
+      }),
+    );
+    expect(input).toHaveValue("");
+    expect(within(row).getByText("Configured")).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(value);
+
+    await user.click(screen.getByRole("button", { name: "Clear address" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("provider_secret_clear", { kind: "prowlarr_url" }),
+    );
+    expect(within(row).getByText("Not configured")).toBeInTheDocument();
+  });
+
+  it("saves and clears the API key as a password field", async () => {
+    const user = userEvent.setup();
+    const value = "prowlarr-sentinel-key";
+    mount();
+
+    const input = await screen.findByLabelText("Prowlarr API key");
+    expect(input).toHaveAttribute("type", "password");
+    const row = input.parentElement!;
+    expect(await within(row).findByText("Not configured")).toBeInTheDocument();
+
+    await user.type(input, value);
+    await user.click(screen.getByRole("button", { name: "Save key" }));
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("provider_secret_set", {
+        kind: "prowlarr_key",
+        value,
+      }),
+    );
+    expect(input).toHaveValue("");
+    expect(within(row).getByText("Configured")).toBeInTheDocument();
+    expect(document.body.innerHTML).not.toContain(value);
+
+    await user.click(screen.getByRole("button", { name: "Clear key" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("provider_secret_clear", { kind: "prowlarr_key" }),
+    );
+    expect(within(row).getByText("Not configured")).toBeInTheDocument();
   });
 });

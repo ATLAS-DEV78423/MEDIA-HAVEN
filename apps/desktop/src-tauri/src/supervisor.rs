@@ -13,7 +13,10 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::secret::{install_token, load_secret, TMDB_ACCOUNT, TMDB_SERVICE};
+use crate::secret::{
+    install_token, load_secret, PROWLARR_KEY_ACCOUNT, PROWLARR_URL_ACCOUNT, TMDB_ACCOUNT,
+    TMDB_SERVICE, TOKEN_SERVICE,
+};
 use crate::wsl::{decode_output, Wsl, WslError};
 
 /// Bounded timeouts (plan A4).
@@ -24,21 +27,34 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const API_TOKEN_ENV: &str = "MEDIAHAVEN_API_TOKEN";
 const WSLENV: &str = "WSLENV";
 const TMDB_KEY_ENV: &str = "MEDIAHAVEN_TMDB_API_KEY";
+const PROWLARR_URL_ENV: &str = "MEDIAHAVEN_PROWLARR_URL";
+const PROWLARR_KEY_ENV: &str = "MEDIAHAVEN_PROWLARR_API_KEY";
 
 /// Child-only environment for `compose up`. `WSLENV` lists each forwarded name
 /// with no flag suffix: the values are plain text, so WSL passes them through
-/// unchanged with no path translation. The optional TMDB key is added only
-/// when configured, leaving the no-token case byte-for-byte unchanged.
-fn build_wsl_env(token_hex: &str, tmdb_token: Option<&str>) -> Vec<(String, String)> {
+/// unchanged with no path translation. Optional operator inputs are added only
+/// when configured, leaving the no-input case byte-for-byte unchanged.
+fn build_wsl_env(
+    token_hex: &str,
+    tmdb: Option<&str>,
+    prowlarr_url: Option<&str>,
+    prowlarr_key: Option<&str>,
+) -> Vec<(String, String)> {
     let mut env = vec![
         (API_TOKEN_ENV.to_string(), token_hex.to_string()),
         (WSLENV.to_string(), API_TOKEN_ENV.to_string()),
     ];
-    if let Some(key) = tmdb_token.filter(|value| !value.trim().is_empty()) {
-        env.push((TMDB_KEY_ENV.to_string(), key.to_string()));
-        if let Some((_, wslenv)) = env.iter_mut().find(|(k, _)| k == WSLENV) {
-            wslenv.push(':');
-            wslenv.push_str(TMDB_KEY_ENV);
+    for (name, value) in [
+        (TMDB_KEY_ENV, tmdb),
+        (PROWLARR_URL_ENV, prowlarr_url),
+        (PROWLARR_KEY_ENV, prowlarr_key),
+    ] {
+        if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+            env.push((name.to_string(), value.to_string()));
+            if let Some((_, wslenv)) = env.iter_mut().find(|(k, _)| k == WSLENV) {
+                wslenv.push(':');
+                wslenv.push_str(name);
+            }
         }
     }
     env
@@ -138,13 +154,22 @@ impl Supervisor {
         // is dropped as soon as `compose up` returns. Upgrade if a zeroising
         // hex buffer is introduced in `secret.rs`.
         let token_hex = token.as_hex();
-        // An optional operator TMDB token: absent means no env entry, corrupt
-        // fails closed. `SecretError` text is fixed and carries no secret.
+        // Optional operator inputs: absent means no env entry, corrupt fails
+        // closed. `SecretError` text is fixed and carries no secret.
         let tmdb_token = load_secret(TMDB_SERVICE, TMDB_ACCOUNT)
             .map_err(|err| SupervisorError::StartFailed(err.to_string()))?;
-        // shortcut: neither String is zeroised on drop; keep them local so they
-        // are dropped as soon as `compose up` returns, as with `token_hex`.
-        let env = build_wsl_env(&token_hex, tmdb_token.as_deref());
+        let prowlarr_url = load_secret(TOKEN_SERVICE, PROWLARR_URL_ACCOUNT)
+            .map_err(|err| SupervisorError::StartFailed(err.to_string()))?;
+        let prowlarr_key = load_secret(TOKEN_SERVICE, PROWLARR_KEY_ACCOUNT)
+            .map_err(|err| SupervisorError::StartFailed(err.to_string()))?;
+        // shortcut: none of these Strings are zeroised on drop; keep them local
+        // so they are dropped as soon as `compose up` returns, as with token_hex.
+        let env = build_wsl_env(
+            &token_hex,
+            tmdb_token.as_deref(),
+            prowlarr_url.as_deref(),
+            prowlarr_key.as_deref(),
+        );
         let env_refs: Vec<(&str, &str)> = env
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -249,11 +274,11 @@ fn engine_message(output: &std::process::Output) -> String {
 }
 
 /// Strip secret values from engine output before it becomes a user-facing
-/// error: `MEDIAHAVEN_TMDB_API_KEY=<value>` and `token=<value>` assignments,
-/// plus any remaining run of 32+ hex chars. A TMDB token has dots/underscores
-/// and only short hex segments, so the hex pass alone would let it through.
-/// Cheap defence in depth: both tokens are passed via the environment, so a
-/// compose error could echo one, and ADR-0005 §5 requires redaction.
+/// error: `<MEDIAHAVEN_*_ENV>=<value>` and `token=<value>` assignments, plus any
+/// remaining run of 32+ hex chars. Operator keys have dots/underscores and only
+/// short hex segments, so the hex pass alone would let them through. Cheap
+/// defence in depth: every secret is passed via the environment, so a compose
+/// error could echo one, and ADR-0005 §5 requires redaction.
 fn redact(text: &str) -> String {
     const MARKER: &str = "[redacted]";
     let mut masked = String::with_capacity(text.len());
@@ -267,7 +292,11 @@ fn redact(text: &str) -> String {
             .rsplit(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'')
             .next()
             .unwrap_or("");
-        if key != "token" && key != TMDB_KEY_ENV {
+        if key != "token"
+            && key != TMDB_KEY_ENV
+            && key != PROWLARR_URL_ENV
+            && key != PROWLARR_KEY_ENV
+        {
             continue;
         }
         let after = at + 1;
@@ -365,7 +394,7 @@ mod tests {
     #[test]
     fn wsl_env_carries_the_token_and_names_it_for_forwarding() {
         let token = "ab".repeat(32);
-        let env = build_wsl_env(&token, None);
+        let env = build_wsl_env(&token, None, None, None);
 
         assert_eq!(env.len(), 2);
         assert_eq!(env[0], (API_TOKEN_ENV.to_string(), token));
@@ -376,7 +405,7 @@ mod tests {
 
     #[test]
     fn wsl_env_includes_tmdb_when_present() {
-        let env = build_wsl_env("install-token", Some("tmdb-token"));
+        let env = build_wsl_env("install-token", Some("tmdb-token"), None, None);
         assert!(env
             .iter()
             .any(|(k, v)| k == "MEDIAHAVEN_TMDB_API_KEY" && v == "tmdb-token"));
@@ -385,7 +414,46 @@ mod tests {
             .any(|(k, v)| k == WSLENV && v.contains("MEDIAHAVEN_TMDB_API_KEY")));
 
         // No token means exactly the two pre-existing entries, unchanged.
-        assert_eq!(build_wsl_env("install-token", None).len(), 2);
+        assert_eq!(build_wsl_env("install-token", None, None, None).len(), 2);
+    }
+
+    #[test]
+    fn wsl_env_includes_prowlarr_inputs_only_when_present() {
+        let env = build_wsl_env(
+            "install-token",
+            None,
+            Some("http://127.0.0.1:9696"),
+            Some("a-prowlarr-key"),
+        );
+        assert!(env
+            .iter()
+            .any(|(k, v)| k == PROWLARR_URL_ENV && v == "http://127.0.0.1:9696"));
+        assert!(env
+            .iter()
+            .any(|(k, v)| k == PROWLARR_KEY_ENV && v == "a-prowlarr-key"));
+        let wslenv = env.iter().find(|(k, _)| k == WSLENV).unwrap();
+        assert!(wslenv.1.contains(PROWLARR_URL_ENV));
+        assert!(wslenv.1.contains(PROWLARR_KEY_ENV));
+
+        // Blank or absent inputs add nothing, so the no-input case is unchanged.
+        assert_eq!(
+            build_wsl_env("install-token", None, Some("  "), Some("")).len(),
+            2
+        );
+        assert_eq!(build_wsl_env("install-token", None, None, None).len(), 2);
+    }
+
+    #[test]
+    fn engine_output_redacts_prowlarr_inputs_in_an_assignment() {
+        const SYNTHETIC: &str = "a-prowlarr-sentinel";
+        for noisy in [
+            format!("compose error: MEDIAHAVEN_PROWLARR_URL={SYNTHETIC} failed"),
+            format!("compose error: MEDIAHAVEN_PROWLARR_API_KEY=\"{SYNTHETIC}\" failed"),
+        ] {
+            let cleaned = redact(&noisy);
+            assert!(!cleaned.contains(SYNTHETIC), "value survived: {cleaned}");
+            assert!(cleaned.contains("[redacted]"), "no marker: {cleaned}");
+        }
     }
 
     #[test]

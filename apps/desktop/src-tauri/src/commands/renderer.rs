@@ -18,11 +18,22 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use crate::player::{resolve_for_media, spawn_status_poller, PlayerState};
-use crate::secret::{load_or_create_token, TOKEN_ACCOUNT, TOKEN_SERVICE};
+use crate::secret::{account_for, load_or_create_token, TOKEN_ACCOUNT, TOKEN_SERVICE};
 use crate::{render_mounts, RootSpec};
 
 /// The loopback API published by the supervisor. Matches `core`'s default bind.
 const API_ADDR: &str = "127.0.0.1:8080";
+
+/// The workspace definition is compiled in, then staged to an absolute temp
+/// path: `wsl.exe` resolves `-f` inside the distro, where a Windows-relative
+/// path does not exist. No path is ever returned to the renderer.
+const COMPOSE_YAML: &str = include_str!("../../../../../infrastructure/containers/compose.yaml");
+
+fn stage_compose() -> std::io::Result<PathBuf> {
+    let path = std::env::temp_dir().join("mediahaven-compose.yaml");
+    std::fs::write(&path, COMPOSE_YAML.as_bytes())?;
+    Ok(path)
+}
 
 /// Error returned to the renderer. Fixed messages only: backend text never
 /// crosses this boundary.
@@ -628,27 +639,19 @@ pub fn player_control(
 const UNSUPPORTED_PROVIDER: &str = "unsupported provider";
 const SECRET_STORE_FAILED: &str = "secret operation failed";
 
-/// Store a provider secret (only the optional TMDB read token, ADR-0026).
+/// Store one of the three optional provider secrets (ADR-0026/0028).
 #[tauri::command]
 pub fn provider_secret_set(kind: &str, value: &str) -> Result<(), String> {
-    if kind != "tmdb" {
-        return Err(UNSUPPORTED_PROVIDER.to_string());
-    }
-    crate::secret::store_secret(
-        crate::secret::TMDB_SERVICE,
-        crate::secret::TMDB_ACCOUNT,
-        value,
-    )
-    .map_err(|_| SECRET_STORE_FAILED.to_string())
+    let account = account_for(kind).ok_or_else(|| UNSUPPORTED_PROVIDER.to_string())?;
+    crate::secret::store_secret(TOKEN_SERVICE, account, value)
+        .map_err(|_| SECRET_STORE_FAILED.to_string())
 }
 
 /// Report only whether a provider secret is configured; never its value.
 #[tauri::command]
 pub fn provider_secret_has(kind: &str) -> Result<bool, String> {
-    if kind != "tmdb" {
-        return Err(UNSUPPORTED_PROVIDER.to_string());
-    }
-    crate::secret::load_secret(crate::secret::TMDB_SERVICE, crate::secret::TMDB_ACCOUNT)
+    let account = account_for(kind).ok_or_else(|| UNSUPPORTED_PROVIDER.to_string())?;
+    crate::secret::load_secret(TOKEN_SERVICE, account)
         .map(|value| value.is_some())
         .map_err(|_| SECRET_STORE_FAILED.to_string())
 }
@@ -656,10 +659,8 @@ pub fn provider_secret_has(kind: &str) -> Result<bool, String> {
 /// Remove a configured provider secret.
 #[tauri::command]
 pub fn provider_secret_clear(kind: &str) -> Result<(), String> {
-    if kind != "tmdb" {
-        return Err(UNSUPPORTED_PROVIDER.to_string());
-    }
-    crate::secret::delete_secret(crate::secret::TMDB_SERVICE, crate::secret::TMDB_ACCOUNT)
+    let account = account_for(kind).ok_or_else(|| UNSUPPORTED_PROVIDER.to_string())?;
+    crate::secret::delete_secret(TOKEN_SERVICE, account)
         .map_err(|_| SECRET_STORE_FAILED.to_string())
 }
 
@@ -672,14 +673,11 @@ pub fn runtime_start() -> Result<String, String> {
     let address: std::net::SocketAddr = "127.0.0.1:8080"
         .parse()
         .map_err(|_| "setup-required".to_string())?;
-    let supervisor = crate::supervisor::Supervisor::new(
-        distro,
-        std::path::PathBuf::from("infrastructure/containers/compose.yaml"),
-        address,
-    );
-    let result = supervisor
-        .ensure_running()
-        .and_then(|_| supervisor.wait_ready());
+    let compose = stage_compose().map_err(|_| "failed".to_string())?;
+    let supervisor = crate::supervisor::Supervisor::new(distro, compose, address);
+    // Readiness is detected by the UI's normal API calls; a blocking poll here
+    // would hold the command open past the startup deadline.
+    let result = supervisor.ensure_running();
     Ok(crate::supervisor::startup_status(&result).to_string())
 }
 
@@ -875,17 +873,58 @@ mod tests {
     }
 
     #[test]
-    fn provider_secret_commands_reject_unknown_kind_without_echoing_a_value() {
-        // Unknown kinds are rejected before any DPAPI access, so this test
-        // never touches the host store. The synthetic value must not leak.
-        for result in [
-            provider_secret_set("other", "SENTINEL"),
-            provider_secret_has("other").map(|_| ()),
-            provider_secret_clear("other"),
-        ] {
-            let error = result.unwrap_err();
-            assert_eq!(error, "unsupported provider");
-            assert!(!error.contains("SENTINEL"));
+    fn provider_secret_commands_accept_all_three_kinds_without_echoing_a_value() {
+        // A blank value fails validation inside the store before any DPAPI
+        // access: reaching the fixed store error proves the kind passed the
+        // allowlist. No synthetic value is ever written to the host store.
+        for kind in ["tmdb", "prowlarr_url", "prowlarr_key"] {
+            assert_eq!(
+                provider_secret_set(kind, "   ").unwrap_err(),
+                SECRET_STORE_FAILED,
+                "kind {kind} must pass the allowlist"
+            );
         }
+        for kind in ["imdb", "prowlarr", "TMDB"] {
+            for error in [
+                provider_secret_set(kind, "SENTINEL").unwrap_err(),
+                provider_secret_has(kind).unwrap_err(),
+                provider_secret_clear(kind).unwrap_err(),
+            ] {
+                assert_eq!(error, UNSUPPORTED_PROVIDER);
+                assert!(!error.contains("SENTINEL"));
+            }
+        }
+    }
+
+    #[test]
+    fn compose_declares_the_prowlarr_inputs_for_core_with_blank_safe_defaults() {
+        let core = COMPOSE_YAML
+            .split("  core:")
+            .nth(1)
+            .and_then(|rest| rest.split("  probe:").next())
+            .expect("core service block");
+        for line in [
+            r#"MEDIAHAVEN_PROWLARR_URL: "${MEDIAHAVEN_PROWLARR_URL:-}""#,
+            r#"MEDIAHAVEN_PROWLARR_API_KEY: "${MEDIAHAVEN_PROWLARR_API_KEY:-}""#,
+        ] {
+            assert!(
+                core.contains(line),
+                "core must declare {line}, got:\n{core}"
+            );
+        }
+    }
+
+    #[test]
+    fn staged_compose_is_an_absolute_existing_file() {
+        let path = stage_compose().expect("stage compose to a temp file");
+        assert!(
+            path.is_absolute(),
+            "compose path must be absolute: {path:?}"
+        );
+        assert!(path.is_file(), "compose file must exist: {path:?}");
+        let text = std::fs::read_to_string(&path).expect("read staged compose");
+        assert!(text.contains("services:"));
+        assert!(text.contains("MEDIAHAVEN_PROWLARR_API_KEY"));
+        let _ = std::fs::remove_file(&path);
     }
 }

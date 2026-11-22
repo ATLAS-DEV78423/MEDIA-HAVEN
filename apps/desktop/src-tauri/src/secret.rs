@@ -149,6 +149,22 @@ pub fn install_token() -> Result<SecretToken, SecretError> {
 /// confused (ADR-0026).
 pub const TMDB_SERVICE: &str = TOKEN_SERVICE;
 pub const TMDB_ACCOUNT: &str = "tmdb-read-token";
+/// DPAPI identities of the two optional Prowlarr inputs. Distinct accounts keep
+/// each blob separate from the install token and from each other.
+pub const PROWLARR_URL_ACCOUNT: &str = "prowlarr-url";
+pub const PROWLARR_KEY_ACCOUNT: &str = "prowlarr-key";
+
+/// Map a renderer-facing provider kind to its DPAPI account. Unknown kinds are
+/// rejected before any store access, so no value can reach the store or an
+/// error string (ADR-0007).
+pub fn account_for(kind: &str) -> Option<&'static str> {
+    match kind {
+        "tmdb" => Some(TMDB_ACCOUNT),
+        "prowlarr_url" => Some(PROWLARR_URL_ACCOUNT),
+        "prowlarr_key" => Some(PROWLARR_KEY_ACCOUNT),
+        _ => None,
+    }
+}
 
 /// Store an arbitrary operator-provided secret as a DPAPI blob. The value is
 /// zeroised after protection; it is never logged or returned.
@@ -511,6 +527,31 @@ mod tests {
             blob_path(TMDB_SERVICE, TMDB_ACCOUNT).unwrap(),
             blob_path(TOKEN_SERVICE, TOKEN_ACCOUNT).unwrap()
         );
+    }
+
+    #[test]
+    fn account_for_accepts_only_the_three_provider_kinds() {
+        assert_eq!(account_for("tmdb"), Some(TMDB_ACCOUNT));
+        assert_eq!(account_for("prowlarr_url"), Some(PROWLARR_URL_ACCOUNT));
+        assert_eq!(account_for("prowlarr_key"), Some(PROWLARR_KEY_ACCOUNT));
+        for unknown in ["imdb", "prowlarr", "TMDB", ""] {
+            assert_eq!(account_for(unknown), None, "unexpected kind: {unknown}");
+        }
+    }
+
+    #[test]
+    fn provider_accounts_are_distinct_from_each_other_and_the_install_token() {
+        let install = blob_path(TOKEN_SERVICE, TOKEN_ACCOUNT).unwrap();
+        let mut paths = Vec::new();
+        for account in [TMDB_ACCOUNT, PROWLARR_URL_ACCOUNT, PROWLARR_KEY_ACCOUNT] {
+            let path = blob_path(TOKEN_SERVICE, account).unwrap();
+            assert_ne!(
+                path, install,
+                "provider account collided with install token"
+            );
+            assert!(!paths.contains(&path), "two provider accounts share a blob");
+            paths.push(path);
+        }
     }
 
     #[test]
