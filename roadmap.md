@@ -1590,6 +1590,55 @@ these is unresolved, stop before implementation.
   no Python. A full-library live IMDb seed is **NOT RUN**. ADR-0025 is
   **Accepted (2026-11-21, human-approved)**. No checkpoint passed.
 
+### [~] P6-08 — Operator-supplied TMDB token
+
+- **Goal:** Let the operator paste a TMDB read access token in Settings; store
+  it in the existing Windows DPAPI secret store, inject it into `core` at
+  startup, and use TMDB as the primary artwork source with keyless IMDb posters
+  as fallback.
+- **Scope:** Generic DPAPI secret helpers and named commands
+  `provider_secret_set/has/clear` (only `kind == "tmdb"`), supervisor injection
+  of `MEDIAHAVEN_TMDB_API_KEY`, `core` TMDB → IMDb → bundled fallback, and the
+  renderer Settings field plus both exact attribution lines.
+- **Out of scope:** Any site list, indexer, catalogue, Cardigann definition or
+  Jackett/Prowlarr code; a new dependency or runtime; a new opt-in switch; any
+  agent-run live TMDB call. Jackett/Prowlarr is a separate, later plan.
+- **Dependencies:** ADR-0026 (**Accepted (2026-11-22, human)**) supersedes the
+  opt-in clause of ADR-0023 for artwork only; ADR-0007 still governs the secret
+  store, and ADR-0025's keyless IMDb posters remain the fallback.
+- **Implementation areas:** `apps/desktop/src-tauri/src`, `crates/core`,
+  `apps/desktop/src`.
+- **Acceptance criteria:**
+  - [ ] The token is optional and reversible: blank/missing means zero TMDB
+        requests and keyless IMDb posters still work; Clear removes it.
+  - [ ] The value is stored only in a distinct DPAPI blob; it never appears in
+        a DTO, log, error string, the repo, or the renderer after save. The
+        password field is cleared immediately on a successful save and Settings
+        shows only `Configured` / `Not configured`. In production the value
+        never reaches localStorage/sessionStorage; browser dev uses a
+        session-only shim.
+  - [ ] A new token reaches `core` only after an app restart, and the Settings
+        UI states this.
+  - [ ] Both exact attribution lines render where artwork is shown:
+        "This product uses the TMDB API but is not endorsed or certified by
+        TMDB." and "Posters: IMDb".
+  - [ ] All existing artwork limits are unchanged: 2 MiB / 64 MiB hashed cache,
+        12-item batch cap, 64-hex route validation, relative DTO URL, `onError`
+        fallback.
+  - [ ] Frontend gates typecheck / lint / test / check:tokens / build /
+        check:bundle are PASS; no new npm dependency; Playwright config and
+        `vite.config.ts` untouched.
+- **Tests:** Fake-fetch Rust tests, loopback route tests and frontend tests
+  (Settings save/clear/no-leak, dev shim, both attribution lines) are PASS.
+  **A live token run is NOT RUN** — no operator token was supplied, no live
+  TMDB request was made and no live TMDB poster was observed.
+- **Risks:** TMDB may rate-limit or change its API; failure degrades to IMDb,
+  then bundled art. The trust surface is the DPAPI identity, the named-command
+  allowlist, the restart gate and the host-free DTO. ADR-0026 is **Accepted
+  (2026-11-22, human)**; no ADR was self-accepted. No checkpoint passed.
+- **Status:** [~] Code complete for Tasks 1–3 with local gates green. A live
+  token run is **NOT RUN**. No new dependency, no push/merge/install.
+
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 
 - **Gate:** P6-01 … P6-03 complete; the mandatory backend boundary is verified.

@@ -2,10 +2,63 @@
 
 ## Last updated
 
-2026-11-21 (Keyless IMDb posters Tasks 1–2 code complete; full-library live
-IMDb seed NOT RUN). The 2026-11-21 TMDB artwork entry and earlier sections are
-retained as history and are explicitly superseded where they disagree with the
-newest entry.
+2026-11-22 (Operator-supplied TMDB token Tasks 1–3 code complete; live token
+run NOT RUN). Earlier 2026-11-21 entries are retained as history and are
+explicitly superseded where they disagree with the newest entry.
+
+## 2026-11-22 — Operator-supplied TMDB token (Tasks 1–3; live token run NOT RUN)
+
+Implemented per `docs/superpowers/plans/2026-11-21-operator-tmdb-token.md` on
+the isolated worktree `ea5b46` (branch `tmdb-artwork-and-exe-guard`, base
+`d503b66`). No new dependency, no push/merge/install; Playwright config and
+`vite.config.ts` untouched. Full detail:
+`.superpowers/sdd/2026-11-21-operator-tmdb-token/task-{1,2,3}-report.md`.
+
+- **Tasks 1–2 (already landed before this entry; unchanged here).** Generic
+  DPAPI secret helpers, named commands `provider_secret_set/has/clear` with a
+  `kind == "tmdb"` allowlist, supervisor injection of
+  `MEDIAHAVEN_TMDB_API_KEY`, and `core` TMDB → IMDb → bundled fallback. Their
+  Rust gates are recorded PASS in `task-1-report.md` and `task-2-report.md`;
+  they were **not re-run** by Task 3.
+- **Task 3 (frontend).** New `src/services/providerSecrets.ts` reuses the repo's
+  actual Tauri accessor (`call()` → `window.__TAURI_INTERNALS__.invoke`), not a
+  made-up `window.__TAURI__` shape. Browser dev has a session-only shim; the
+  production build tree-shakes every `sessionStorage` write out (verified in
+  `dist/assets`). Settings gained a password field (`aria-label="TMDB read
+  access token"`) with Save token / Clear token, a `Configured` / `Not
+  configured` status, a restart notice, and text naming what is sent
+  (title/year/poster path) and the IMDb fallback. `TmdbAttribution.tsx` keeps
+  its exported names, adds `IMDB_POSTER_ATTRIBUTION` and renders both exact
+  lines in one caption. No stored value is rendered, stored in the renderer,
+  or echoed in an error.
+
+### Verified commands (observed)
+
+| Check | Result |
+|-------|--------|
+| `npm test -- --run src/pages/Settings/SettingsPage.test.tsx` (before implementation) | **RED**, exit 1 — `Test Files 1 failed`, `Tests 1 failed / 1 passed`; `TestingLibraryElementError: Unable to find a label with the text of: TMDB read access token` |
+| targeted tests after implementation (Settings + attribution + providerSecrets) | **GREEN**, exit 0 — `Test Files 3 passed`, `Tests 6 passed` |
+| `npm run typecheck` | **PASS**, exit 0 |
+| `npm run lint` | **PASS**, exit 0 |
+| `npm test -- --run` | **PASS**, exit 0 — `Test Files 15 passed`, `Tests 41 passed` |
+| `npm run check:tokens` | **PASS**, exit 0 — 80 UI files scanned, 0 violations |
+| `npm run build` | **PASS**, exit 0 — 98 modules transformed |
+| `npm run check:bundle` | **PASS**, exit 0 — production bundle clean |
+| production `dist/assets/*.js` string scan | **PASS** — no `mediahaven.dev.tmdb-token`, `sessionStorage.setItem` or `sessionStorage.removeItem`; `provider_secret_set` and both attribution lines present |
+
+### Honest verification note
+
+**A live token run is NOT RUN.** No operator token was supplied, no live TMDB
+request was made, and no live TMDB poster was observed in a WebView. Every test
+uses a mocked Tauri bridge or a session-only dev shim; no real secret was
+stored in DPAPI. Rust gates for Tasks 1–2 were not re-run in this entry. No
+checkpoint passed.
+
+### Single next action
+
+An operator supplies a token in Settings, restarts the app so `core` receives
+`MEDIAHAVEN_TMDB_API_KEY`, and one live TMDB poster is observed; record the
+observed result here. Until then P6-08 stays `[~]`.
 
 ## 2026-11-21 — Keyless IMDb posters (Tasks 1–2; full-library live seed NOT RUN)
 

@@ -3,6 +3,11 @@ import { Link } from "react-router-dom";
 
 import { Segmented, Toggle, buttonClass } from "@/components/ui/Controls";
 import { FieldRow, PageHeader, Panel } from "@/components/ui/Surfaces";
+import {
+  clearProviderSecret,
+  hasProviderSecret,
+  setProviderSecret,
+} from "@/services/providerSecrets";
 import { call } from "@/services/transport";
 import type { RuntimeStatus } from "@/services/types";
 import type { SubtitleSize } from "@/state/AppState";
@@ -37,6 +42,23 @@ export function SettingsPage() {
   const [rootDraft, setRootDraft] = useState("");
   const [rootError, setRootError] = useState<string | null>(null);
   const [rootSaved, setRootSaved] = useState(false);
+  const [tokenDraft, setTokenDraft] = useState("");
+  const [tokenConfigured, setTokenConfigured] = useState(false);
+  const [tokenNotice, setTokenNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void hasProviderSecret("tmdb")
+      .then((value) => {
+        if (active) setTokenConfigured(value);
+      })
+      .catch(() => {
+        if (active) setTokenConfigured(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -64,6 +86,28 @@ export function SettingsPage() {
     } catch {
       setRootError("Enter an absolute folder path. The directory could not be set.");
       setRootSaved(false);
+    }
+  };
+
+  const saveToken = async () => {
+    try {
+      await setProviderSecret("tmdb", tokenDraft);
+      setTokenDraft("");
+      setTokenConfigured(true);
+      setTokenNotice("Saved. Restart the app so the token reaches artwork lookup.");
+    } catch {
+      setTokenNotice("The token could not be stored. Try again.");
+    }
+  };
+
+  const clearToken = async () => {
+    try {
+      await clearProviderSecret("tmdb");
+      setTokenDraft("");
+      setTokenConfigured(false);
+      setTokenNotice("Token removed. Restart the app to stop using it.");
+    } catch {
+      setTokenNotice("The token could not be removed. Try again.");
     }
   };
 
@@ -198,12 +242,52 @@ export function SettingsPage() {
                 Not available
               </button>
             </FieldRow>
+            <FieldRow
+              label="TMDB read access token"
+              hint="Optional. Only a title, year and poster path are sent to TMDB for artwork lookup. Without a token, posters fall back to IMDb. Restart the app after saving so the token reaches artwork lookup."
+            >
+              <div className={styles.rootRow}>
+                <input
+                  className={styles.rootInput}
+                  type="password"
+                  autoComplete="off"
+                  aria-label="TMDB read access token"
+                  value={tokenDraft}
+                  onChange={(event) => setTokenDraft(event.target.value)}
+                  placeholder="Paste token"
+                />
+                <span className={styles.tokenStatus} aria-live="polite">
+                  {tokenConfigured ? "Configured" : "Not configured"}
+                </span>
+                <button
+                  type="button"
+                  className={buttonClass("glass")}
+                  data-focusable="true"
+                  onClick={() => void saveToken()}
+                >
+                  Save token
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass("quiet")}
+                  data-focusable="true"
+                  onClick={() => void clearToken()}
+                >
+                  Clear token
+                </button>
+              </div>
+            </FieldRow>
+            {tokenNotice ? (
+              <p className={styles.rootHint} role="status">
+                {tokenNotice}
+              </p>
+            ) : null}
             <p className={styles.rootHint}>
               Neither switch is wired to a backend command in this build, so both
-              stay off. Posters come from IMDb when available; no API key is used.
-              Only a title and year are looked up, and images are cached locally.
-              Local NFO and IMDb behaviour is unchanged. Ratings and age ratings:
-              IMDb / OMDb.
+              stay off. Posters come from TMDB when a token is stored and fall
+              back to IMDb otherwise; IMDb needs no key. Only a title and year
+              are looked up, and images are cached locally. Local NFO and IMDb
+              behaviour is unchanged. Ratings and age ratings: IMDb / OMDb.
             </p>
           </Panel>
         </section>

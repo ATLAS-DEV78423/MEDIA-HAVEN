@@ -105,6 +105,11 @@
   outline-offset: var(--ring-offset);
 }
 
+.tokenStatus {
+  font-size: var(--text-micro);
+  color: var(--paper-54);
+}
+
 .rootHint {
   margin-top: var(--s-3);
   font-size: var(--text-small);
