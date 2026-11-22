@@ -257,8 +257,9 @@ impl ProwlarrHttp {
     fn live() -> Self {
         Self {
             fetch: Box::new(|request| {
+                // shortcut: a single 20s timeout covers slow public indexers; upgrade to per-indexer budgets if latency matters.
                 let client = reqwest::blocking::Client::builder()
-                    .timeout(Duration::from_secs(2))
+                    .timeout(Duration::from_secs(20))
                     .build()
                     .map_err(|_| TRANSPORT_ERROR.to_string())?;
                 let url = format!(
