@@ -681,6 +681,11 @@ async fn downloads_list(State(state): State<AppState>) -> Result<Json<DownloadsS
     Ok(Json(state.service.downloads().await?))
 }
 
+/// Cap on poster downloads in one discovery request. Each poster costs a
+/// sequential `fetch_artwork_bytes` (10 s timeout) inside the single blocking
+/// task, so an uncapped cold page could stall the response for minutes.
+const MAX_DISCOVER_POSTERS_PER_REQUEST: usize = 12;
+
 /// Display-only TMDB catalogue. One blocking batch covers the provider fetch
 /// and the poster cache; without a key nothing is fetched or read.
 async fn discover_catalog(
@@ -707,23 +712,30 @@ async fn discover_catalog(
         discover
             .discover(kind, page)
             .into_iter()
-            .map(|entry| {
+            .enumerate()
+            .map(|(index, entry)| {
                 let mut artwork = Vec::new();
-                if let Some(path) = entry.poster_path {
-                    let key = media_metadata::artwork_key(&path);
-                    if cache.get(&key).is_none() {
-                        if let Ok((bytes, content_type)) =
-                            media_metadata::fetch_artwork_bytes(&path)
-                        {
-                            let _ = cache.put(&key, &bytes, &content_type);
+                // shortcut: only the first MAX_DISCOVER_POSTERS_PER_REQUEST entries get a
+                // downloaded poster (10 s each, sequential in one blocking task); the rest
+                // stay display-only. Upgrade to a bounded-concurrency pool when shelves
+                // regularly exceed this cap.
+                if index < MAX_DISCOVER_POSTERS_PER_REQUEST {
+                    if let Some(path) = entry.poster_path {
+                        let key = media_metadata::artwork_key(&path);
+                        if cache.get(&key).is_none() {
+                            if let Ok((bytes, content_type)) =
+                                media_metadata::fetch_artwork_bytes(&path)
+                            {
+                                let _ = cache.put(&key, &bytes, &content_type);
+                            }
                         }
-                    }
-                    if cache.get(&key).is_some() {
-                        artwork.push(ArtworkRef {
-                            variant: ArtworkVariant::Poster,
-                            url: Some(format!("/artwork/{key}")),
-                            alt: format!("{} poster", entry.title),
-                        });
+                        if cache.get(&key).is_some() {
+                            artwork.push(ArtworkRef {
+                                variant: ArtworkVariant::Poster,
+                                url: Some(format!("/artwork/{key}")),
+                                alt: format!("{} poster", entry.title),
+                            });
+                        }
                     }
                 }
                 CatalogEntryDto {
@@ -1297,6 +1309,57 @@ mod tests {
                 .expect("discover succeeds");
         }
         assert_eq!(*seen.lock().expect("lock"), vec![1, 20]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A cold 20-item catalogue must not stall the response: poster downloads
+    /// are capped, but every entry is still returned (the rest are display-only
+    /// with no artwork). Posters are pre-seeded so the fake makes no download.
+    #[tokio::test]
+    async fn discover_catalog_caps_posters_but_returns_every_entry() {
+        let dir = std::env::temp_dir().join(format!("mh-discover-cap-{}", uuid::Uuid::new_v4()));
+        let artwork_dir = dir.join("artwork");
+        std::fs::create_dir_all(&artwork_dir).expect("create temp dir");
+
+        let total = 20usize;
+        let mut results = Vec::new();
+        for index in 0..total {
+            let poster_path = format!("/p{index}.jpg");
+            let key = media_metadata::artwork_key(&poster_path);
+            std::fs::write(artwork_dir.join(&key), [0xFF, 0xD8, 0xFF, 0x00]).expect("seed poster");
+            results.push(format!(
+                r#"{{"id":{},"title":"Film {}","release_date":"2020-05-01","poster_path":"{}"}}"#,
+                index + 1,
+                index,
+                poster_path
+            ));
+        }
+        let page_json = format!(r#"{{"page":1,"results":[{}]}}"#, results.join(","));
+
+        let provider = DiscoverProvider::with_fetch(
+            discover_options(&dir, true),
+            Box::new(move |_, _, _| Ok(page_json.clone())),
+        );
+        let state = AppState::new(service_for_test().await, "test-token")
+            .with_discover(provider)
+            .with_artwork_dir(artwork_dir);
+
+        let screen = discover_catalog(State(state), args("movie", 1))
+            .await
+            .ok()
+            .expect("discover succeeds")
+            .0;
+        assert_eq!(
+            screen.entries.len(),
+            total,
+            "no entry may be dropped or truncated"
+        );
+        let with_art = screen
+            .entries
+            .iter()
+            .filter(|entry| !entry.artwork.is_empty())
+            .count();
+        assert_eq!(with_art, MAX_DISCOVER_POSTERS_PER_REQUEST);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
