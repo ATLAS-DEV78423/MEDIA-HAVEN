@@ -1877,3 +1877,16 @@ gates. All acquisition tests used fakes; no qB instance, torrent or executable
 was used or downloaded. **Live qB rejection is NOT RUN** pending a lawful source
 and human review. No scraper/indexer/catalogue, no new dependency, no live
 network/host change.
+
+## 2026-11-21 — End-to-end artwork verification (observed)
+
+Ran the updated backend from this branch on `127.0.0.1:8081` with
+`MEDIAHAVEN_DEV=1`, `MEDIAHAVEN_SEED=1` and a throwaway data dir; stopped it
+after the check. Signed `POST /library_home` returned 10 seeded items, 7 with a
+relative `/artwork/<64-hex>` URL (Dune, Arrival, The Tomorrow War, Star Wars:
+The Force Awakens, Blade Runner 2049 and two repeats). `GET /artwork/<hash>`
+for Arrival returned HTTP 200, `content-type: image/jpeg`,
+`x-content-type-options: nosniff`, `cache-control: public, max-age=604800`,
+53,600 bytes, magic `FF-D8-FF-E0`; 5 poster files were cached. This proves the
+API→cache→HTTP image path works end to end with real keyless IMDb data.
+Still NOT RUN: a real WebView/browser screenshot and a full-library seed.
