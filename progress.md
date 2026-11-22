@@ -2,9 +2,60 @@
 
 ## Last updated
 
-2026-11-22 (Operator-supplied TMDB token Tasks 1–3 code complete; live token
-run NOT RUN). Earlier 2026-11-21 entries are retained as history and are
+2026-11-22 (TMDB discovery catalogue Tasks 1–3 code complete; live catalogue
+with token NOT RUN). Earlier 2026-11-21 entries are retained as history and are
 explicitly superseded where they disagree with the newest entry.
+
+## 2026-11-22 — TMDB discovery catalogue (Tasks 1–3; live catalogue with token NOT RUN)
+
+Implemented per `docs/superpowers/plans/2026-11-22-tmdb-discovery-catalogue.md`
+on worktree `ea5b46` (branch `tmdb-artwork-and-exe-guard`, Task-3 base
+`11621c6`). No new dependency, no push/merge/install; Playwright config and
+`vite.config.ts` untouched. Task 3 frontend detail:
+`.superpowers/sdd/2026-11-22-tmdb-discovery-catalogue/task-3-report.md`.
+
+- **Tasks 1–2 (already landed; unchanged here).** ADR-0027, the display-only
+  `DiscoverProvider`, `discover_catalog` across contract/route/Tauri and the
+  generated command union, and poster caching. Their Rust gates are recorded
+  in the Task-1/Task-2 reports and were **not re-run** by Task 3.
+- **Task 3 (frontend).** `types.ts` gained `CatalogKind`/`CatalogEntry`/
+  `CatalogScreen` (camelCase, matching Rust); `api.discover(kind, page = 1)`
+  calls the named command. New display-only `CatalogShelf` renders posters with
+  an `apiBase` prefix exactly once, a guarded `onError` that hides a failed
+  image, title/year/rating and the exact TMDB attribution line; `available:
+  false` shows a quiet "Add a TMDB token in Settings" message with a Settings
+  link and no cards. Movies/Shows/Anime gained a per-visit My library /
+  Discover toggle; `BrowseView` itself is unchanged and library mode remains
+  the default. Anime Discover states it uses TMDB's Japanese-animation filter
+  and may miss anime; its local Anime tag filter is unchanged.
+
+### Verified commands (observed)
+
+| Check | Result |
+|-------|--------|
+| `npm test -- --run src/components/catalog/CatalogShelf.test.tsx` (before implementation) | **RED**, exit 1 — `Failed to resolve import "./CatalogShelf"`, `Test Files 1 failed`, `Tests no tests` |
+| same targeted test after implementation | **GREEN**, exit 0 — `Test Files 1 passed`, `Tests 4 passed` |
+| `npm run typecheck` | **PASS**, exit 0 |
+| `npm run lint` | **PASS**, exit 0 (after moving the loading reset out of the effect into the mode-change handler) |
+| `npm test -- --run` | **PASS**, exit 0 — `Test Files 16 passed`, `Tests 45 passed` |
+| `npm run check:tokens` | **PASS**, exit 0 — `83 UI files scanned, 0 violations` |
+| `npm run build` | **PASS**, exit 0 — `100 modules transformed` |
+| `npm run check:bundle` | **PASS**, exit 0 — production bundle clean |
+
+### Honest verification note
+
+**A live catalogue run with a real token is NOT RUN.** No operator token was
+supplied, no live TMDB request was made and no live poster was observed in a
+WebView. Every catalogue test uses a fake `CatalogScreen`; no real secret was
+read. Anime Discover is an approximation (TMDB Animation genre + Japanese
+original language) and may miss anime. Rust gates for Tasks 1–2 were not
+re-run. No checkpoint passed.
+
+### Single next action
+
+An operator supplies a token in Settings, restarts the app so `core` receives
+`MEDIAHAVEN_TMDB_API_KEY`, then opens Discover on Movies and observes one live
+TMDB poster plus the attribution line; record the result here.
 
 ## 2026-11-22 — Operator-supplied TMDB token (Tasks 1–3; live token run NOT RUN)
 

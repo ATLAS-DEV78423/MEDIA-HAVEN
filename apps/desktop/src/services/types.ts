@@ -9,6 +9,26 @@ export interface ArtworkRef {
   alt: string;
 }
 
+/* Display-only TMDB discovery catalogue (camelCase wire shape). No token, host
+ * or upstream URL is carried — posters are the same relative hashed refs as
+ * the library's. */
+export type CatalogKind = "movie" | "tv" | "anime";
+
+export interface CatalogEntry {
+  id: string;
+  kind: CatalogKind;
+  title: string;
+  year: number | null;
+  synopsis: string | null;
+  rating: number | null;
+  artwork: ArtworkRef[];
+}
+
+export interface CatalogScreen {
+  available: boolean;
+  entries: CatalogEntry[];
+}
+
 export interface MediaAvailability {
   state: "available" | "missing-file" | "offline";
   lastSeenAt?: string | null;

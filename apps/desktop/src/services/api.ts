@@ -4,6 +4,8 @@
 import type {
   AppSettings,
   BrowseQuery,
+  CatalogKind,
+  CatalogScreen,
   DownloadsScreen,
   EpisodeSummary,
   HomeScreen,
@@ -58,6 +60,10 @@ export const api = {
 
   shows: (query: BrowseQuery = NO_QUERY) =>
     call<SeriesDetail[]>("library_shows", { query }),
+
+  /** Display-only TMDB catalogue. No local-library or acquisition action. */
+  discover: (kind: CatalogKind, page = 1) =>
+    call<CatalogScreen>("discover_catalog", { kind, page }),
 
   detail: async (id: string): Promise<MediaDetail> => {
     const base = await call<MediaDetail>("library_detail", { id });

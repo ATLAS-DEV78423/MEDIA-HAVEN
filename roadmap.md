@@ -1639,6 +1639,42 @@ these is unresolved, stop before implementation.
 - **Status:** [~] Code complete for Tasks 1–3 with local gates green. A live
   token run is **NOT RUN**. No new dependency, no push/merge/install.
 
+### [~] P6-09 — TMDB discovery catalogue (display-only)
+
+- **Goal:** Browse TMDB's popular/trending catalogue from the Movies, TV Shows
+  and Anime pages using the operator's existing token, with real posters and
+  no acquisition path.
+- **Scope:** Named command `discover_catalog(kind, page)`, display-only cards,
+  exact TMDB attribution, and a per-visit My library / Discover toggle. Anime
+  is approximated with TMDB's Animation genre + Japanese original language
+  filter; coverage is incomplete and stated in the UI.
+- **Out of scope:** Any site list, indexer, catalogue file, Cardigann
+  definition, auto-download, playback or local-library mapping; no new
+  dependency, runtime or opt-in switch; no Playwright/vite config change.
+- **Dependencies:** P6-08's operator token and ADR-0026; ADR-0027 (Accepted
+  2026-11-22) records the display-only decision.
+- **Implementation areas:** `crates/contract`, `crates/metadata`,
+  `crates/app-core`, `crates/core`, `apps/desktop/src-tauri`, `apps/desktop/src`.
+- **Acceptance criteria:**
+  - [ ] `discover_catalog` is registered across all named-command surfaces
+        (route parity now 25 commands); no token returns `available: false`.
+  - [ ] Cards are display-only: no detail link, add, download or play action.
+  - [ ] Poster URLs are relative `/artwork/<64-hex>` refs, prefixed with
+        `apiBase` exactly once, with a guarded `onError`; attribution is exact.
+  - [ ] `available: false` shows a quiet "add a TMDB token in Settings"
+        message with a Settings link, no cards and no request loop.
+  - [ ] Anime Discover states it uses TMDB's Japanese-animation filter and may
+        miss anime; the local-mode Anime tag filter is unchanged.
+  - [ ] Frontend gates typecheck / lint / test / check:tokens / build /
+        check:bundle PASS; no new npm dependency.
+- **Tests:** Fake-fetch metadata tests, loopback route tests and frontend
+  component tests are PASS. A live TMDB catalogue run with a real token is
+  **NOT RUN** — no live request was made and no live poster was observed.
+- **Risks:** Anime coverage is an approximation. TMDB may rate-limit or change
+  its API, degrading Discover to an empty section. No checkpoint passed.
+- **Status:** [~] Code complete for Tasks 1–3 with local gates green. Live
+  catalogue with token **NOT RUN**. No new dependency, no push/merge/install.
+
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 
 - **Gate:** P6-01 … P6-03 complete; the mandatory backend boundary is verified.
