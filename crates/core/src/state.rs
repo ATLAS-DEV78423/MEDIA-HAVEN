@@ -1,12 +1,16 @@
 //! Shared server state: the library application service, the install token,
-//! the offline IMDb ratings provider, and the keyless IMDb poster provider.
+//! the optional TMDB provider, the offline IMDb ratings provider, and the
+//! keyless IMDb poster provider.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use app_core::application::LibraryService;
 use media_acquisition::AcquisitionState;
-use media_metadata::{FileImdbFetch, ImdbArtworkProvider, ImdbOptions, ImdbProvider};
+use media_metadata::tmdb::{api_key_from_env, http_search_fetch, DEFAULT_MAX_CACHE_BYTES};
+use media_metadata::{
+    FileImdbFetch, ImdbArtworkProvider, ImdbOptions, ImdbProvider, TmdbOptions, TmdbProvider,
+};
 use media_persistence::sqlite::SqliteLibraryRepository;
 
 /// The application service over the SQLite adapter. `core` never talks to
@@ -28,6 +32,9 @@ pub struct AppState {
     /// Opt-in offline IMDb provider. `new` builds it disabled; the server
     /// process attaches the operator-configured one via `imdb_provider_from_env`.
     pub imdb: Arc<ImdbProvider>,
+    /// Optional TMDB artwork provider. Enabled only when the operator stored a
+    /// key; a failed lookup degrades to IMDb, then bundled art (ADR-0026).
+    pub tmdb: Arc<TmdbProvider>,
     /// Keyless IMDb poster provider (title and year only, no API key). Always
     /// available; a failed lookup degrades to bundled art.
     pub imdb_artwork: Arc<ImdbArtworkProvider>,
@@ -43,6 +50,7 @@ impl AppState {
             token: Arc::from(token.into()),
             acquisition: Arc::new(AcquisitionState::new()),
             imdb: Arc::new(ImdbProvider::new(ImdbOptions::default())),
+            tmdb: Arc::new(TmdbProvider::new(TmdbOptions::default())),
             imdb_artwork: Arc::new(ImdbArtworkProvider::new()),
             artwork_dir: Arc::new(std::env::temp_dir().join("media-haven-artwork")),
         }
@@ -52,6 +60,13 @@ impl AppState {
     /// with real TSV files without touching the process environment.
     pub fn with_imdb(mut self, provider: ImdbProvider) -> Self {
         self.imdb = Arc::new(provider);
+        self
+    }
+
+    /// Attach a configured TMDB provider. Test seam: exercises enrichment with
+    /// a fake fetch, no network and no process environment.
+    pub fn with_tmdb(mut self, provider: TmdbProvider) -> Self {
+        self.tmdb = Arc::new(provider);
         self
     }
 
@@ -83,6 +98,22 @@ pub fn imdb_provider_from_env() -> ImdbProvider {
         ),
         None => ImdbProvider::new(ImdbOptions::default()),
     }
+}
+
+/// Build the TMDB provider from the operator-supplied key. Enabled whenever a
+/// non-blank key is present; there is deliberately no opt-in switch (ADR-0026).
+pub fn tmdb_provider_from_env(data_dir: &Path) -> TmdbProvider {
+    let api_key = api_key_from_env();
+    let enabled = api_key.is_some();
+    TmdbProvider::with_fetch(
+        TmdbOptions {
+            enabled,
+            api_key,
+            cache_dir: data_dir.join("tmdb-cache"),
+            max_bytes: DEFAULT_MAX_CACHE_BYTES,
+        },
+        http_search_fetch(),
+    )
 }
 
 #[cfg(test)]

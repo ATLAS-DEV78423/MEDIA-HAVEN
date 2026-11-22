@@ -11,7 +11,7 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{async_trait, Json, Router};
 use media_metadata::{
-    fetch_image_bytes, ArtworkCache, ImdbArtworkProvider, DEFAULT_MAX_CACHE_BYTES,
+    fetch_image_bytes, ArtworkCache, ImdbArtworkProvider, TmdbProvider, DEFAULT_MAX_CACHE_BYTES,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -235,35 +235,61 @@ const MAX_ENRICH_PER_REQUEST: usize = 12;
 /// Fill one item's artwork with a relative `/artwork/<hash>` URL. Shared by
 /// every DTO shape so lookup/cache/fetch logic lives in exactly one place.
 fn fill_poster(
+    tmdb: &TmdbProvider,
     imdb_artwork: &ImdbArtworkProvider,
     cache: &ArtworkCache,
     title: &str,
     year: Option<i64>,
     artwork: &mut Vec<ArtworkRef>,
 ) {
-    let Some(url) = imdb_artwork.poster_url(title, year) else {
-        return;
-    };
-    let key = media_metadata::artwork_key(&url);
-    if cache.get(&key).is_none() {
-        let Ok((bytes, kind)) = fetch_image_bytes(&url) else {
-            return;
-        };
-        if cache.put(&key, &bytes, &kind).is_err() {
-            return;
+    // TMDB first. A usable cached or freshly downloaded poster decides the
+    // single key we emit; every failure just falls through to IMDb.
+    let mut key: Option<String> = None;
+    if tmdb.options().enabled {
+        if let Some(found) = tmdb.lookup_full(title, year) {
+            if let Some(path) = found.poster_path {
+                let poster_key = media_metadata::artwork_key(&path);
+                if cache.get(&poster_key).is_some() {
+                    key = Some(poster_key);
+                } else if let Ok((bytes, kind)) = media_metadata::fetch_artwork_bytes(&path) {
+                    if cache.put(&poster_key, &bytes, &kind).is_ok() {
+                        key = Some(poster_key);
+                    }
+                }
+            }
         }
     }
-    artwork.push(ArtworkRef {
-        variant: ArtworkVariant::Poster,
-        url: Some(format!("/artwork/{key}")),
-        alt: format!("{title} poster"),
-    });
+
+    if key.is_none() {
+        let Some(url) = imdb_artwork.poster_url(title, year) else {
+            return;
+        };
+        let imdb_key = media_metadata::artwork_key(&url);
+        if cache.get(&imdb_key).is_none() {
+            let Ok((bytes, kind)) = fetch_image_bytes(&url) else {
+                return;
+            };
+            if cache.put(&imdb_key, &bytes, &kind).is_err() {
+                return;
+            }
+        }
+        key = Some(imdb_key);
+    }
+
+    if let Some(key) = key {
+        artwork.push(ArtworkRef {
+            variant: ArtworkVariant::Poster,
+            url: Some(format!("/artwork/{key}")),
+            alt: format!("{title} poster"),
+        });
+    }
 }
 
-/// One `spawn_blocking` for the whole batch: the IMDb provider and image cache
-/// are synchronous and may do disk I/O, but no tokio worker may block.
+/// One `spawn_blocking` for the whole batch: the TMDB/IMDb providers and image
+/// cache are synchronous and may do disk I/O, but no tokio worker may block.
 async fn enrich_artwork(state: &AppState, mut items: Vec<MediaSummary>) -> Vec<MediaSummary> {
     let fallback = items.clone();
+    let tmdb = state.tmdb.clone();
     let imdb_artwork = state.imdb_artwork.clone();
     let artwork_dir = state.artwork_dir.clone();
     let filled = tokio::task::spawn_blocking(move || {
@@ -271,6 +297,7 @@ async fn enrich_artwork(state: &AppState, mut items: Vec<MediaSummary>) -> Vec<M
         // shortcut: only the first MAX_ENRICH_PER_REQUEST items get a poster; the rest keep bundled art. Upgrade to a bounded-concurrency pool or a background refresh when shelves regularly exceed this cap or near-real-time freshness matters.
         for item in items.iter_mut().take(MAX_ENRICH_PER_REQUEST) {
             fill_poster(
+                &tmdb,
                 &imdb_artwork,
                 &cache,
                 &item.title,
@@ -290,6 +317,7 @@ async fn enrich_series_artwork(
     mut items: Vec<SeriesDetail>,
 ) -> Vec<SeriesDetail> {
     let fallback = items.clone();
+    let tmdb = state.tmdb.clone();
     let imdb_artwork = state.imdb_artwork.clone();
     let artwork_dir = state.artwork_dir.clone();
     let filled = tokio::task::spawn_blocking(move || {
@@ -297,6 +325,7 @@ async fn enrich_series_artwork(
         // shortcut: only the first MAX_ENRICH_PER_REQUEST items get a poster; the rest keep bundled art. Upgrade to a bounded-concurrency pool or a background refresh when shelves regularly exceed this cap or near-real-time freshness matters.
         for item in items.iter_mut().take(MAX_ENRICH_PER_REQUEST) {
             fill_poster(
+                &tmdb,
                 &imdb_artwork,
                 &cache,
                 &item.title,
@@ -313,6 +342,7 @@ async fn enrich_series_artwork(
 /// Movie and series detail are enriched in the same blocking batch.
 async fn enrich_detail_artwork(state: &AppState, mut detail: MediaDetail) -> MediaDetail {
     let fallback = detail.clone();
+    let tmdb = state.tmdb.clone();
     let imdb_artwork = state.imdb_artwork.clone();
     let artwork_dir = state.artwork_dir.clone();
     let filled = tokio::task::spawn_blocking(move || {
@@ -320,6 +350,7 @@ async fn enrich_detail_artwork(state: &AppState, mut detail: MediaDetail) -> Med
         match &mut detail {
             MediaDetail::Movie(movie) => {
                 fill_poster(
+                    &tmdb,
                     &imdb_artwork,
                     &cache,
                     &movie.title,
@@ -329,6 +360,7 @@ async fn enrich_detail_artwork(state: &AppState, mut detail: MediaDetail) -> Med
             }
             MediaDetail::Series(series) => {
                 fill_poster(
+                    &tmdb,
                     &imdb_artwork,
                     &cache,
                     &series.title,
@@ -777,7 +809,10 @@ mod tests {
     use app_core::application::LibraryService;
     use axum::body::Body;
     use axum::http::Request;
+    use media_metadata::tmdb::TmdbOptions;
     use media_persistence::sqlite::{connect_path, SqliteLibraryRepository};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     /// An allowlisted poster URL. The fake fetch returns only this string; the
@@ -910,6 +945,123 @@ mod tests {
             .filter(|item| !item.artwork.is_empty())
             .count();
         assert_eq!(with_art, MAX_ENRICH_PER_REQUEST);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A minimal TMDB search payload a fake fetch can return. Only title and
+    /// poster_path are needed by `parse_result`; no network is involved.
+    fn tmdb_json(poster_path: &str) -> String {
+        format!(r#"{{"results":[{{"title":"Arrival","poster_path":"{poster_path}"}}]}}"#)
+    }
+
+    /// An enabled TMDB provider driven by a fake fetch, writing its metadata
+    /// cache under `dir` so the test never touches the shared temp dir.
+    fn fake_tmdb(dir: &std::path::Path, fetch: Box<media_metadata::tmdb::FetchFn>) -> TmdbProvider {
+        TmdbProvider::with_fetch(
+            TmdbOptions {
+                enabled: true,
+                api_key: Some("test-key".into()),
+                cache_dir: dir.join("tmdb-cache"),
+                ..TmdbOptions::default()
+            },
+            fetch,
+        )
+    }
+
+    /// TMDB returns a poster (pre-seeded in the artwork cache): the DTO carries
+    /// only its hashed URL and the IMDb fetch is never attempted.
+    #[tokio::test]
+    async fn tmdb_poster_wins_and_imdb_is_not_called() {
+        let dir = std::env::temp_dir().join(format!("mh-tmdb-win-{}", uuid::Uuid::new_v4()));
+        let artwork_dir = dir.join("artwork");
+        std::fs::create_dir_all(&artwork_dir).expect("create temp dir");
+        let poster_path = "/abc123def.jpg";
+        let key = media_metadata::artwork_key(poster_path);
+        std::fs::write(artwork_dir.join(&key), [0xFF, 0xD8, 0xFF, 0x00]).expect("seed poster");
+
+        let imdb_calls = Arc::new(AtomicUsize::new(0));
+        let calls = imdb_calls.clone();
+        let imdb = ImdbArtworkProvider::with_fetch(Box::new(move |_, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(FAKE_URL.into())
+        }));
+        let owned_path = poster_path.to_string();
+        let tmdb = fake_tmdb(&dir, Box::new(move |_, _, _| Ok(tmdb_json(&owned_path))));
+        let state = AppState::new(service_for_test().await, "test-token")
+            .with_tmdb(tmdb)
+            .with_imdb_artwork(imdb)
+            .with_artwork_dir(artwork_dir);
+
+        let items = enrich_artwork(&state, vec![summary_for_test()]).await;
+        let refs = &items[0].artwork;
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].variant, ArtworkVariant::Poster);
+        let expected = format!("/artwork/{key}");
+        assert_eq!(refs[0].url.as_deref(), Some(expected.as_str()));
+        assert_eq!(
+            imdb_calls.load(Ordering::SeqCst),
+            0,
+            "IMDb must not be called"
+        );
+        let json = serde_json::to_string(&items[0]).unwrap();
+        assert!(!json.contains("image.tmdb.org"));
+        assert!(!json.contains("abc123def"));
+        assert!(!json.contains("m.media-amazon.com"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// TMDB fails (no usable poster): the IMDb block runs and supplies the URL.
+    #[tokio::test]
+    async fn tmdb_failure_falls_back_to_imdb() {
+        let dir = std::env::temp_dir().join(format!("mh-tmdb-fallback-{}", uuid::Uuid::new_v4()));
+        let artwork_dir = dir.join("artwork");
+        std::fs::create_dir_all(&artwork_dir).expect("create temp dir");
+        let key = media_metadata::artwork_key(FAKE_URL);
+        std::fs::write(artwork_dir.join(&key), [0xFF, 0xD8, 0xFF, 0x00]).expect("seed poster");
+
+        let imdb_calls = Arc::new(AtomicUsize::new(0));
+        let calls = imdb_calls.clone();
+        let imdb = ImdbArtworkProvider::with_fetch(Box::new(move |_, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(FAKE_URL.into())
+        }));
+        let tmdb = fake_tmdb(&dir, Box::new(|_, _, _| Err("boom".into())));
+        let state = AppState::new(service_for_test().await, "test-token")
+            .with_tmdb(tmdb)
+            .with_imdb_artwork(imdb)
+            .with_artwork_dir(artwork_dir);
+
+        let items = enrich_artwork(&state, vec![summary_for_test()]).await;
+        let refs = &items[0].artwork;
+        assert_eq!(refs.len(), 1);
+        let expected = format!("/artwork/{key}");
+        assert_eq!(refs[0].url.as_deref(), Some(expected.as_str()));
+        assert_eq!(imdb_calls.load(Ordering::SeqCst), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Both providers fail: no artwork is added and bundled art is untouched.
+    #[tokio::test]
+    async fn both_providers_failing_leaves_artwork_empty() {
+        let dir = std::env::temp_dir().join(format!("mh-tmdb-none-{}", uuid::Uuid::new_v4()));
+        let artwork_dir = dir.join("artwork");
+        std::fs::create_dir_all(&artwork_dir).expect("create temp dir");
+
+        let imdb_calls = Arc::new(AtomicUsize::new(0));
+        let calls = imdb_calls.clone();
+        let imdb = ImdbArtworkProvider::with_fetch(Box::new(move |_, _| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err("boom".into())
+        }));
+        let tmdb = fake_tmdb(&dir, Box::new(|_, _, _| Err("boom".into())));
+        let state = AppState::new(service_for_test().await, "test-token")
+            .with_tmdb(tmdb)
+            .with_imdb_artwork(imdb)
+            .with_artwork_dir(artwork_dir);
+
+        let items = enrich_artwork(&state, vec![summary_for_test()]).await;
+        assert!(items[0].artwork.is_empty());
+        assert_eq!(imdb_calls.load(Ordering::SeqCst), 1);
         std::fs::remove_dir_all(&dir).ok();
     }
 }
