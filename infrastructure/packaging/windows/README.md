@@ -5,7 +5,7 @@ Windows installer and release packaging for MEDIA HAVEN.
 **Status: artifact built and published as a GitHub pre-release.** A fresh
 unsigned per-user NSIS installer was rebuilt from HEAD `7a062c4` on 2026-11-22
 and published at
-https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0 with
+https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0-beta with
 `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md` and `ALL-IN-ONE.md`. SBOM and
 clean-VM install remain NOT RUN. The older note that config preconditions were
 unmet was superseded by the packaging fixes recorded in `docs/operations/release.md`.

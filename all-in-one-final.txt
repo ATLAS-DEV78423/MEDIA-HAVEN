@@ -631,7 +631,7 @@ STATUS: On 2026-11-22 a fresh unsigned NSIS installer (v0.1.0, x64, ~3.60 MiB,
 identifier com.mediahaven.desktop) was rebuilt from HEAD `7a062c4` and published
 as a GitHub PRE-RELEASE at:
 
-  https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0
+  https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0-beta
 
 Assets: MEDIA_HAVEN_0.1.0_x64-setup.exe, SHA256SUMS.txt, THIRD_PARTY_NOTICES.md
 and ALL-IN-ONE.md. The installer's SHA-256 is:

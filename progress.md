@@ -7,11 +7,11 @@ first; earlier sections are retained as history and are explicitly superseded
 where they disagree with it. See `roadmap.md` for sequencing and `CHANGELOG.md`
 for a feature summary.
 
-## 2026-11-22 — GitHub pre-release `v0.1.0` published
+## 2026-11-22 — GitHub beta pre-release `v0.1.0-beta` published
 
 By explicit human instruction, a fresh unsigned per-user NSIS installer was
 rebuilt from HEAD `7a062c4` and published as a tagged GitHub **pre-release**:
-https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0 (tag
+https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0-beta (tag
 `v0.1.0` -> `7a062c4`). The earlier local artifact predated the R-01/installer
 and keyboard-navigation commits, so rebuilding was required before publishing.
 

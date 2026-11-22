@@ -26,7 +26,7 @@ browse and play them through a full-screen, remote-friendly interface.
 
 An unsigned per-user Windows x64 installer is published as a tagged
 **pre-release** at
-https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0 (SHA-256
+https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0-beta (SHA-256
 `2828c2ad5d002a0d83decb31ead51c8f47d66f6606437182d614d8812fb937b4`). Verify the
 checksum before running; Windows will show a SmartScreen warning because the
 build is unsigned. This is a prototype, not a supported product release. Full

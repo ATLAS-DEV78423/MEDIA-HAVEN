@@ -271,7 +271,7 @@ Use only lawful media; back up your own source files; supply your own Torznab en
 ### 4.1 Path A — end-user installer (published pre-release)
 
 > [!WARNING]
-> On 2026-11-22 a fresh unsigned NSIS installer (v0.1.0, x64, ~3.60 MiB, `com.mediahaven.desktop`) was rebuilt from `7a062c4` and published as a GitHub **pre-release**: https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0 — with the installer, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md` and this guide. It has **not** been tested on a clean VM and no checkpoint has passed; the caveats below still apply.
+> On 2026-11-22 a fresh unsigned NSIS installer (v0.1.0, x64, ~3.60 MiB, `com.mediahaven.desktop`) was rebuilt from `7a062c4` and published as a GitHub **beta pre-release**: https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0-beta — with the installer, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md` and this guide. It has **not** been tested on a clean VM and no checkpoint has passed; the caveats below still apply.
 
 1. Obtain the installer and `SHA256SUMS.txt` from the official release source. Do not accept a checksum relayed through the same channel as the binary.
 2. Verify it:
@@ -456,7 +456,7 @@ No ADR-0020 exists — the number was skipped. **Only the human owner may accept
 
 **NOT RUN:** real playback, codec/GPU/audio/subtitle matrix; container startup and live host/container boundary; live TMDB/IMDb/OMDb/Torznab requests; live acquisition, prefetch and cleanup; clean-VM install, uninstall and upgrade/rollback (the published installer has not been exercised in a clean VM); second-machine LAN reachability; low-disk and power-interruption tests; SBOM; signed build; reproducibility; every-screen automated keyboard walkthrough; all CP-0…CP-7 sign-offs.
 
-**PASS (2026-11-22):** fresh unsigned NSIS installer rebuilt from `7a062c4` with `build.ps1` (exit 0), checksum verified, and published as GitHub pre-release `v0.1.0`.
+**PASS (2026-11-22):** fresh unsigned NSIS installer rebuilt from `7a062c4` with `build.ps1` (exit 0), checksum verified, and published as GitHub beta pre-release `v0.1.0-beta`.
 
 ### 5.4 Glossary
 

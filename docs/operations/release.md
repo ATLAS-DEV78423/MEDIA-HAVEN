@@ -3,9 +3,9 @@
 Status: **installer built, checksummed and published as a tagged GitHub
 pre-release.** On 2026-11-22 a fresh unsigned NSIS installer was rebuilt from
 HEAD `7a062c4` with the command below and published at
-`https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0` with four
+`https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0-beta` with four
 assets: `MEDIA_HAVEN_0.1.0_x64-setup.exe` (~3.60 MiB), `SHA256SUMS.txt`,
-`THIRD_PARTY_NOTICES.md` and `ALL-IN-ONE.md`. The tag `v0.1.0` points at
+`THIRD_PARTY_NOTICES.md` and `ALL-IN-ONE.md`. The tag `v0.1.0-beta` points at
 `7a062c4`. The installer's SHA-256 is
 `2828c2ad5d002a0d83decb31ead51c8f47d66f6606437182d614d8812fb937b4`.
 The release is explicitly marked **pre-release**: no checkpoint has passed and
@@ -106,7 +106,7 @@ through the same channel as the binary.
 
 - **Installer build: PASS (local, 2026-11-22).** A real artifact and its
   `SHA256SUMS.txt` were rebuilt from HEAD `7a062c4`; `build.ps1` gate exited 0.
-  The artifact was published as a GitHub pre-release (tag `v0.1.0`). The output
+  The artifact was published as a GitHub beta pre-release (tag `v0.1.0-beta`). The output
   remains gitignored in the repository itself.
 - **SBOM: NOT RUN** (all tools missing - see `sbom/README.md`).
 - **Reproducibility: UNVERIFIED.** The hash changed between builds; the cause is
