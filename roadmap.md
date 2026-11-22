@@ -1721,6 +1721,53 @@ these is unresolved, stop before implementation.
   runtime and Prowlarr instance **NOT RUN**. No new dependency, no
   push/merge/install.
 
+### [~] P6-11 — Seeded sources and search from Details
+
+- **Goal:** Ship the provider definitions inside the app, install them into the
+  operator's own Prowlarr with one click, and let the user shortlist sources
+  from a title's Details page and send a chosen one to the downloader.
+- **Scope:** Five attributed provider definitions embedded with `include_str!`;
+  host-internal `POST /host/indexers_seed` and `POST /host/source_search` routes
+  reusing one injectable Prowlarr HTTP seam; two named Tauri host commands
+  (`indexers_seed`, `source_search`); a `SourceResults` panel on Details with a
+  "Find sources" button. Search parses Torznab XML with simple string scanning
+  and returns at most ten path-free candidates. No new dependency.
+- **Out of scope:** Bundled trackers, site lists, catalogues or unlawful
+  acquisition guidance; auto-download, auto-selection or playback from search;
+  a 26th renderer command (the contract stays at 25); live indexer calls in tests.
+- **Dependencies:** ADR-0018 (qB boundary), ADR-0021 (R-01 source mapping),
+  ADR-0024 (executable guard), ADR-0028 (Prowlarr inputs) and ADR-0029
+  (**Accepted (2026-11-22, human instruction)**).
+- **Implementation areas:** `crates/core/src/{indexers.rs,acquisition.rs,lib.rs}`,
+  `crates/core/resources/indexers/`, `apps/desktop/src-tauri/src`,
+  `apps/desktop/src`.
+- **Acceptance criteria:**
+  - [ ] Five definitions bundled verbatim with `ATTRIBUTION.md` naming both
+        upstream repos; no tracker, indexer catalogue or site list is bundled.
+  - [ ] `indexers_seed` adds the three Prowlarr-native definitions, skips the
+        two custom ones, and returns counts/fixed reasons only — no URL or key.
+  - [ ] `source_search` queries enabled indexers, filters by normalized title
+        prefix plus year/season/episode when supplied, sorts by seeders desc,
+        caps at ten, and returns only `{id, title, size, seeders, magnet}`.
+  - [ ] Blank config, transport/parse failure and one failing indexer degrade
+        without leaking a path, address, key or raw response text.
+  - [ ] Details "Find sources" shows candidates only on request; choosing one
+        calls `download_add` then `source_set` with fixed status text. No
+        auto-selection and no playback path from the panel.
+  - [ ] Frontend gates typecheck / lint / test / check:tokens / build /
+        check:bundle PASS; Rust fmt / clippy / lib test / all-targets check PASS;
+        contract stays at 25 commands; no new dependency.
+- **Tests:** Rust RED then GREEN (29 lib tests) with fake Torznab XML; frontend
+  `SourceResults` RED then GREEN (3 tests), full suite 19 files / 56 tests. All
+  gates green. **Live Prowlarr seeding and live Torznab search are NOT RUN** —
+  no operator indexer instance was supplied; no live request was made.
+- **Risks:** Search quality depends on the operator's indexer health and title
+  conventions; S/E detection uses string scanning and may miss unusual release
+  names. A chosen source is a candidate until the existing executable/ffprobe/
+  Defender gates run. No checkpoint passed.
+- **Status:** [~] Code complete with local gates green. Live seeding and live
+  search **NOT RUN**. No new dependency, no push/merge/install.
+
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 
 - **Gate:** P6-01 … P6-03 complete; the mandatory backend boundary is verified.

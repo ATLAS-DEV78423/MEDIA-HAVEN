@@ -2,10 +2,78 @@
 
 ## Last updated
 
-2026-11-22 (app startup on mount + Prowlarr inputs, Task 2 of this plan complete;
-live WSL/Docker start and real Prowlarr connection NOT RUN). Earlier 2026-11-22
-and 2026-11-21 entries are retained as history and are explicitly superseded
-where they disagree with the newest entry.
+2026-11-22 (seeded sources + search, Task 3 of this plan complete; live Prowlarr
+seeding and live Torznab search NOT RUN). Earlier 2026-11-22 and 2026-11-21
+entries are retained as history and are explicitly superseded where they
+disagree with the newest entry.
+
+## 2026-11-22 — Seeded sources and search from Details (plan Task 3; live search NOT RUN)
+
+Implemented per `docs/superpowers/plans/2026-11-22-seeded-sources-and-search.md`
+on worktree `ea5b46` (branch `tmdb-artwork-and-exe-guard`, base `c7b0476`, which
+already carried plan Tasks 1–2). No new dependency, no push/merge/install.
+Full detail: `.superpowers/sdd/2026-11-22-seeded-sources-and-search/task-3-report.md`.
+
+- **Core search.** `POST /host/source_search` reuses the seeder's single
+  `ProwlarrHttp` / `ProwlarrFetchFn` seam — no second client. It reads the
+  address/key only from `core`'s env, GETs `/api/v1/indexer` for enabled ids,
+  GETs `/api/v1/indexer/{id}/newznab` (2 s timeout, form-encoded `q`), splits the
+  XML on `<item>`, and accepts only normalized-title prefixes with matching
+  year/season/episode when supplied. Results sort by seeders desc, cap at ten,
+  and carry only `{id, title, size, seeders, magnet}`. Blank config, bad response
+  and per-indexer failure degrade to fewer candidates with fixed strings; no
+  address, key, path or raw response text is returned.
+- **Host/renderer.** Tauri command `source_search(args)` forwards to the host
+  route through the existing signed `post_internal`; contract stays at 25.
+  `api.sourceSearch(query)` and a `SourceResults` panel on Details add a "Find
+  sources" button. Results are candidates only: choosing one calls the existing
+  `download_add` then `api.sourceSet(mediaId, magnet)` and shows fixed status
+  text. No auto-download, auto-selection or playback from the panel; the
+  executable guard and probe gates are untouched.
+- **Docs.** ADR-0029 recorded **Accepted (2026-11-22, human instruction)** by
+  the agent as scribe and indexed in `docs/decisions/README.md`; P6-11 added to
+  `roadmap.md`; no checkpoint passed.
+
+### Verified commands (observed)
+
+`cargo fmt --all -- --check` first reported diffs in `acquisition.rs`; `cargo fmt
+--all` was run, then the check exited 0. One transient MSVC `LNK1104` file-lock
+hit the first full `cargo test -p mediahaven-core` immediately after clippy; a
+straight retry exited 0 with no code change (pre-existing toolchain quirk).
+
+| Check | Result |
+|-------|--------|
+| `cargo test -p mediahaven-core --lib acquisition::tests::source_search` (before implementation) | **RED**, exit 1 — `cannot find struct SourceSearchArgs`, `cannot find function source_search_with` |
+| same targeted test after implementation | **GREEN**, exit 0 — 1 passed |
+| `npm test -- --run src/components/cards/SourceResults.test.tsx` (before implementation) | **RED**, exit 1 — `Failed to resolve import ./SourceResults` |
+| same targeted test after implementation | **GREEN**, exit 0 — 3 passed |
+| `cargo test -p mediahaven-core` | **PASS**, exit 0 — lib 29 passed / 0 failed; auth 11; 0 doc |
+| `cargo fmt --all -- --check` | **PASS**, exit 0 |
+| `cargo clippy -p mediahaven-core -p mediahaven-desktop --all-targets -- -D warnings` | **PASS**, exit 0 |
+| `cargo check -p mediahaven-desktop --all-targets` | **PASS**, exit 0 |
+| `npm run typecheck` / `npm run lint` / `npm test -- --run` | **PASS**, exit 0 × 3 — 19 files / 56 tests passed |
+| `npm run check:tokens` | **PASS**, exit 0 — 90 UI files scanned, 0 violations |
+| `npm run build` | **PASS**, exit 0 — 104 modules transformed |
+| `npm run check:bundle` | **PASS**, exit 0 — production bundle clean |
+| `git diff --check` | **PASS**, exit 0 |
+
+### Honest verification note
+
+**No live Prowlarr seeding and no live Torznab search were run.** No operator
+indexer instance or credentials were supplied; fake Torznab XML and fake HTTP
+closures only. No real secret was stored, read or transmitted. S/E detection
+uses simple string scanning of normalized release titles and may miss unusual
+formats; all candidates remain unverified until the existing download gates
+run. No checkpoint passed; no ADR was self-accepted (ADR-0029 records a human
+instruction).
+
+### Single next action
+
+With an operator Prowlarr instance configured, open Settings → "Set up sources",
+confirm the three native indexers appear, then open any title's Details page,
+press "Find sources", and record whether relevant candidates appear and whether
+choosing one passes the executable guard and probe before download. Record the
+observed result here.
 
 ## 2026-11-22 — App startup on mount and Prowlarr inputs (plan Task 2; live runtime NOT RUN)
 

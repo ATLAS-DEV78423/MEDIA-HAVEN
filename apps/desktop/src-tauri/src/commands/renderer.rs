@@ -487,6 +487,15 @@ pub fn indexers_seed() -> Result<Value, String> {
         .map_err(|_| "Sources could not be set up. Try again.".to_string())
 }
 
+/// Search the operator's enabled Prowlarr indexers for path-free candidates.
+/// The renderer sends only a title (plus optional year/season/episode); the host
+/// reads the address/key from its own environment. No auto-download or playback.
+#[tauri::command]
+pub fn source_search(args: Value) -> Result<Value, String> {
+    post_internal("host/source_search", args)
+        .map_err(|_| "Sources could not be found. Try again.".to_string())
+}
+
 /// Current acquisition rows (path-free identities) from the host-internal route.
 #[tauri::command]
 pub fn download_status() -> Result<Value, CommandError> {

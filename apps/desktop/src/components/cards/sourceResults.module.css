@@ -1,0 +1,73 @@
+/* Token-only styling (Development.md §7.3). No literal colours or px. */
+
+.root {
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  background: var(--black-42);
+  border: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--text-heading);
+  font-weight: var(--weight-semibold);
+  color: var(--paper);
+}
+
+.hint {
+  margin: var(--s-2) 0 0;
+  font-size: var(--text-small);
+  color: var(--paper-54);
+}
+
+.list {
+  display: grid;
+  gap: var(--s-2);
+  margin: var(--s-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-sm);
+  background: var(--glass-bg-quiet);
+  border: var(--hairline) solid var(--glass-edge-soft);
+}
+
+.copy {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.name {
+  font-size: var(--text-small);
+  font-weight: var(--weight-medium);
+  color: var(--paper);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  font-size: var(--text-micro);
+  color: var(--paper-54);
+}
+
+.status {
+  margin: var(--s-3) 0 0;
+  font-size: var(--text-small);
+  color: var(--paper-90);
+}

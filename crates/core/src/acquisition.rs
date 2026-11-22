@@ -45,6 +45,7 @@ const INSPECT_PATH: &str = "/host/acquisition_inspect";
 const SOURCE_SET_PATH: &str = "/host/acquisition_source_set";
 const IMDB_LOOKUP_PATH: &str = "/host/imdb_lookup";
 const SEED_PATH: &str = "/host/indexers_seed";
+const SEARCH_PATH: &str = "/host/source_search";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -102,6 +103,7 @@ pub fn host_router() -> Router<AppState> {
         .route(SOURCE_SET_PATH, post(source_set))
         .route(IMDB_LOOKUP_PATH, post(imdb_lookup))
         .route(SEED_PATH, post(indexers_seed))
+        .route(SEARCH_PATH, post(source_search))
 }
 
 /// Attach an operator-supplied source to a library item (R-01 / ADR-0021).
@@ -237,6 +239,9 @@ struct ProwlarrRequest {
     base_url: String,
     api_key: String,
     path: String,
+    /// Extra query string appended after `apikey` (begins with `&`, or empty).
+    /// Seeded source calls leave it empty; Torznab search supplies `t` and `q`.
+    query: String,
     body: Option<Value>,
 }
 
@@ -257,10 +262,11 @@ impl ProwlarrHttp {
                     .build()
                     .map_err(|_| TRANSPORT_ERROR.to_string())?;
                 let url = format!(
-                    "{}{}?apikey={}",
+                    "{}{}?apikey={}{}",
                     request.base_url.trim_end_matches('/'),
                     request.path,
-                    request.api_key
+                    request.api_key,
+                    request.query
                 );
                 let outgoing = match &request.body {
                     Some(body) => client
@@ -289,6 +295,7 @@ impl ProwlarrHttp {
             base_url: base_url.to_string(),
             api_key: api_key.to_string(),
             path: path.to_string(),
+            query: String::new(),
             body,
         })?;
         serde_json::from_str(&text).map_err(|_| RESPONSE_ERROR.to_string())
@@ -397,6 +404,280 @@ async fn indexers_seed() -> Result<Json<Value>, ApiError> {
                 true,
             ))
         })?;
+    encode(result)
+}
+
+// ---------------------------------------------------------------------------
+// Source search (Task 3). Reuses the SAME ProwlarrHttp seam as seeding: no
+// second client, no credential in a DTO. Results are candidates only; sending
+// one still goes through download_add and its executable/probe gates.
+// ---------------------------------------------------------------------------
+
+/// Inputs from the Details page. The address and key are never part of this DTO.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct SourceSearchArgs {
+    title: String,
+    year: Option<i32>,
+    season: Option<u32>,
+    episode: Option<u32>,
+}
+
+/// A path-free candidate. `magnet` is the source the operator may choose; `id`
+/// is a synthetic `indexer:item` key, never a URL or a filesystem path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceCandidate {
+    pub id: String,
+    pub title: String,
+    pub size: u64,
+    pub seeders: u32,
+    pub magnet: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceSearchResult {
+    pub results: Vec<SourceCandidate>,
+}
+
+const MAX_SEARCH_RESULTS: usize = 10;
+const MAX_SEARCH_TITLE_LEN: usize = 200;
+
+/// Minimal form encoding for a single Torznab `q` value; no dependency.
+fn form_encode(raw: &str) -> String {
+    let mut out = String::new();
+    for byte in raw.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// Inner text of the first `<tag>…</tag>` in a fragment. Handles the namespaced
+/// `magnet:link` tag as naturally as plain `title`/`size`/`link`.
+fn xml_value<'a>(block: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let from = block.find(&open)? + open.len();
+    let to = block[from..].find(&close)?;
+    Some(block[from..from + to].trim())
+}
+
+/// One attribute value from an XML open tag; both quote styles are accepted.
+fn xml_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    for quote in ['"', '\''] {
+        let needle = format!("{name}={quote}");
+        if let Some(from) = tag.find(&needle).map(|offset| offset + needle.len()) {
+            if let Some(to) = tag[from..].find(quote) {
+                return Some(&tag[from..from + to]);
+            }
+        }
+    }
+    None
+}
+
+/// Seeders from `<torznab:attr name="seeders" value="…"/>`; attribute order is
+/// not assumed. Missing or malformed values degrade to zero (sort falls back).
+fn xml_seeders(block: &str) -> u32 {
+    let mut from = 0usize;
+    while let Some(relative) = block[from..].find("<torznab:attr") {
+        let start = from + relative;
+        let end = block[start..]
+            .find("/>")
+            .map(|offset| start + offset + 2)
+            .or_else(|| block[start..].find('>').map(|offset| start + offset + 1))
+            .unwrap_or(block.len());
+        let attr = &block[start..end];
+        if xml_attr(attr, "name") == Some("seeders") {
+            return xml_attr(attr, "value")
+                .and_then(|value| value.parse::<f64>().ok())
+                .map(|value| value.max(0.0) as u32)
+                .unwrap_or(0);
+        }
+        from = end;
+    }
+    0
+}
+
+fn numbered(tokens: &[&str], prefix: &str, wanted: u32) -> bool {
+    let target = wanted.to_string();
+    let padded = format!("{wanted:02}");
+    tokens.iter().any(|token| {
+        token.strip_prefix(prefix).is_some_and(|rest| {
+            let digits: String = rest.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+            digits == target || digits == padded
+        })
+    })
+}
+
+fn labelled(tokens: &[&str], label: &str, wanted: u32) -> bool {
+    tokens
+        .windows(2)
+        .any(|pair| pair[0] == label && pair[1].parse::<u32>().ok() == Some(wanted))
+}
+
+/// Year/season/episode guards applied to the normalized item title only when
+/// the caller supplied them (movies supply a year; series supply S/E).
+fn matches_numbers(
+    norm: &str,
+    year: Option<i32>,
+    season: Option<u32>,
+    episode: Option<u32>,
+) -> bool {
+    let tokens: Vec<&str> = norm.split_whitespace().collect();
+    if let Some(year) = year {
+        let wanted = year.to_string();
+        if !tokens.iter().any(|token| *token == wanted) {
+            return false;
+        }
+    }
+    if let Some(season) = season {
+        let ok = numbered(&tokens, "s", season)
+            || labelled(&tokens, "season", season)
+            || tokens.iter().any(|token| {
+                token
+                    .split_once('x')
+                    .and_then(|(left, _)| left.parse::<u32>().ok())
+                    == Some(season)
+            });
+        if !ok {
+            return false;
+        }
+    }
+    if let Some(episode) = episode {
+        let trailing_number = |token: &&str, split: char| {
+            token.split_once(split).and_then(|(_, right)| {
+                let digits: String = right.chars().take_while(|ch| ch.is_ascii_digit()).collect();
+                digits.parse::<u32>().ok()
+            }) == Some(episode)
+        };
+        let ok = numbered(&tokens, "e", episode)
+            || labelled(&tokens, "episode", episode)
+            || labelled(&tokens, "ep", episode)
+            || tokens.iter().any(|token| trailing_number(token, 'e'))
+            || tokens.iter().any(|token| trailing_number(token, 'x'));
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
+fn parse_item(
+    block: &str,
+    indexer_id: u64,
+    index: usize,
+    args: &SourceSearchArgs,
+) -> Option<SourceCandidate> {
+    let title = xml_value(block, "title")?;
+    let magnet = xml_value(block, "magnet:link")
+        .or_else(|| xml_value(block, "link"))?
+        .to_string();
+    if magnet.is_empty() {
+        return None;
+    }
+    let wanted = normalize_title(args.title.trim());
+    let norm = normalize_title(title);
+    if wanted.is_empty() || !norm.starts_with(&wanted) {
+        return None;
+    }
+    if !matches_numbers(&norm, args.year, args.season, args.episode) {
+        return None;
+    }
+    Some(SourceCandidate {
+        id: format!("{indexer_id}-{index}"),
+        title: title.to_string(),
+        size: xml_value(block, "size")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0),
+        seeders: xml_seeders(block),
+        magnet,
+    })
+}
+
+/// The whole search behind the seeding seam. Every transport failure degrades
+/// to fewer candidates; no address, key or raw response text is ever returned.
+fn source_search_with(
+    http: &ProwlarrHttp,
+    base_url: &str,
+    api_key: &str,
+    args: &SourceSearchArgs,
+) -> SourceSearchResult {
+    let empty = SourceSearchResult {
+        results: Vec::new(),
+    };
+    let title = args.title.trim();
+    if title.is_empty() || title.len() > MAX_SEARCH_TITLE_LEN {
+        return empty;
+    }
+    if base_url.trim().is_empty() || api_key.trim().is_empty() {
+        return empty;
+    }
+
+    let Ok(indexers) = http.call(base_url, api_key, "/api/v1/indexer", None) else {
+        return empty;
+    };
+    let Some(rows) = indexers.as_array() else {
+        return empty;
+    };
+    let query = format!("&t=search&q={}", form_encode(title));
+    let mut results = Vec::new();
+    for row in rows {
+        // Prowlarr supplies the numeric id; formatting it as u64 keeps the
+        // request path free of renderer-controlled text.
+        let Some(indexer_id) = row["id"].as_u64() else {
+            continue;
+        };
+        let enabled = row["enable"]
+            .as_bool()
+            .or_else(|| row["enabled"].as_bool())
+            .unwrap_or(false);
+        if !enabled {
+            continue;
+        }
+        let Ok(xml) = (http.fetch)(&ProwlarrRequest {
+            base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
+            path: format!("/api/v1/indexer/{indexer_id}/newznab"),
+            query: query.clone(),
+            body: None,
+        }) else {
+            continue; // one indexer's failure must not fail the whole search
+        };
+        for (index, raw_item) in xml.split("<item>").skip(1).enumerate() {
+            let block = raw_item.split("</item>").next().unwrap_or(raw_item);
+            if let Some(candidate) = parse_item(block, indexer_id, index, args) {
+                results.push(candidate);
+            }
+        }
+    }
+    results.sort_by(|a, b| b.seeders.cmp(&a.seeders).then_with(|| a.id.cmp(&b.id)));
+    results.truncate(MAX_SEARCH_RESULTS);
+    SourceSearchResult { results }
+}
+
+/// Host route: search the operator's enabled Prowlarr indexers. The blocking
+/// client runs off the tokio workers; only path-free candidates are returned.
+async fn source_search(ApiJson(args): ApiJson<SourceSearchArgs>) -> Result<Json<Value>, ApiError> {
+    let result = tokio::task::spawn_blocking(move || {
+        let url = std::env::var(PROWLARR_URL_ENV).unwrap_or_default();
+        let key = std::env::var(PROWLARR_KEY_ENV).unwrap_or_default();
+        source_search_with(&ProwlarrHttp::live(), &url, &key, &args)
+    })
+    .await
+    .map_err(|_| {
+        ApiError(AppError::new(
+            AppErrorCode::Internal,
+            "The source search failed.",
+            true,
+        ))
+    })?;
     encode(result)
 }
 
@@ -1054,9 +1335,133 @@ mod tests {
             SOURCE_SET_PATH,
             IMDB_LOOKUP_PATH,
             SEED_PATH,
+            SEARCH_PATH,
         ] {
             assert!(path.starts_with(HOST_PREFIX), "host-only path: {path}");
         }
+    }
+
+    /// Offline Torznab fixture: one title-prefix match with the right year and
+    /// one prefix match with the wrong year (which must be discarded).
+    #[test]
+    fn source_search_filters_by_title_and_year_and_keeps_the_magnet() {
+        const KEY: &str = "sentinel-prowlarr-key";
+        const URL: &str = "http://prowlarr.invalid:9696";
+        let http = ProwlarrHttp {
+            fetch: Box::new(|request| match request.path.as_str() {
+                "/api/v1/indexer" => Ok(serde_json::json!([
+                    {"id": 7, "name": "YTS", "enable": true},
+                    {"id": 8, "name": "Disabled", "enable": false}
+                ])
+                .to_string()),
+                "/api/v1/indexer/7/newznab" => Ok(concat!(
+                    r#"<?xml version="1.0"?><rss><channel>"#,
+                    r#"<item><title>The.Right.Movie.1999.1080p</title>"#,
+                    r#"<magnet:link>magnet:?xt=urn:btih:WRONG</magnet:link>"#,
+                    r#"<size>100</size><torznab:attr name="seeders" value="99"/></item>"#,
+                    r#"<item><title>The.Right.Movie.2024.1080p</title>"#,
+                    r#"<magnet:link>magnet:?xt=urn:btih:RIGHT</magnet:link>"#,
+                    r#"<size>1234</size><torznab:attr name="seeders" value="12"/></item>"#,
+                    r#"</channel></rss>"#
+                )
+                .to_string()),
+                other => Err(format!("unexpected path: {other}")),
+            }),
+        };
+        let args = SourceSearchArgs {
+            title: "The Right Movie".to_string(),
+            year: Some(2024),
+            season: None,
+            episode: None,
+        };
+
+        let result = source_search_with(&http, URL, KEY, &args);
+
+        assert_eq!(result.results.len(), 1, "wrong-year item is discarded");
+        let candidate = &result.results[0];
+        assert_eq!(candidate.title, "The.Right.Movie.2024.1080p");
+        assert_eq!(candidate.magnet, "magnet:?xt=urn:btih:RIGHT");
+        assert_eq!(candidate.seeders, 12);
+        assert_eq!(candidate.size, 1234);
+        let wire = serde_json::to_string(&result).expect("serialize results");
+        assert!(!wire.contains(KEY), "the api key must never be returned");
+        assert!(!wire.contains("http://"), "no address reaches the renderer");
+    }
+
+    #[test]
+    fn source_search_sorts_by_seeders_and_caps_at_ten() {
+        let http = ProwlarrHttp {
+            fetch: Box::new(|request| match request.path.as_str() {
+                "/api/v1/indexer" => Ok(serde_json::json!([{"id": 1, "enable": true}]).to_string()),
+                "/api/v1/indexer/1/newznab" => {
+                    let mut xml = String::from("<rss><channel>");
+                    for n in 0..12 {
+                        xml.push_str(&format!(r#"<item><title>Show.S01E01.match.{n:02}</title>"#));
+                        xml.push_str(&format!(
+                            r#"<magnet:link>magnet:?xt=urn:btih:{n:02}</magnet:link>"#
+                        ));
+                        xml.push_str(&format!(
+                            r#"<torznab:attr name="seeders" value="{n}"/></item>"#
+                        ));
+                    }
+                    xml.push_str("</channel></rss>");
+                    Ok(xml)
+                }
+                other => Err(format!("unexpected path: {other}")),
+            }),
+        };
+        let args = SourceSearchArgs {
+            title: "Show".to_string(),
+            year: None,
+            season: Some(1),
+            episode: Some(1),
+        };
+
+        let result = source_search_with(&http, "http://prowlarr.invalid", "sentinel", &args);
+
+        assert_eq!(result.results.len(), 10, "cap at ten");
+        assert_eq!(result.results[0].seeders, 11, "most-seeded first");
+        assert_eq!(result.results[9].seeders, 2);
+        assert!(result
+            .results
+            .iter()
+            .all(|candidate| candidate.id.starts_with("1-")));
+        let wire = serde_json::to_string(&result).expect("serialize results");
+        assert!(!wire.contains("sentinel"));
+    }
+
+    #[test]
+    fn source_search_without_configuration_makes_no_call() {
+        use std::sync::{Arc, Mutex};
+
+        let calls = Arc::new(Mutex::new(0usize));
+        let counter = calls.clone();
+        let http = ProwlarrHttp {
+            fetch: Box::new(move |_| {
+                *counter.lock().expect("count call") += 1;
+                Ok("[]".to_string())
+            }),
+        };
+        let args = SourceSearchArgs {
+            title: "Anything".to_string(),
+            year: None,
+            season: None,
+            episode: None,
+        };
+
+        assert!(source_search_with(&http, "  ", "key", &args)
+            .results
+            .is_empty());
+        assert!(
+            source_search_with(&http, "http://prowlarr.invalid", "   ", &args)
+                .results
+                .is_empty()
+        );
+        assert_eq!(
+            *calls.lock().expect("counted calls"),
+            0,
+            "no call without both inputs"
+        );
     }
 
     /// Offline Prowlarr fixture: three native definitions plus two custom ids

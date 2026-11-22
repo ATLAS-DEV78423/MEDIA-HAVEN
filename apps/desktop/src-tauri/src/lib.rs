@@ -71,6 +71,7 @@ pub fn run() {
             commands::download_root_set,
             commands::imdb_lookup,
             commands::indexers_seed,
+            commands::source_search,
             commands::settings_get,
             commands::settings_set,
             commands::playback_start,

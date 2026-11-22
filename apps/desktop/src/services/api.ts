@@ -40,6 +40,27 @@ export interface QueueScreen {
   entries: QueueEntry[];
 }
 
+/* Source-search DTOs. The host reads its Prowlarr address/key itself; these
+ * shapes carry no path, key or indexer URL — only display fields and a magnet. */
+export interface SourceQuery {
+  title: string;
+  year?: number | undefined;
+  season?: number | undefined;
+  episode?: number | undefined;
+}
+
+export interface SourceCandidate {
+  id: string;
+  title: string;
+  size: number;
+  seeders: number;
+  magnet: string;
+}
+
+export interface SourceSearchResult {
+  results: SourceCandidate[];
+}
+
 /* Display-only fields from the opt-in, offline IMDb/OMDb lookup. No dataset
  * path, API key or token is part of this wire shape. */
 export interface ImdbLookup {
@@ -134,4 +155,8 @@ export const api = {
   /** Attach an operator-supplied source to one item (R-01 / ADR-0021). */
   sourceSet: (mediaId: string, source: string) =>
     call<null>("source_set", { media_id: mediaId, source }),
+
+  /** Path-free source candidates from the configured indexers. No download. */
+  sourceSearch: (query: SourceQuery) =>
+    call<SourceSearchResult>("source_search", { args: query }),
 };

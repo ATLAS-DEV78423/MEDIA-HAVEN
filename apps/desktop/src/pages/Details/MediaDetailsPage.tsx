@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ImdbRating } from "@/components/cards/ImdbRating";
 import { MediaCard } from "@/components/cards/MediaCard";
+import { SourceResults } from "@/components/cards/SourceResults";
 import { TmdbAttribution } from "@/components/cards/TmdbAttribution";
 import { Shelf } from "@/components/shelf/Shelf";
 import { ActionButton, Chip, ProgressBar, buttonClass } from "@/components/ui/Controls";
@@ -366,6 +367,15 @@ export function MediaDetailsPage() {
             </p>
           ) : null}
         </section>
+
+        <SourceResults
+          mediaId={media.id}
+          query={{
+            title: media.title,
+            year: detail?.year ?? undefined,
+            ...(isSeries && activeSeason !== null ? { season: activeSeason } : {}),
+          }}
+        />
 
         {detail?.kind === "movie" && detail.cast.length > 0 ? (
           <p className={styles.synopsis} style={{ marginTop: "var(--s-6)" }}>
