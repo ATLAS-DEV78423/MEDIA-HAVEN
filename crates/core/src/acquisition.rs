@@ -600,6 +600,24 @@ fn matches_numbers(
     true
 }
 
+/// Whole-word phrase match on normalized titles. Release titles often prepend
+/// articles (`The Arrival …`) or suffix tags, so a prefix check drops real
+/// candidates; a token-aligned phrase accepts those without matching unrelated
+/// titles that merely contain the words in the wrong order.
+fn contains_phrase(norm: &str, wanted: &str) -> bool {
+    if wanted.is_empty() {
+        return false;
+    }
+    let haystack: Vec<&str> = norm.split_whitespace().collect();
+    let needle: Vec<&str> = wanted.split_whitespace().collect();
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle.as_slice())
+}
+
 fn parse_item(
     block: &str,
     indexer_id: u64,
@@ -623,7 +641,7 @@ fn parse_item(
         })?;
     let wanted = normalize_title(args.title.trim());
     let norm = normalize_title(title);
-    if wanted.is_empty() || !norm.starts_with(&wanted) {
+    if !contains_phrase(&norm, &wanted) {
         return None;
     }
     if !matches_numbers(&norm, args.year, args.season, args.episode) {
@@ -1533,6 +1551,53 @@ mod tests {
             .results
             .iter()
             .any(|candidate| candidate.magnet == "magnet:?xt=urn:btih:ABC"));
+        let wire = serde_json::to_string(&result).expect("serialize results");
+        assert!(
+            !wire.contains("https://"),
+            "no details URL reaches the renderer"
+        );
+        assert!(
+            !wire.contains("sentinel"),
+            "no credential reaches the renderer"
+        );
+    }
+
+    /// Live release titles prefix an article and suffix quality tags. A wanted
+    /// library title must match as a word-aligned phrase anywhere in the title.
+    #[test]
+    fn source_search_matches_a_title_phrase_not_only_a_prefix() {
+        let http = ProwlarrHttp {
+            fetch: Box::new(|request| {
+                match request.path.as_str() {
+                "/api/v1/indexer" => Ok(serde_json::json!([{"id": 1, "enable": true}]).to_string()),
+                "/api/v1/indexer/1/newznab" => Ok(concat!(
+                    r#"<rss><channel>"#,
+                    r#"<item><title>The Arrival (2023) 720p WEBRip x264 -YTS</title>"#,
+                    r#"<link>https://indexer.invalid/api/download/1</link>"#,
+                    r#"<torznab:attr name="infohash" value="480B6B7D49D536F7881D66695C31F4B340372289"/>"#,
+                    r#"</item>"#,
+                    r#"</channel></rss>"#
+                )
+                .to_string()),
+                other => Err(format!("unexpected path: {other}")),
+            }
+            }),
+        };
+        let args = SourceSearchArgs {
+            title: "Arrival".to_string(),
+            year: Some(2023),
+            season: None,
+            episode: None,
+        };
+
+        let result = source_search_with(&http, "http://prowlarr.invalid", "sentinel", &args);
+
+        assert_eq!(result.results.len(), 1, "article-prefixed title must match");
+        assert_eq!(
+            result.results[0].title,
+            "The Arrival (2023) 720p WEBRip x264 -YTS"
+        );
+        assert!(result.results[0].magnet.starts_with("magnet:?xt=urn:btih:"));
         let wire = serde_json::to_string(&result).expect("serialize results");
         assert!(
             !wire.contains("https://"),
