@@ -2161,3 +2161,27 @@ American Horror Story), anime via `with_genres=16&with_original_language=ja`
 `image/jpeg`, 80,984 bytes. An invalid `kind` returned 400. The token did not
 appear in any response. Anime coverage remains an approximation, and no real
 browser/WebView screenshot of the Discover toggle was taken.
+
+## 2026-11-22 — Startup, Prowlarr inputs and source search (observed)
+
+Built: app starts the backend on mount; Settings stores TMDB key, Prowlarr
+address and Prowlarr key in DPAPI; both Prowlarr values are injected into the
+backend; five provider definitions with attribution are bundled; one-click
+source setup adds YTS, Nyaa and The Pirate Bay (EZTV is Cloudflare-blocked and
+AnimeTosho has no reachable Torznab host); Details has a "Find sources" panel.
+
+Live verification with the operator's Prowlarr and key:
+- `POST /host/indexers_seed` → three already present, two skipped with fixed
+  reasons; no address or key in the response.
+- `POST /host/source_search` for Arrival → 10 results, top `Arrival 2016
+  1080p BluRay x264 DTS-JYK` with 439 seeders and a `magnet:?xt=urn:btih:` link.
+- Same for Dune → 10 results, top `Dune Part Two (2024)` with 1,276 seeders.
+- No `9117` address and no `http://` in either response.
+
+Three live-only defects were found and fixed after the first empty searches:
+Torznab supplies `infohash` instead of a magnet (now converted), release titles
+often begin with "The" (now a word-aligned phrase match), and the HTTP client
+timeout was 2 s (now 20 s). The backend was stopped after the checks.
+
+Still NOT RUN: a real packaged-app cold start through WSL/Docker; a live click
+that actually downloads a chosen torrent; a real browser/WebView screenshot.
