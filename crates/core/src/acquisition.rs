@@ -533,8 +533,25 @@ fn matches_numbers(
     let tokens: Vec<&str> = norm.split_whitespace().collect();
     if let Some(year) = year {
         let wanted = year.to_string();
-        if !tokens.iter().any(|token| *token == wanted) {
-            return false;
+        if season.is_none() && episode.is_none() {
+            // A movie title must carry the requested year.
+            if !tokens.iter().any(|token| *token == wanted) {
+                return false;
+            }
+        } else {
+            // TV releases often omit the year. If the title does carry a
+            // plausible year, it must still agree. `1080p`/`2160p` are
+            // resolutions, not years, so they are excluded by the range.
+            let plausible_year = tokens.iter().any(|token| {
+                token.len() == 4
+                    && token.chars().all(|ch| ch.is_ascii_digit())
+                    && token
+                        .parse::<u32>()
+                        .is_ok_and(|value| (1900..=2099).contains(&value))
+            });
+            if plausible_year && !tokens.iter().any(|token| *token == wanted) {
+                return false;
+            }
         }
     }
     if let Some(season) = season {
@@ -576,12 +593,12 @@ fn parse_item(
     args: &SourceSearchArgs,
 ) -> Option<SourceCandidate> {
     let title = xml_value(block, "title")?;
+    // A Torznab `<link>` is usually an HTTP details page, which the download
+    // boundary rejects. Reuse that exact validator here so a candidate can
+    // never be offered with a source that `download_add` would refuse.
     let magnet = xml_value(block, "magnet:link")
-        .or_else(|| xml_value(block, "link"))?
-        .to_string();
-    if magnet.is_empty() {
-        return None;
-    }
+        .or_else(|| xml_value(block, "link"))
+        .and_then(|raw| media_acquisition::validate_source(raw).ok())?;
     let wanted = normalize_title(args.title.trim());
     let norm = normalize_title(title);
     if wanted.is_empty() || !norm.starts_with(&wanted) {
@@ -1386,6 +1403,85 @@ mod tests {
         let wire = serde_json::to_string(&result).expect("serialize results");
         assert!(!wire.contains(KEY), "the api key must never be returned");
         assert!(!wire.contains("http://"), "no address reaches the renderer");
+    }
+
+    #[test]
+    fn source_search_accepts_only_magnet_or_bare_torrent_sources() {
+        let http = ProwlarrHttp {
+            fetch: Box::new(|request| match request.path.as_str() {
+                "/api/v1/indexer" => Ok(serde_json::json!([{"id": 1, "enable": true}]).to_string()),
+                "/api/v1/indexer/1/newznab" => Ok(concat!(
+                    r#"<rss><channel>"#,
+                    r#"<item><title>Show.2024.magnet</title>"#,
+                    r#"<magnet:link>magnet:?xt=urn:btih:ABC</magnet:link></item>"#,
+                    r#"<item><title>Show.2024.torrent</title>"#,
+                    r#"<link>show.2024.torrent</link></item>"#,
+                    r#"<item><title>Show.2024.http</title>"#,
+                    r#"<link>https://indexer.invalid/details/1</link></item>"#,
+                    r#"<item><title>Show.2024.path</title>"#,
+                    r#"<link>C:\secrets\show.torrent</link></item>"#,
+                    r#"</channel></rss>"#
+                )
+                .to_string()),
+                other => Err(format!("unexpected path: {other}")),
+            }),
+        };
+        let args = SourceSearchArgs {
+            title: "Show".to_string(),
+            year: Some(2024),
+            season: None,
+            episode: None,
+        };
+
+        let result = source_search_with(&http, "http://prowlarr.invalid", "sentinel", &args);
+
+        assert_eq!(
+            result.results.len(),
+            2,
+            "HTTP link and host path are unusable"
+        );
+        assert_eq!(result.results[0].magnet, "magnet:?xt=urn:btih:ABC");
+        assert_eq!(result.results[1].magnet, "show.2024.torrent");
+        let wire = serde_json::to_string(&result).expect("serialize results");
+        assert!(
+            !wire.contains("https://"),
+            "no details URL reaches the renderer"
+        );
+        assert!(!wire.contains("secrets"), "no path reaches the renderer");
+    }
+
+    #[test]
+    fn source_search_year_is_optional_when_season_supplied() {
+        let http = ProwlarrHttp {
+            fetch: Box::new(|request| match request.path.as_str() {
+                "/api/v1/indexer" => Ok(serde_json::json!([{"id": 1, "enable": true}]).to_string()),
+                "/api/v1/indexer/1/newznab" => Ok(concat!(
+                    r#"<rss><channel>"#,
+                    r#"<item><title>Show.Name.S01E02.1080p.mkv</title>"#,
+                    r#"<magnet:link>magnet:?xt=urn:btih:OK</magnet:link></item>"#,
+                    r#"<item><title>Show.Name.1999.S01E02.1080p.mkv</title>"#,
+                    r#"<magnet:link>magnet:?xt=urn:btih:WRONG</magnet:link></item>"#,
+                    r#"</channel></rss>"#
+                )
+                .to_string()),
+                other => Err(format!("unexpected path: {other}")),
+            }),
+        };
+        let args = SourceSearchArgs {
+            title: "Show Name".to_string(),
+            year: Some(2020),
+            season: Some(1),
+            episode: Some(2),
+        };
+
+        let result = source_search_with(&http, "http://prowlarr.invalid", "sentinel", &args);
+
+        assert_eq!(
+            result.results.len(),
+            1,
+            "no-year title kept, wrong-year title dropped"
+        );
+        assert_eq!(result.results[0].magnet, "magnet:?xt=urn:btih:OK");
     }
 
     #[test]

@@ -77,6 +77,42 @@ describe("SourceResults", () => {
     expect(screen.getByRole("status").textContent).not.toContain(MAGNET);
   });
 
+  it("reports a started download separately when mapping fails", async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === "source_search") {
+        return {
+          results: [
+            {
+              id: "7-0",
+              title: "A.Local.Film.2024.1080p",
+              size: 1048576,
+              seeders: 12,
+              magnet: MAGNET,
+            },
+          ],
+        };
+      }
+      if (command === "download_add") return { id: "hash" };
+      throw new Error("mapping rejected");
+    });
+    const user = userEvent.setup();
+    mount();
+    await user.click(screen.getByRole("button", { name: /find sources/i }));
+    await screen.findByText("A.Local.Film.2024.1080p");
+
+    await user.click(screen.getByRole("button", { name: /^choose$/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      SOURCE_STATUS.mappingFailed,
+    );
+    expect(invoke).toHaveBeenCalledWith("download_add", { source: MAGNET });
+    expect(invoke).toHaveBeenCalledWith("source_set", {
+      media_id: "m1",
+      source: MAGNET,
+    });
+    expect(screen.getByRole("status").textContent).not.toContain(MAGNET);
+  });
+
   it("uses fixed text when no candidates are found", async () => {
     invoke.mockImplementation(async (command: string) => {
       if (command === "source_search") return { results: [] };

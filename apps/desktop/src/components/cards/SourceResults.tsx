@@ -14,6 +14,7 @@ export const SOURCE_STATUS = {
   failed: "Sources could not be found. Try again.",
   added: "Source sent to downloads and saved for this item.",
   addFailed: "The source could not be added. Try again.",
+  mappingFailed: "Download started, but mapping could not be saved.",
 } as const;
 
 interface SourceResultsProps {
@@ -52,8 +53,13 @@ export function SourceResults({ mediaId, query }: SourceResultsProps) {
     setStatus(null);
     try {
       await call("download_add", { source: candidate.magnet });
-      await api.sourceSet(mediaId, candidate.magnet);
-      setStatus(SOURCE_STATUS.added);
+      try {
+        await api.sourceSet(mediaId, candidate.magnet);
+        setStatus(SOURCE_STATUS.added);
+      } catch {
+        // The download is already running; only the mapping was lost.
+        setStatus(SOURCE_STATUS.mappingFailed);
+      }
     } catch {
       setStatus(SOURCE_STATUS.addFailed);
     } finally {
