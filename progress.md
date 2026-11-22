@@ -1943,3 +1943,21 @@ for Arrival returned HTTP 200, `content-type: image/jpeg`,
 53,600 bytes, magic `FF-D8-FF-E0`; 5 poster files were cached. This proves the
 API→cache→HTTP image path works end to end with real keyless IMDb data.
 Still NOT RUN: a real WebView/browser screenshot and a full-library seed.
+
+## 2026-11-22 — Operator TMDB token, live verification (observed)
+
+With an operator-supplied TMDB API key in the backend process environment, ran
+the updated backend on `127.0.0.1:8083` with seed data and stopped it after the
+check. Signed `POST /library_home` returned 10 items, 7 with artwork URLs.
+Arrival's hash was `a78d5e13...` versus the earlier keyless-IMDb `dfb0d8b5...`,
+which proves TMDB supplied the image. `GET /artwork/<hash>` returned HTTP 200,
+`content-type: image/jpeg`, `x-content-type-options: nosniff`, 68,524 bytes,
+magic `FF-D8-FF-E0`; 5 posters were cached. The token string did not appear in
+the API response. The key was stored in the Windows user environment only,
+never in the repo, a DTO, a log or an error.
+
+Still NOT RUN: a real browser/WebView screenshot with the token entered through
+Settings, a live Docker Compose start that injects the DPAPI secret into `core`,
+and a full-library seed. `Supervisor::ensure_running` currently has no
+production Tauri caller, so the installed-app startup path is a separate
+follow-up; this check verifies the `core` path directly.
