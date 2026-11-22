@@ -211,10 +211,11 @@ async fn imdb_lookup(
 const PROWLARR_URL_ENV: &str = "MEDIAHAVEN_PROWLARR_URL";
 const PROWLARR_KEY_ENV: &str = "MEDIAHAVEN_PROWLARR_API_KEY";
 
-/// Only these have a native `definitionName` in Prowlarr. The two custom
-/// Miauflix definitions are reported as skipped and are never posted.
-const SEED_IDS: [&str; 3] = ["yts", "nyaasi", "thepiratebay"];
-const CUSTOM_IDS: [&str; 2] = ["eztv-api", "animetosho"];
+/// Only these have a native `definitionName` in Prowlarr. The bundled Miauflix
+/// `animetosho` definition is superseded by Prowlarr's native `animetosho-xyz`,
+/// so only the EZTV custom definition is skipped and never posted.
+const SEED_IDS: [&str; 4] = ["yts", "nyaasi", "thepiratebay", "animetosho-xyz"];
+const CUSTOM_IDS: [&str; 1] = ["eztv-api"];
 
 const SKIP_CUSTOM: &str = "not in Prowlarr";
 const SKIP_UNAVAILABLE: &str = "not available in Prowlarr";
@@ -1720,7 +1721,7 @@ mod tests {
         );
     }
 
-    /// Offline Prowlarr fixture: three native definitions plus two custom ids
+    /// Offline Prowlarr fixture: four native definitions plus one custom id
     /// that must never be posted (no matching `definitionName` in Prowlarr).
     fn seed_schema() -> Value {
         serde_json::json!([
@@ -1750,6 +1751,15 @@ mod tests {
                 "protocol": "torrent",
                 "fields": [{"name": "baseUrl", "value": ""}],
                 "indexerUrls": ["https://tpb.example"]
+            },
+            {
+                "definitionName": "animetosho-xyz",
+                "name": "Anime Tosho",
+                "implementation": "AnimeTosho",
+                "configContract": "AnimeToshoSettings",
+                "protocol": "torrent",
+                "fields": [{"name": "baseUrl", "value": ""}],
+                "indexerUrls": ["https://animetosho.example"]
             }
         ])
     }
@@ -1779,15 +1789,15 @@ mod tests {
 
         let result = seed_indexers_with(&http, URL, KEY);
 
-        assert_eq!(result.added, ["yts", "nyaasi", "thepiratebay"]);
-        assert!(result
-            .skipped
-            .iter()
-            .any(|reason| reason.contains("eztv-api") && reason.contains("not in Prowlarr")));
-        assert!(result
-            .skipped
-            .iter()
-            .any(|reason| reason.contains("animetosho") && reason.contains("not in Prowlarr")));
+        assert_eq!(
+            result.added,
+            ["yts", "nyaasi", "thepiratebay", "animetosho-xyz"]
+        );
+        assert_eq!(
+            result.skipped,
+            ["eztv-api: not in Prowlarr"],
+            "only the EZTV custom definition is skipped"
+        );
 
         let recorded = calls.lock().expect("recorded calls");
         let posts: Vec<&ProwlarrRequest> = recorded
@@ -1796,8 +1806,8 @@ mod tests {
             .collect();
         assert_eq!(
             posts.len(),
-            3,
-            "only the three native definitions are posted"
+            4,
+            "only the four native definitions are posted"
         );
         for post in &posts {
             let body = post.body.as_ref().expect("post body");
@@ -1808,7 +1818,7 @@ mod tests {
                 "the schema's own fields must be forwarded; Prowlarr returns 400 without them"
             );
             let definition = body["settings"]["definitionFile"].as_str().unwrap_or("");
-            assert!(["yts", "nyaasi", "thepiratebay"].contains(&definition));
+            assert!(["yts", "nyaasi", "thepiratebay", "animetosho-xyz"].contains(&definition));
             assert!(body["settings"]["baseUrl"]
                 .as_str()
                 .is_some_and(|url| !url.is_empty()));
@@ -1833,7 +1843,7 @@ mod tests {
 
         let result = seed_indexers_with(&http, "http://prowlarr.invalid:9696", "sentinel-key");
 
-        assert!(!result.added.iter().any(|id| id == "yts"));
+        assert_eq!(result.added, ["nyaasi", "thepiratebay", "animetosho-xyz"]);
         assert!(result
             .skipped
             .iter()
@@ -1851,7 +1861,7 @@ mod tests {
                 })
             })
             .collect();
-        assert_eq!(posted, ["nyaasi", "thepiratebay"]);
+        assert_eq!(posted, ["nyaasi", "thepiratebay", "animetosho-xyz"]);
     }
 
     #[test]
