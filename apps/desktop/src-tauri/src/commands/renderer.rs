@@ -616,6 +616,46 @@ pub fn player_control(
     Ok(Value::Null)
 }
 
+/// Fixed command errors: a stored secret must never reach the renderer, not
+/// even through an error's `Display` (which may contain an I/O path).
+const UNSUPPORTED_PROVIDER: &str = "unsupported provider";
+const SECRET_STORE_FAILED: &str = "secret operation failed";
+
+/// Store a provider secret (only the optional TMDB read token, ADR-0026).
+#[tauri::command]
+pub fn provider_secret_set(kind: &str, value: &str) -> Result<(), String> {
+    if kind != "tmdb" {
+        return Err(UNSUPPORTED_PROVIDER.to_string());
+    }
+    crate::secret::store_secret(
+        crate::secret::TMDB_SERVICE,
+        crate::secret::TMDB_ACCOUNT,
+        value,
+    )
+    .map_err(|_| SECRET_STORE_FAILED.to_string())
+}
+
+/// Report only whether a provider secret is configured; never its value.
+#[tauri::command]
+pub fn provider_secret_has(kind: &str) -> Result<bool, String> {
+    if kind != "tmdb" {
+        return Err(UNSUPPORTED_PROVIDER.to_string());
+    }
+    crate::secret::load_secret(crate::secret::TMDB_SERVICE, crate::secret::TMDB_ACCOUNT)
+        .map(|value| value.is_some())
+        .map_err(|_| SECRET_STORE_FAILED.to_string())
+}
+
+/// Remove a configured provider secret.
+#[tauri::command]
+pub fn provider_secret_clear(kind: &str) -> Result<(), String> {
+    if kind != "tmdb" {
+        return Err(UNSUPPORTED_PROVIDER.to_string());
+    }
+    crate::secret::delete_secret(crate::secret::TMDB_SERVICE, crate::secret::TMDB_ACCOUNT)
+        .map_err(|_| SECRET_STORE_FAILED.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -787,5 +827,20 @@ mod tests {
         let validated =
             validate_download_root(&absolute.to_string_lossy()).expect("absolute path accepted");
         assert_eq!(validated, absolute);
+    }
+
+    #[test]
+    fn provider_secret_commands_reject_unknown_kind_without_echoing_a_value() {
+        // Unknown kinds are rejected before any DPAPI access, so this test
+        // never touches the host store. The synthetic value must not leak.
+        for result in [
+            provider_secret_set("other", "SENTINEL"),
+            provider_secret_has("other").map(|_| ()),
+            provider_secret_clear("other"),
+        ] {
+            let error = result.unwrap_err();
+            assert_eq!(error, "unsupported provider");
+            assert!(!error.contains("SENTINEL"));
+        }
     }
 }

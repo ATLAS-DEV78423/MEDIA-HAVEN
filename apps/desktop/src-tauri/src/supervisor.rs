@@ -13,7 +13,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::secret::install_token;
+use crate::secret::{install_token, load_secret, TMDB_ACCOUNT, TMDB_SERVICE};
 use crate::wsl::{decode_output, Wsl, WslError};
 
 /// Bounded timeouts (plan A4).
@@ -23,15 +23,25 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 const API_TOKEN_ENV: &str = "MEDIAHAVEN_API_TOKEN";
 const WSLENV: &str = "WSLENV";
+const TMDB_KEY_ENV: &str = "MEDIAHAVEN_TMDB_API_KEY";
 
-/// Child-only environment for `compose up`. `WSLENV` lists the forwarded name
-/// with no flag suffix: the value is plain hex, so WSL passes it through
-/// unchanged with no path translation.
-fn build_wsl_env(token_hex: &str) -> Vec<(String, String)> {
-    vec![
+/// Child-only environment for `compose up`. `WSLENV` lists each forwarded name
+/// with no flag suffix: the values are plain text, so WSL passes them through
+/// unchanged with no path translation. The optional TMDB key is added only
+/// when configured, leaving the no-token case byte-for-byte unchanged.
+fn build_wsl_env(token_hex: &str, tmdb_token: Option<&str>) -> Vec<(String, String)> {
+    let mut env = vec![
         (API_TOKEN_ENV.to_string(), token_hex.to_string()),
         (WSLENV.to_string(), API_TOKEN_ENV.to_string()),
-    ]
+    ];
+    if let Some(key) = tmdb_token.filter(|value| !value.trim().is_empty()) {
+        env.push((TMDB_KEY_ENV.to_string(), key.to_string()));
+        if let Some((_, wslenv)) = env.iter_mut().find(|(k, _)| k == WSLENV) {
+            wslenv.push(':');
+            wslenv.push_str(TMDB_KEY_ENV);
+        }
+    }
+    env
 }
 
 /// The legible lifecycle states from ADR-0005 §5.
@@ -118,7 +128,13 @@ impl Supervisor {
         // is dropped as soon as `compose up` returns. Upgrade if a zeroising
         // hex buffer is introduced in `secret.rs`.
         let token_hex = token.as_hex();
-        let env = build_wsl_env(&token_hex);
+        // An optional operator TMDB token: absent means no env entry, corrupt
+        // fails closed. `SecretError` text is fixed and carries no secret.
+        let tmdb_token = load_secret(TMDB_SERVICE, TMDB_ACCOUNT)
+            .map_err(|err| SupervisorError::StartFailed(err.to_string()))?;
+        // shortcut: neither String is zeroised on drop; keep them local so they
+        // are dropped as soon as `compose up` returns, as with `token_hex`.
+        let env = build_wsl_env(&token_hex, tmdb_token.as_deref());
         let env_refs: Vec<(&str, &str)> = env
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -223,9 +239,9 @@ fn engine_message(output: &std::process::Output) -> String {
 }
 
 /// Strip anything that looks like a 256-bit token (a run of 32+ hex chars) or
-/// a `token=<value>` assignment. Cheap defence in depth: the token is never
-/// passed to the engine today, but once A6 injects it via the environment a
-/// compose error could echo it, and ADR-0005 §5 requires redaction.
+/// a `token=<value>` assignment. Cheap defence in depth: the install token and
+/// the optional TMDB key are passed via the environment, so a compose error
+/// could echo one, and ADR-0005 §5 requires redaction.
 fn redact(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut run = String::new();
@@ -281,13 +297,27 @@ mod tests {
     #[test]
     fn wsl_env_carries_the_token_and_names_it_for_forwarding() {
         let token = "ab".repeat(32);
-        let env = build_wsl_env(&token);
+        let env = build_wsl_env(&token, None);
 
         assert_eq!(env.len(), 2);
         assert_eq!(env[0], (API_TOKEN_ENV.to_string(), token));
         assert_eq!(env[1], (WSLENV.to_string(), API_TOKEN_ENV.to_string()));
         // No flag suffix: hex needs no path translation and must be shared as-is.
         assert!(!env[1].1.contains('/'));
+    }
+
+    #[test]
+    fn wsl_env_includes_tmdb_when_present() {
+        let env = build_wsl_env("install-token", Some("tmdb-token"));
+        assert!(env
+            .iter()
+            .any(|(k, v)| k == "MEDIAHAVEN_TMDB_API_KEY" && v == "tmdb-token"));
+        assert!(env
+            .iter()
+            .any(|(k, v)| k == WSLENV && v.contains("MEDIAHAVEN_TMDB_API_KEY")));
+
+        // No token means exactly the two pre-existing entries, unchanged.
+        assert_eq!(build_wsl_env("install-token", None).len(), 2);
     }
 
     #[test]

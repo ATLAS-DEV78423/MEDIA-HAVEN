@@ -74,6 +74,9 @@ pub fn run() {
             commands::playback_stop,
             commands::playback_checkpoint,
             commands::player_control,
+            commands::provider_secret_set,
+            commands::provider_secret_has,
+            commands::provider_secret_clear,
         ])
         .run(tauri::generate_context!())
         .expect("the MEDIA_HAVEN window failed to start");

@@ -144,6 +144,63 @@ pub fn install_token() -> Result<SecretToken, SecretError> {
     load_or_create_token(TOKEN_SERVICE, TOKEN_ACCOUNT)
 }
 
+/// DPAPI identity of the optional operator-supplied TMDB read token. The
+/// account differs from the install token's, so the two blobs can never be
+/// confused (ADR-0026).
+pub const TMDB_SERVICE: &str = TOKEN_SERVICE;
+pub const TMDB_ACCOUNT: &str = "tmdb-read-token";
+
+/// Store an arbitrary operator-provided secret as a DPAPI blob. The value is
+/// zeroised after protection; it is never logged or returned.
+pub fn store_secret(service: &str, account: &str, value: &str) -> Result<(), SecretError> {
+    if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
+        return Err(SecretError::InvalidIdentity);
+    }
+    let path = blob_path(service, account)?;
+    let mut bytes = value.as_bytes().to_vec();
+    let protected = match protect(&bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            zeroize(&mut bytes);
+            return Err(error);
+        }
+    };
+    zeroize(&mut bytes);
+    write_blob(&path, &protected)
+}
+
+/// Load an operator-provided secret.
+///
+/// `Ok(None)` means no secret is configured; a corrupt blob is an error, never
+/// an empty fallback.
+///
+/// shortcut: the returned `String` is not zeroised on drop, matching
+/// `SecretToken::as_hex`; callers keep it local and drop it promptly. Upgrade
+/// if a zeroising string wrapper is introduced.
+pub fn load_secret(service: &str, account: &str) -> Result<Option<String>, SecretError> {
+    let path = blob_path(service, account)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let protected = fs::read(&path).map_err(|_| SecretError::CredentialMismatch)?;
+    let mut bytes = unprotect(&protected).map_err(|_| SecretError::CredentialMismatch)?;
+    let text = String::from_utf8(bytes.clone()).map_err(|_| {
+        zeroize(&mut bytes);
+        SecretError::CredentialMismatch
+    })?;
+    zeroize(&mut bytes);
+    Ok(Some(text))
+}
+
+/// Delete an operator-provided secret, if present.
+pub fn delete_secret(service: &str, account: &str) -> Result<(), SecretError> {
+    let path = blob_path(service, account)?;
+    if path.exists() {
+        fs::remove_file(path).map_err(|_| SecretError::CredentialMismatch)?;
+    }
+    Ok(())
+}
+
 /// Absolute path of the DPAPI blob for `(service, account)`.
 ///
 /// Fails closed when the Windows profile is unavailable: it must never fall
@@ -421,5 +478,53 @@ mod tests {
                 && !renderer.contains("const TOKEN_ACCOUNT: &str"),
             "the forwarder must not redeclare a private token identity"
         );
+    }
+
+    // shortcut: these round-trip tests write one DPAPI blob under APPDATA and
+    // delete it; use a fixed test identity (uuid is not a desktop dependency).
+    // Upgrade to an injectable store if tests ever run on a non-Windows host.
+    #[test]
+    fn generic_secret_round_trip_and_isolation() {
+        let service = "mediahaven-test-e";
+        let account = "tmdb-roundtrip";
+        let path = scratch(service, account);
+
+        assert_eq!(load_secret(service, account).unwrap(), None);
+        store_secret(service, account, "a-test-value").unwrap();
+        assert_eq!(
+            load_secret(service, account).unwrap().as_deref(),
+            Some("a-test-value")
+        );
+        delete_secret(service, account).unwrap();
+        assert_eq!(load_secret(service, account).unwrap(), None);
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn provider_identity_cannot_collide_with_install_token() {
+        assert_ne!(TMDB_ACCOUNT, TOKEN_ACCOUNT);
+        assert_ne!(
+            blob_path(TMDB_SERVICE, TMDB_ACCOUNT).unwrap(),
+            blob_path(TOKEN_SERVICE, TOKEN_ACCOUNT).unwrap()
+        );
+    }
+
+    #[test]
+    fn generic_secret_corrupt_blob_fails_closed() {
+        let service = "mediahaven-test-f";
+        let account = "tmdb-corrupt";
+        let path = scratch(service, account);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, b"not a dpapi blob").unwrap();
+
+        assert!(matches!(
+            load_secret(service, account),
+            Err(SecretError::CredentialMismatch)
+        ));
+
+        let _ = fs::remove_file(&path);
     }
 }
