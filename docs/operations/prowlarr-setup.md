@@ -18,7 +18,26 @@ list, catalogue or tracker definition.
 | Version observed | 3.0.2.5780 (build 2026-11-16) |
 
 Observed: `GET /` → HTTP 200; `GET /api/v1/system/status?apikey=…` → HTTP 200.
-`GET /api/v1/indexer` returned an empty list — **zero indexers are configured**.
+
+## Indexers configured (human's explicit override of the no-bundling rule, 2026-11-22)
+
+Added through Prowlarr's own API using its built-in definitions, then left in
+Prowlarr only — no site list was added to the MEDIA_HAVEN app source:
+
+| id | name | state |
+|---|---|---|
+| 1 | YTS | enabled |
+| 2 | Nyaa.si | enabled |
+| 3 | The Pirate Bay | enabled |
+
+Two of the five requested could not be added:
+- **EZTV** — every built-in domain was rejected by Prowlarr with "blocked by
+  CloudFlare Protection". Adding FlareSolverr would be a separate install.
+- **AnimeTosho** — Prowlarr's built-in Torznab definition points at
+  `feed.animetosho.org`, which does not resolve from this machine. The public
+  site `animetosho.org` loads, but no Torznab path was found there.
+
+`GET /api/v1/indexer` now lists three enabled indexers.
 
 ## API key
 
@@ -37,16 +56,20 @@ Do not paste it into source or commit it.
 
 1. Open `http://127.0.0.1:9117` in a browser.
 2. Add only indexers you are entitled to use. MEDIA_HAVEN supplies none.
-3. Once at least one indexer exists, Prowlarr exposes its Torznab feed:
-   `http://127.0.0.1:9117/api/v2.0/indexers/all/results/torznab/api?apikey=<key>&t=caps`
-   It returned 404 before any indexer was configured; that is expected.
+3. Torznab is exposed **per indexer** in this Prowlarr version, not through an
+   aggregate `indexers/all` path (that path returns 404). Verified working:
+   ```
+   http://127.0.0.1:9117/api/v1/indexer/1/newznab?apikey=<key>&t=caps   -> 200 XML
+   http://127.0.0.1:9117/1/api?apikey=<key>&t=caps                     -> 200 XML
+   ```
+   A search client must iterate the enabled indexer ids.
 
 ## Not done
 
-- No indexer was added by the agent.
 - No app code was changed to call Prowlarr; that needs its own ADR + plan
   (new `SourceProvider` port, Torznab client, candidate ranking, Details shortlist).
-- No live search was run (no indexers, no lawful source).
+- No live torrent search or download was run.
+- EZTV and AnimeTosho remain unconfigured for the reasons above.
 - Prowlarr is on `bridge`, not the compose `acquire` network; networking must be
   aligned during the app integration task.
 
