@@ -72,13 +72,15 @@ blocked, not passed. See ADR-0009.
 
 ## Current milestone
 
-- **Phase:** No checkpoint has passed. Work is concurrent across Phase 1 foundation
-  (WS-A host boundary), Phase 2 library, Phase 3 playback and Phase 4 frontend —
-  the product owner chose frontend-first (ADR-0009).
-- **Goal:** Close the container boundary — A6 engine build and A8 boundary evidence
-  remain open; A9 (media-root read-only mount override) already landed at `c23b06f`
-  and unblocks P1-07/P1-08. Also build real playback (B2/B3, which unblocks
-  P3-01/P3-02). These items remain open.
+- **Phase:** No checkpoint has passed. Substantial code now exists across Phases 2
+  (library, metadata), 3 (playback), 4 (frontend, keyboard navigation), 6
+  (acquisition + fail-closed media gates) and 7 (an unsigned installer was built),
+  but every checkpoint remains OPEN pending observed evidence and human review.
+- **Goal:** Convert shipped-but-unverified work into checkpoint evidence. The
+  newest code landed in the 2026-11-20/21 waves: authorized-media torrent
+  acquisition, fail-closed probe + Defender gates, R-01 per-item source mapping,
+  offline IMDb metadata, a Windows installer and full keyboard navigation. A TMDB
+  artwork plan exists but is unexecuted (P6-07).
 - **Exit criteria:** the next checkpoint reached passes only on observed evidence
   recorded in `progress.md`, including a human-readable checkpoint summary.
 - **Owner/agent:** unassigned. Any agent picking this up must first read
@@ -88,8 +90,10 @@ blocked, not passed. See ADR-0009.
   one requires a measurement or a human sign-off, not a document.
 - **Note:** a `[~]` marker means code or partial evidence exists, NOT that the
   acceptance criteria are met. `[x]` is reserved for checkpoint-verified tasks.
-- **Evidence:** `progress.md` 2026-11-19 entry records the live verification at
-  HEAD `7d48507` (Rust/frontend gates green; no engine or hardware evidence run).
+- **Evidence:** `progress.md` records the latest gates at HEAD `342addf`
+  (documents only). The last code-verification wave was `9b706fb` — see the
+  2026-11-21 entry in `progress.md`. Live engine, hardware, IMDb/OMDb, TMDB and
+  second-machine gates remain **NOT RUN**.
 
 ---
 
@@ -828,7 +832,14 @@ touching their files.
   tests with hostile strings and malformed images.
 - **Risks:** Privacy leak via filenames; cache growth; terms-of-service
   violation.
-- **Status:** In progress — local NFO reader landed 2026-11-18; TMDB opt-in provider, cache, egress flag and UI toggle remain.
+- **Status:** In progress — local NFO reader landed 2026-11-18; the opt-in TMDB
+  provider (text cache, sanitisation, `poster_path` parsing, network gate) landed
+  in the torrent-acquisition wave, and offline IMDb ratings landed 2026-11-21
+  (ADR-0022 **Proposed**). Still open: real TMDB/OMDb HTTPS transport and the
+  hashed artwork cache — an **unexecuted** plan exists at
+  `docs/superpowers/plans/2026-11-21-tmdb-artwork.md` (ADR-0023 Proposed). No live
+  metadata request has been made; opt-in text and attribution must be verified
+  before this task can be accepted.
 
 ### [~] P2-07 — Implement the local watchlist
 
@@ -1213,7 +1224,12 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Risks:** Focus traps, hidden focus behind overlays, unreachable controls.
   This is the highest-regression area in the app: every later phase must re-run
   the walkthrough.
-- **Status:** In progress — spatial focus implementation and unit tests exist; full keyboard-only walkthrough across every screen NOT RUN.
+- **Status:** In progress — spatial focus, a global Escape-to-back hook
+  (dialog/player-aware), Up/Down escaping text inputs into spatial navigation and
+  unit tests landed 2026-11-21; a browser walkthrough of
+  profile → Home → card → Details → Escape → nav → Movies was observed with zero
+  console errors (see `progress.md`). The every-screen automated walkthrough and
+  CP-4 sign-off remain **NOT RUN**.
 
 ### [~] P4-04 — Build details, settings and setup screens
 
@@ -1809,7 +1825,14 @@ Purpose: a non-technical user installs, updates and uninstalls safely.
 - **Tests:** Rebuild-and-compare; install on a clean VM.
 - **Risks:** Signing cost and certificate handling; per-machine install forcing
   admin.
-- **Status:** Not started
+- **Status:** In progress — an unsigned per-user NSIS installer was **really
+  built and verified** 2026-11-21: `MEDIA_HAVEN_0.1.0_x64-setup.exe` (~3.60 MiB)
+  plus `SHA256SUMS.txt` and `THIRD_PARTY_NOTICES.md`; `build.ps1` gate exit 0.
+  Package ID `com.mediahaven.desktop` and version 0.1.0 come from one source.
+  Remaining: builds are **non-deterministic** across runs (documented, not
+  fixed — half of the rebuild criterion is met by disclosure); **SBOM NOT RUN**
+  (no tool installed without consent); clean-VM install unverified. Signing is
+  deliberately out of scope for v1 (O-08, ADR-0016). No CP-7 pass.
 
 ### [ ] P7-02 — Test install, upgrade, rollback and uninstall
 

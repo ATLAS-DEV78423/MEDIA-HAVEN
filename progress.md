@@ -565,23 +565,32 @@ roadmap, the documentation baseline, a working React frontend, a working Rust
 backend, a Tauri host and a CI workflow. No checkpoint has passed: CP-0 evidence
 is still unmeasured and every later checkpoint is open.
 
-Built and verified at HEAD `7d48507`: React TV UI wired to the host through named
-Tauri commands; Rust workspace of seven crates including `app-core`, `core`,
+Built and verified through HEAD `342addf` (latest code commit `9b706fb`): React
+TV UI wired to the host through named Tauri commands, with full arrow/Enter/Escape
+navigation; a Rust workspace of seven crates including `app-core`, `core`,
 `media-library`, `metadata`, `persistence`, `contract` and `mediahaven-desktop`;
 SQLite migrations, scanner, watchlist, durable queue, settings/profiles; DPAPI
 per-install token, WSL supervisor and HMAC-signed command forwarder; CI with
-contract-drift and dependency-graph assertions.
+contract-drift and dependency-graph assertions. Later waves added authorized-media
+torrent acquisition (ADR-0017/0018/0019), fail-closed probe + Defender gates,
+R-01 per-item source mapping (ADR-0021), offline IMDb metadata (ADR-0022 Proposed)
+and an unsigned per-user NSIS installer.
 
 Written but NOT RUN on a live engine: the `core`/`probe` images, the rendered
 Compose override, mount scope, token forwarding into `core`, boundary evidence
-and all container-based checkpoints. These need explicit Docker/WSL2 consent.
+and all container-based checkpoints. Also NOT RUN: live acquisition against a
+lawful source, real-media playback/cleanup, live IMDb/OMDb/TMDB requests, clean-VM
+install and every checkpoint sign-off. These need operator data, engine consent
+or human review.
 
-Superseded 2026-11-20: playback is no longer only simulated — the Tauri host now
+Superseded 2026-11-20/21: playback is no longer only simulated — the Tauri host
 wires `crates/playback`/mpv and the renderer follows engine state; simulation is
-a dev-only fallback. See the 2026-11-20 entry above. TMDB provider, artwork
-cache, diagnostics bundle, safe mode, traversal CI suite, storage policy and
-installer are not built. (The original 2026-11-19 text said there was no
-playback crate or mpv adapter; that was true at that date.)
+a dev-only fallback. The earlier claim that "TMDB provider, artwork cache,
+diagnostics bundle, safe mode, traversal CI suite, storage policy and installer
+are not built" is **wrong**: the opt-in TMDB provider, diagnostics, storage
+policy and installer now exist; only the TMDB *artwork transport/cache* is
+unbuilt (P6-07, plan unexecuted). (The original 2026-11-19 text said there was
+no playback crate or mpv adapter; that was true at that date.)
 
 Superseded: earlier text in this file claimed "the backend does not yet exist",
 "No Rust workspace, no database" and "src-tauri is still empty". Those claims
@@ -590,16 +599,17 @@ again on 2026-11-19.
 
 ## Active task
 
-- **Task:** Documentation reconciliation + code check (2026-11-19); no product
-  feature is active until ADR-0015 is accepted and engine consent is given.
-- **Branch/HEAD:** `master`, HEAD `7d48507`.
+- **Task:** Documentation reconciliation (2026-11-21) — no product feature is
+  active. ADR-0022 (IMDb) and ADR-0023 (TMDB artwork transport) await human
+  acceptance; engine and live-source gates await operator consent.
+- **Branch/HEAD:** `master`, HEAD `342addf`, fully pushed to `origin/master`.
 - **Six newest commits** (`git log -6 --oneline`, verbatim):
-  - `7d48507` test(queue): make crash-consistency test exercise queue_reorder
-  - `033b71a` feat(queue): durable reorder and removal history
-  - `f5a379f` docs(adr): resolve B1 containment contradiction and HostPathMap naming
-  - `580f047` docs(adr): add proposed ADR-0015 for playback source token (B1)
-  - `16ff6b7` test(contract): make H2 route parser whitespace-tolerant and add independent POST count
-  - `39207fb` ci: add CI workflow, contract drift test and dependency-graph assertions
+  - `342addf` docs: add TMDB artwork implementation plan
+  - `9b706fb` feat(a11y): full arrow/Enter/Escape keyboard navigation
+  - `7ad7d47` chore: ignore live dev server logs
+  - `806ffd9` chore: ignore live demo data directory
+  - `4082920` feat: R-01 source mapping, offline IMDb ratings, Windows installer
+  - `0db2cc1` feat(security): fail-closed probe + Defender gates for downloaded media
 
 ## Completed this session
 

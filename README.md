@@ -15,9 +15,12 @@ browse and play them through a full-screen, remote-friendly interface.
   read-only mounts, non-root containers and a single loopback-only API port.
 
 > **Status: functional prototype, no checkpoint passed.** The React UI, Rust
-> backend, Tauri host and local tests run today. Real playback, the container
-> boundary, reliability/security work and packaging are still open. See
-> `progress.md` for the 2026-11-19 evidence and the exact NOT RUN list.
+> backend, Tauri host and local tests run today. Authorized-media acquisition,
+> fail-closed media gates, offline IMDb metadata, keyboard navigation and an
+> unsigned Windows installer have since been built. Real playback, the running
+> container boundary, live provider requests and clean-VM install remain
+> **NOT RUN**. See `progress.md` for the 2026-11-21 evidence and exact NOT RUN
+> list.
 
 ## Read these first
 
@@ -42,11 +45,13 @@ still exactly one MEDIA_HAVEN application, and the user never sees a container
 dashboard or types a Docker command.
 
 The runtime distribution is decided as a dedicated WSL2 distro with Docker
-Engine (ADR-0001 Part 2, accepted 2026-11-18); the shipped images and boundary
-evidence are not yet built. The host/container transport (ADR-0005) and the
-playback descriptor (ADR-0015) remain Proposed and must not be treated as
-binding. If the required runtime is unavailable, backend-dependent functions
-remain unavailable; there is no host-side backend fallback.
+Engine (ADR-0001 Part 2, accepted provisional 2026-11-18); the shipped images and
+boundary evidence are not yet built. The host/container transport (ADR-0005) and
+playback descriptor (ADR-0015) were accepted via the blanket human acceptance
+(ADR-0016, 2026-11-20). ADR-0022 (IMDb) and ADR-0023 (TMDB artwork transport) are
+**Proposed** and must not be treated as binding. If the required runtime is
+unavailable, backend-dependent functions remain unavailable; there is no
+host-side backend fallback.
 
 ## Repository layout
 
