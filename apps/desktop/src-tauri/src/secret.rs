@@ -153,6 +153,9 @@ pub const TMDB_ACCOUNT: &str = "tmdb-read-token";
 /// Store an arbitrary operator-provided secret as a DPAPI blob. The value is
 /// zeroised after protection; it is never logged or returned.
 pub fn store_secret(service: &str, account: &str, value: &str) -> Result<(), SecretError> {
+    // Pasted tokens often carry surrounding whitespace; store the trimmed
+    // value so it cannot break the key at use time. All-whitespace is blank.
+    let value = value.trim();
     if value.is_empty() || value.len() > 4096 || value.chars().any(char::is_control) {
         return Err(SecretError::InvalidIdentity);
     }
@@ -508,6 +511,33 @@ mod tests {
             blob_path(TMDB_SERVICE, TMDB_ACCOUNT).unwrap(),
             blob_path(TOKEN_SERVICE, TOKEN_ACCOUNT).unwrap()
         );
+    }
+
+    #[test]
+    fn generic_secret_trims_pasted_value_and_rejects_blank() {
+        let service = "mediahaven-test-g";
+        let account = "tmdb-trim";
+        let path = scratch(service, account);
+
+        assert!(matches!(
+            store_secret(service, account, "   "),
+            Err(SecretError::InvalidIdentity)
+        ));
+
+        store_secret(service, account, "  a-test-value  ").unwrap();
+        assert_eq!(
+            load_secret(service, account).unwrap().as_deref(),
+            Some("a-test-value")
+        );
+
+        store_secret(service, account, "\ta-test-value\n").unwrap();
+        assert_eq!(
+            load_secret(service, account).unwrap().as_deref(),
+            Some("a-test-value")
+        );
+
+        delete_secret(service, account).unwrap();
+        let _ = fs::remove_file(&path);
     }
 
     #[test]

@@ -238,22 +238,53 @@ fn engine_message(output: &std::process::Output) -> String {
     redact(&joined)
 }
 
-/// Strip anything that looks like a 256-bit token (a run of 32+ hex chars) or
-/// a `token=<value>` assignment. Cheap defence in depth: the install token and
-/// the optional TMDB key are passed via the environment, so a compose error
-/// could echo one, and ADR-0005 §5 requires redaction.
+/// Strip secret values from engine output before it becomes a user-facing
+/// error: `MEDIAHAVEN_TMDB_API_KEY=<value>` and `token=<value>` assignments,
+/// plus any remaining run of 32+ hex chars. A TMDB token has dots/underscores
+/// and only short hex segments, so the hex pass alone would let it through.
+/// Cheap defence in depth: both tokens are passed via the environment, so a
+/// compose error could echo one, and ADR-0005 §5 requires redaction.
 fn redact(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
+    const MARKER: &str = "[redacted]";
+    let mut masked = String::with_capacity(text.len());
+    let mut pos = 0;
+    for (at, _) in text.match_indices('=') {
+        let key = text[pos..at]
+            .rsplit(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'')
+            .next()
+            .unwrap_or("");
+        if key != "token" && key != TMDB_KEY_ENV {
+            continue;
+        }
+        let after = at + 1;
+        // A quoted value keeps its quotes around the marker.
+        let (start, quote) = match text[after..].chars().next() {
+            Some(c @ ('"' | '\'')) => (after + c.len_utf8(), Some(c)),
+            _ => (after, None),
+        };
+        let end = text[start..]
+            .find(|c: char| {
+                c.is_whitespace() || matches!(c, ',' | ')' | ']' | '}') || Some(c) == quote
+            })
+            .map(|offset| start + offset)
+            .unwrap_or(text.len());
+        masked.push_str(&text[pos..start]);
+        masked.push_str(MARKER);
+        pos = end;
+    }
+    masked.push_str(&text[pos..]);
+
+    let mut out = String::with_capacity(masked.len());
     let mut run = String::new();
     let flush = |out: &mut String, run: &mut String| {
         if run.len() >= 32 && run.bytes().all(|b| b.is_ascii_hexdigit()) {
-            out.push_str("[redacted]");
+            out.push_str(MARKER);
         } else {
             out.push_str(run);
         }
         run.clear();
     };
-    for ch in text.chars() {
+    for ch in masked.chars() {
         if ch.is_ascii_hexdigit() {
             run.push(ch);
         } else {
@@ -331,6 +362,25 @@ mod tests {
         );
         assert!(cleaned.contains("[redacted]"));
         assert!(cleaned.contains("could not start"));
+    }
+
+    #[test]
+    fn engine_output_redacts_a_tmdb_style_token_in_an_assignment() {
+        // A TMDB read token has dots/underscores and only short hex segments;
+        // the generic 32-hex pass alone would let it survive verbatim.
+        const SYNTHETIC: &str =
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        for noisy in [
+            format!("compose error: MEDIAHAVEN_TMDB_API_KEY={SYNTHETIC} failed"),
+            format!("compose error: token={SYNTHETIC} failed"),
+            format!("compose error: token=\"{SYNTHETIC}\" failed"),
+        ] {
+            let cleaned = redact(&noisy);
+            assert!(!cleaned.contains(SYNTHETIC), "token survived: {cleaned}");
+            assert!(cleaned.contains("[redacted]"), "no marker: {cleaned}");
+            assert!(cleaned.contains("compose error:"), "prefix lost: {cleaned}");
+            assert!(cleaned.contains(" failed"), "tail lost: {cleaned}");
+        }
     }
 
     #[test]
