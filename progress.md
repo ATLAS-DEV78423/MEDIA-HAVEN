@@ -2012,3 +2012,14 @@ Settings, a live Docker Compose start that injects the DPAPI secret into `core`,
 and a full-library seed. `Supervisor::ensure_running` currently has no
 production Tauri caller, so the installed-app startup path is a separate
 follow-up; this check verifies the `core` path directly.
+
+## 2026-11-22 — TMDB discovery catalogue, live verification (observed)
+
+Ran the updated backend on `127.0.0.1:8085` with the operator TMDB key and
+stopped it afterward. Signed `POST /discover_catalog` returned, for each feed,
+20 entries with 12 hashed artwork URLs: movies (first Iron Man), TV (first
+American Horror Story), anime via `with_genres=16&with_original_language=ja`
+(first Pokémon). `GET /artwork/<hash>` for a movie poster returned HTTP 200,
+`image/jpeg`, 80,984 bytes. An invalid `kind` returned 400. The token did not
+appear in any response. Anime coverage remains an approximation, and no real
+browser/WebView screenshot of the Discover toggle was taken.
