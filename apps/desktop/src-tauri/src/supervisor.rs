@@ -88,6 +88,16 @@ pub enum SupervisorError {
     Io(#[from] std::io::Error),
 }
 
+/// Map a lifecycle outcome to one fixed, user-safe startup status. No path,
+/// distro name, env value or engine detail may enter this value.
+pub fn startup_status(result: &Result<(), SupervisorError>) -> &'static str {
+    match result {
+        Ok(()) => "ready",
+        Err(SupervisorError::EngineAbsent(_)) => "setup-required",
+        Err(_) => "failed",
+    }
+}
+
 /// Owns the distro name, the rendered compose file and the loopback address.
 #[derive(Debug, Clone)]
 pub struct Supervisor {
@@ -311,6 +321,29 @@ mod tests {
             PathBuf::from("tests/fixtures/compose.yaml"),
             "127.0.0.1:1".parse().unwrap(),
         )
+    }
+
+    #[test]
+    fn startup_status_maps_every_outcome_to_a_fixed_string() {
+        const SENTINEL: &str = "SENTINEL-ENV-PATH-DETAIL";
+        assert_eq!(startup_status(&Ok(())), "ready");
+        assert_eq!(
+            startup_status(&Err(SupervisorError::EngineAbsent(SENTINEL.into()))),
+            "setup-required"
+        );
+        for error in [
+            SupervisorError::StartFailed(SENTINEL.into()),
+            SupervisorError::NotReady(READY_TIMEOUT),
+            SupervisorError::StopFailed(SENTINEL.into()),
+            SupervisorError::Io(std::io::Error::other(SENTINEL)),
+        ] {
+            let status = startup_status(&Err(error));
+            assert_eq!(status, "failed");
+            assert!(!status.contains(SENTINEL), "leaked detail: {status}");
+            assert!(!status.contains("MEDIAHAVEN_WSL_DISTRO"));
+            assert!(!status.contains("compose.yaml"));
+            assert!(!status.contains("127.0.0.1"));
+        }
     }
 
     #[test]

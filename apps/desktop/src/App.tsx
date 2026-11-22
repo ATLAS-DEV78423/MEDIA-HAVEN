@@ -20,6 +20,7 @@ import { PlayerPage } from "./pages/Player/PlayerPage";
 import { useSpatialFocus } from "./hooks/useSpatialFocus";
 import { useBackNavigation } from "./hooks/useBackNavigation";
 import { apiBase } from "./services/api";
+import { startRuntime } from "./services/runtime";
 import { useAppState } from "./state/AppState";
 import styles from "./app.module.css";
 
@@ -87,6 +88,11 @@ export function App() {
   const { pathname, key } = useLocation();
   useSpatialFocus();
   useBackNavigation();
+  // The host starts the backend once on mount; a failure must not replace the
+  // existing service-down UI, so the promise is deliberately ignored here.
+  useEffect(() => {
+    void startRuntime().catch(() => undefined);
+  }, []);
 
   if (status === "loading") return <BootScreen />;
   if (status === "error" || !data) {

@@ -663,6 +663,26 @@ pub fn provider_secret_clear(kind: &str) -> Result<(), String> {
         .map_err(|_| SECRET_STORE_FAILED.to_string())
 }
 
+/// Start the backend at UI mount. Only a fixed status string crosses this
+/// boundary: no path, distro name, env value or engine detail (plan Task 1).
+#[tauri::command]
+pub fn runtime_start() -> Result<String, String> {
+    let distro =
+        std::env::var("MEDIAHAVEN_WSL_DISTRO").unwrap_or_else(|_| "MEDIA_HAVEN".to_string());
+    let address: std::net::SocketAddr = "127.0.0.1:8080"
+        .parse()
+        .map_err(|_| "setup-required".to_string())?;
+    let supervisor = crate::supervisor::Supervisor::new(
+        distro,
+        std::path::PathBuf::from("infrastructure/containers/compose.yaml"),
+        address,
+    );
+    let result = supervisor
+        .ensure_running()
+        .and_then(|_| supervisor.wait_ready());
+    Ok(crate::supervisor::startup_status(&result).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

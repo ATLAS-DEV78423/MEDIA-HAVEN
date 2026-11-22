@@ -42,6 +42,7 @@ pub fn run() {
         .manage(player::PlayerState::new())
         .invoke_handler(tauri::generate_handler![
             get_app_info,
+            commands::runtime_start,
             commands::library_home,
             commands::library_movies,
             commands::library_shows,
