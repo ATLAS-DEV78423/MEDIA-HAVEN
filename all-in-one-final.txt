@@ -14,13 +14,13 @@ Licence: MIT (see LICENSE)
 READ THIS FIRST - HONEST STATUS
 --------------------------------------------------------------------------------
 
-MEDIA_HAVEN is a FUNCTIONAL PROTOTYPE. It is not a released product and no
-roadmap checkpoint (CP-0 through CP-7) has passed. The React interface, the Rust
-backend, the Tauri host, the SQLite persistence layer and the automated test
-suites run today. Several end-to-end behaviours - real video playback, the
-running Docker boundary, live metadata/provider requests, and a clean-VM
-install - remain NOT RUN. No GitHub Release has been published and no installer
-has been publicly distributed.
+MEDIA_HAVEN is a FUNCTIONAL PROTOTYPE and no roadmap checkpoint (CP-0 through
+CP-7) has passed. The React interface, the Rust backend, the Tauri host, the
+SQLite persistence layer and the automated test suites run today. Several
+end-to-end behaviours - real video playback, the running Docker boundary, live
+metadata/provider requests, and a clean-VM install - remain NOT RUN. On
+2026-11-22 an unsigned installer was published as a tagged GitHub PRE-RELEASE
+(v0.1.0); it is a prototype build, not a supported product release. See Part 4.1.
 
 Throughout this document:
   PASS      = observed and recorded in progress.md
@@ -624,16 +624,24 @@ PART 3 - WHAT WE REQUIRE FROM YOU
 PART 4 - INSTALLATION AND FIRST USE
 ================================================================================
 
-4.1 PATH A - END-USER INSTALLER (INTENDED FLOW; NOT YET PUBLISHED)
-------------------------------------------------------------------
+4.1 PATH A - END-USER INSTALLER (PUBLISHED AS A PRE-RELEASE)
+------------------------------------------------------------
 
-STATUS: A real unsigned NSIS installer was BUILT and checksummed locally on
-2026-11-21 (v0.1.0, x64, ~3.60 MiB, identifier com.mediahaven.desktop). It is
-gitignored, NOT published as a GitHub Release, and has NOT been tested on a
-clean VM. The steps below describe the intended flow, not a verified consumer
-experience. No installer is available to download from this repository today.
+STATUS: On 2026-11-22 a fresh unsigned NSIS installer (v0.1.0, x64, ~3.60 MiB,
+identifier com.mediahaven.desktop) was rebuilt from HEAD `7a062c4` and published
+as a GitHub PRE-RELEASE at:
 
-When an installer is published, the steps will be:
+  https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0
+
+Assets: MEDIA_HAVEN_0.1.0_x64-setup.exe, SHA256SUMS.txt, THIRD_PARTY_NOTICES.md
+and ALL-IN-ONE.md. The installer's SHA-256 is:
+
+  2828c2ad5d002a0d83decb31ead51c8f47d66f6606437182d614d8812fb937b4
+
+It has NOT been tested on a clean VM. No checkpoint has passed; the release is
+deliberately marked pre-release and the caveats below still apply.
+
+Steps to install:
 
   1. Obtain the installer and its SHA256SUMS.txt from the official release
      source. Do not accept a checksum relayed through the same channel as the

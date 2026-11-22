@@ -8,7 +8,7 @@ This is the GitHub-rendered companion to [`all-in-one-final.txt`](all-in-one-fin
 ---
 
 > [!IMPORTANT]
-> **Honest status:** MEDIA_HAVEN is a **functional prototype**. The React UI, Rust backend, Tauri host and local tests run today, but **no roadmap checkpoint (CP-0 … CP-7) has passed**. Real video playback, the running Docker boundary, live provider requests and a clean-VM install are **NOT RUN**. No installer has been published as a GitHub Release. See [Evidence ledger](#5-evidence-ledger) for the full list.
+> **Honest status:** MEDIA_HAVEN is a **functional prototype**. The React UI, Rust backend, Tauri host and local tests run today, but **no roadmap checkpoint (CP-0 … CP-7) has passed**. Real video playback, the running Docker boundary, live provider requests and a clean-VM install are **NOT RUN**. An unsigned installer is published as a tagged GitHub **pre-release** (`v0.1.0`) — it is a prototype build, not a supported product release. See [Evidence ledger](#5-evidence-ledger) for the full list.
 
 **In this guide**
 
@@ -268,10 +268,10 @@ Use only lawful media; back up your own source files; supply your own Torznab en
 
 ## 4. Installation and first use
 
-### 4.1 Path A — end-user installer (intended; not yet published)
+### 4.1 Path A — end-user installer (published pre-release)
 
 > [!WARNING]
-> A real unsigned NSIS installer was **built and checksummed locally** on 2026-11-21 (v0.1.0, x64, ~3.60 MiB, `com.mediahaven.desktop`). It is gitignored, **not published** as a GitHub Release, and **not tested on a clean VM**. These are the intended steps, not a verified consumer experience.
+> On 2026-11-22 a fresh unsigned NSIS installer (v0.1.0, x64, ~3.60 MiB, `com.mediahaven.desktop`) was rebuilt from `7a062c4` and published as a GitHub **pre-release**: https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0 — with the installer, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md` and this guide. It has **not** been tested on a clean VM and no checkpoint has passed; the caveats below still apply.
 
 1. Obtain the installer and `SHA256SUMS.txt` from the official release source. Do not accept a checksum relayed through the same channel as the binary.
 2. Verify it:
@@ -280,7 +280,7 @@ Use only lawful media; back up your own source files; supply your own Torznab en
    Get-FileHash -Algorithm SHA256 .\MEDIA_HAVEN_0.1.0_x64-setup.exe
    ```
 
-   Compare the lowercase hash with the line for that filename. `certutil -hashfile <file> SHA256` also works.
+   Compare the lowercase hash with the line for that filename. `certutil -hashfile <file> SHA256` also works. For this pre-release the expected value is `2828c2ad5d002a0d83decb31ead51c8f47d66f6606437182d614d8812fb937b4`.
 3. Run the installer. It is per-user (`currentUser`): no administrator rights, no system software installed.
 4. Expect a SmartScreen "Windows protected your PC" warning — expected for unsigned v1. Verify the checksum, then **More info → Run anyway**. Never disable Defender or SmartScreen to ease installation.
 5. Complete the guided first-run setup below.
@@ -454,7 +454,9 @@ No ADR-0020 exists — the number was skipped. **Only the human owner may accept
 
 **PASS (observed; see `progress.md`):** Rust fmt/clippy/tests (122 passed); frontend typecheck/lint/tests/token/bundle/build; contract route parity (24 commands); dependency-graph assertions; local unsigned NSIS build + checksums; Compose config parse; read-only preflight behaviour; keyboard-navigation browser walkthrough with zero console errors; static container security review.
 
-**NOT RUN:** real playback, codec/GPU/audio/subtitle matrix; container startup and live host/container boundary; live TMDB/IMDb/OMDb/Torznab requests; live acquisition, prefetch and cleanup; clean-VM install, uninstall and upgrade/rollback; second-machine LAN reachability; low-disk and power-interruption tests; SBOM; signed build; reproducibility; every-screen automated keyboard walkthrough; all CP-0…CP-7 sign-offs.
+**NOT RUN:** real playback, codec/GPU/audio/subtitle matrix; container startup and live host/container boundary; live TMDB/IMDb/OMDb/Torznab requests; live acquisition, prefetch and cleanup; clean-VM install, uninstall and upgrade/rollback (the published installer has not been exercised in a clean VM); second-machine LAN reachability; low-disk and power-interruption tests; SBOM; signed build; reproducibility; every-screen automated keyboard walkthrough; all CP-0…CP-7 sign-offs.
+
+**PASS (2026-11-22):** fresh unsigned NSIS installer rebuilt from `7a062c4` with `build.ps1` (exit 0), checksum verified, and published as GitHub pre-release `v0.1.0`.
 
 ### 5.4 Glossary
 

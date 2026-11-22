@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added (2026-11-22)
+- **Published pre-release `v0.1.0`** at
+  https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0, tagged at
+  `7a062c4`. A fresh unsigned per-user NSIS installer was rebuilt from current
+  HEAD with `build.ps1` (exit 0), its SHA-256 verified, and published with
+  `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md` and `ALL-IN-ONE.md`. The release is
+  explicitly marked **pre-release**: no checkpoint has passed, the installer is
+  unsigned (SmartScreen warning expected), SBOM and clean-VM install remain
+  NOT RUN, and the player is still a labelled preview.
+
 ### Shipped features (2026-11-20 / 2026-11-21)
 
 Code-complete and covered by the gates recorded in `progress.md`. Behaviour that

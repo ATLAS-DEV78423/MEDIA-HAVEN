@@ -19,8 +19,18 @@ browse and play them through a full-screen, remote-friendly interface.
 > fail-closed media gates, offline IMDb metadata, keyboard navigation and an
 > unsigned Windows installer have since been built. Real playback, the running
 > container boundary, live provider requests and clean-VM install remain
-> **NOT RUN**. See `progress.md` for the 2026-11-21 evidence and exact NOT RUN
+> **NOT RUN**. See `progress.md` for the latest evidence and exact NOT RUN
 > list.
+
+## Download (prototype pre-release)
+
+An unsigned per-user Windows x64 installer is published as a tagged
+**pre-release** at
+https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0 (SHA-256
+`2828c2ad5d002a0d83decb31ead51c8f47d66f6606437182d614d8812fb937b4`). Verify the
+checksum before running; Windows will show a SmartScreen warning because the
+build is unsigned. This is a prototype, not a supported product release. Full
+install steps: [`ALL-IN-ONE.md`](ALL-IN-ONE.md).
 
 ## Read these first
 

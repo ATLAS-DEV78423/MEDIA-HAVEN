@@ -2,10 +2,46 @@
 
 ## Last updated
 
-2026-11-21 (documentation reconciliation at HEAD `342addf`). The newest dated
-entry is first; earlier sections are retained as history and are explicitly
-superseded where they disagree with it. See `roadmap.md` for sequencing and
-`CHANGELOG.md` for a feature summary.
+2026-11-22 (pre-release published at HEAD `7a062c4`). The newest dated entry is
+first; earlier sections are retained as history and are explicitly superseded
+where they disagree with it. See `roadmap.md` for sequencing and `CHANGELOG.md`
+for a feature summary.
+
+## 2026-11-22 — GitHub pre-release `v0.1.0` published
+
+By explicit human instruction, a fresh unsigned per-user NSIS installer was
+rebuilt from HEAD `7a062c4` and published as a tagged GitHub **pre-release**:
+https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0 (tag
+`v0.1.0` -> `7a062c4`). The earlier local artifact predated the R-01/installer
+and keyboard-navigation commits, so rebuilding was required before publishing.
+
+- **Build:** `powershell -NoProfile -ExecutionPolicy Bypass -File
+  infrastructure\packaging\windows\build.ps1` exited with the script's PASS
+  message. Frontend build and Tauri NSIS bundle succeeded; 96 modules, ~3.60 MiB
+  installer. Tauri emitted informational messages on stderr; no build error.
+- **Artifact:** `MEDIA_HAVEN_0.1.0_x64-setup.exe`, SHA-256
+  `2828c2ad5d002a0d83decb31ead51c8f47d66f6606437182d614d8812fb937b4`, matching
+  `SHA256SUMS.txt` (verified with `sha256sum`). Different from the 2026-11-21
+  local hash, as the build is non-reproducible.
+- **Release assets (4, verified with `gh release view`):** installer,
+  `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`, `ALL-IN-ONE.md`. `isDraft: false`,
+  `isPrerelease: true`.
+- **Docs updated:** `docs/operations/release.md`, `ALL-IN-ONE.md`,
+  `all-in-one-final.txt`, `CHANGELOG.md` now state that a pre-release exists
+  while retaining the NOT RUN caveats. No product requirement or ADR changed.
+
+### Gate (pre-release)
+| Check | Result |
+|-------|--------|
+| `build.ps1` (fresh build from `7a062c4`) | **PASS** (script exit 0, artifact produced) |
+| SHA-256 of published installer vs `SHA256SUMS.txt` | **PASS** (match) |
+| `gh release view v0.1.0` | **PASS** (tag, pre-release flag, 4 assets) |
+| `git diff --check` | **PASS**, exit 0 on the staged documentation edits |
+
+**Still NOT RUN / unchanged:** real playback, running container boundary, live
+providers, clean-VM install, uninstall against the installer, SBOM, signed build,
+reproducibility, all CP sign-offs. No checkpoint passed. Publishing a **stable**
+release remains unauthorised until CP-5 and the gates in `release.md` close.
 
 ## 2026-11-21 — Documentation reconciliation (HEAD `342addf`)
 

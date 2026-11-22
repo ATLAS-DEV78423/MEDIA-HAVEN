@@ -1,12 +1,17 @@
 # Release runbook - Windows (v1, unsigned)
 
-Status: **installer built and checksummed locally; not published.** A real
-unsigned NSIS installer was produced on 2026-11-21 (recorded in `progress.md`):
-`MEDIA_HAVEN_0.1.0_x64-setup.exe` (~3.60 MiB) with `SHA256SUMS.txt` and
-`THIRD_PARTY_NOTICES.md`. The build output is gitignored, so it is not in the
-repository — run the command below and verify the checksum of the artifact you
-produce. Nothing has been published as a GitHub Release. SBOM and a clean-VM
-install remain NOT RUN; see "Not run / known limitations".
+Status: **installer built, checksummed and published as a tagged GitHub
+pre-release.** On 2026-11-22 a fresh unsigned NSIS installer was rebuilt from
+HEAD `7a062c4` with the command below and published at
+`https://github.com/ATLAS-DEV78423/MEDIA-HAVEN/releases/tag/v0.1.0` with four
+assets: `MEDIA_HAVEN_0.1.0_x64-setup.exe` (~3.60 MiB), `SHA256SUMS.txt`,
+`THIRD_PARTY_NOTICES.md` and `ALL-IN-ONE.md`. The tag `v0.1.0` points at
+`7a062c4`. The installer's SHA-256 is
+`2828c2ad5d002a0d83decb31ead51c8f47d66f6606437182d614d8812fb937b4`.
+The release is explicitly marked **pre-release**: no checkpoint has passed and
+the caveats in "Not run / known limitations" still apply. The build output is
+gitignored, so to reproduce it run the command below and verify the checksum of
+the artifact you produce. SBOM and a clean-VM install remain NOT RUN.
 
 ## Prerequisites (already installed; nothing is auto-installed)
 
@@ -99,9 +104,10 @@ through the same channel as the binary.
 
 ## Not run / known limitations
 
-- **Installer build: PASS (local, 2026-11-21).** A real artifact and its
-  `SHA256SUMS.txt` were produced; `build.ps1` gate exited 0. The output is
-  gitignored and has not been published.
+- **Installer build: PASS (local, 2026-11-22).** A real artifact and its
+  `SHA256SUMS.txt` were rebuilt from HEAD `7a062c4`; `build.ps1` gate exited 0.
+  The artifact was published as a GitHub pre-release (tag `v0.1.0`). The output
+  remains gitignored in the repository itself.
 - **SBOM: NOT RUN** (all tools missing - see `sbom/README.md`).
 - **Reproducibility: UNVERIFIED.** The hash changed between builds; the cause is
   documented rather than fixed, which meets only the disclosure half of the
@@ -115,4 +121,7 @@ through the same channel as the binary.
 - **Full licence texts** are not inlined; they remain in the dependency sources
   and must be included in any source distribution.
 
-Publishing any release before these are closed is not authorised by this task.
+The 2026-11-22 pre-release was published by explicit human instruction with
+these limitations disclosed in the release notes. It is not a supported product
+release: publishing a **stable** release before CP-5 and the gates above are
+closed remains unauthorised.
