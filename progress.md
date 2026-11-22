@@ -2,10 +2,14 @@
 
 ## Last updated
 
-2026-11-22 (seeded sources + search, Task 3 of this plan complete; live Prowlarr
-seeding and live Torznab search NOT RUN). Earlier 2026-11-22 and 2026-11-21
-entries are retained as history and are explicitly superseded where they
-disagree with the newest entry.
+2026-11-22 (startup wiring, Prowlarr inputs, bundled providers, one-click
+seeding and Details search complete; live Prowlarr seeding and live Torznab
+search **OBSERVED** against this machine's Prowlarr; packaged-app cold start,
+live download and browser screenshot still NOT RUN). Merged the two GitHub
+documentation commits from `master` into this branch on 2026-11-22. The full
+pending list is in `whats-left.md`. Earlier 2026-11-22 and 2026-11-21 entries
+are retained as history and are explicitly superseded where they disagree with
+the newest entry.
 
 ## 2026-11-22 — Seeded sources and search from Details (plan Task 3; live search NOT RUN)
 
@@ -2195,3 +2199,14 @@ timeout was 2 s (now 20 s). The backend was stopped after the checks.
 
 Still NOT RUN: a real packaged-app cold start through WSL/Docker; a live click
 that actually downloads a chosen torrent; a real browser/WebView screenshot.
+
+## 2026-11-22 — Documentation and release handoff
+
+Pulled the two documentation commits the user pushed to `master`
+(`797be2b`, `342addf`) and merged them into this branch with `origin/master`
+as the second parent. Kept our newer `progress.md` / `roadmap.md` wording where
+they overlapped.
+
+Updated `progress.md`, `roadmap.md`, and created `whats-left.md` in plain
+language. It lists every open item, with the live gates already observed
+clearly separated from the ones still untested. No code changed in this entry.

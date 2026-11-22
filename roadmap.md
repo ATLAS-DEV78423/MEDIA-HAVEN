@@ -13,6 +13,22 @@
 - [!] Blocked
 - [?] Needs decision
 
+## Release readiness snapshot — 2026-11-22
+
+`P6-08` (operator TMDB token), `P6-09` (discovery catalogue), `P6-10`
+(startup and Prowlarr inputs) and `P6-11` (seeded sources and search) have code
+complete and green local gates. Live evidence now recorded in `progress.md`:
+TMDB discovery returned 20 items per feed with cached posters; Prowlarr seeding
+reported 3 present and 2 skipped with fixed reasons; Torznab search returned
+10 usable magnet candidates for Arrival and Dune with no address or key in the
+reply.
+
+All checkpoints remain **OPEN**. Packaged-app cold start through WSL/Docker,
+a live download from a chosen source, and a browser/WebView screenshot are
+**NOT RUN**. The complete plain-language list of remaining work, issues and
+blockers is in `whats-left.md` — read that before starting user testing or
+a release.
+
 ## Checkpoint model
 
 Every phase ends in a **checkpoint (CP)**. A checkpoint is not a status flag; it
