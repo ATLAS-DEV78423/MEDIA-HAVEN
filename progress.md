@@ -2210,3 +2210,23 @@ they overlapped.
 Updated `progress.md`, `roadmap.md`, and created `whats-left.md` in plain
 language. It lists every open item, with the live gates already observed
 clearly separated from the ones still untested. No code changed in this entry.
+
+## 2026-11-22 — Anime source resolved; two decisions recorded
+
+Live check: Prowlarr has a native Cardigann definition `animetosho-xyz`
+(display name "Anime Tosho", base `https://animetosho.net/`). It was added
+through `/api/v1/indexer` with the same payload shape as the other three and
+returned id 4. The earlier "AnimeTosho has no working address" note was wrong:
+`feed.animetosho.net` answers and returns JSON with `magnet_uri` and
+`info_hash`; the failing host was `feed.animetosho.org`. RARBG and Torrentio
+from the Miauflix list have no Prowlarr definition, so they cannot be seeded
+without a separate search engine.
+
+Decisions recorded in `whats-left.md`: OMDb age ratings are skipped for v1
+(no key, setting remains "Not available"); checkpoint CP-0..CP-7 are signed by
+the human partner only, with the agent preparing evidence.
+
+Live recheck after wiring: `POST /host/indexers_seed` reported all four sites
+as already present (`yts`, `nyaasi`, `thepiratebay`, `animetosho-xyz`) and only
+`eztv-api` as not in Prowlarr. This confirms the native definition name matches
+the real Prowlarr instance.

@@ -10,7 +10,7 @@ details, add working torrent sites to Prowlarr with one click, and show a list
 of sources on a movie page.
 
 We proved parts of it with real data: posters loaded, the source setup added
-three sites, and searching found 10 real results for Arrival and 10 for Dune
+four sites, and searching found 10 real results for Arrival and 10 for Dune
 with working magnet links.
 
 **This is not ready for other people to test yet.** The items below are still
@@ -39,10 +39,14 @@ open.
    The code that refuses a torrent with an executable file name was tested
    with fake data. It needs one real test with an authorized source.
 
-5. **Two of the five saved sites do not work.**
-   EZTV is blocked by a website guard. AnimeTosho has no working address.
-   Their files are in the app, but they are skipped. Users will see three
-   working sites, not five.
+5. **One saved site does not work.**
+   EZTV is blocked by a website guard. The other four are active: YTS, Nyaa,
+   The Pirate Bay and Anime Tosho. Anime Tosho is a real anime source added
+   through Prowlarr's own definition. The earlier "no working address" note
+   was wrong — the address is `feed.animetosho.net`, not `.org`.
+   Two other sites from the Miauflix list, RARBG and Torrentio, are not in
+   Prowlarr. They would need a separate search engine in our app, so they are
+   not included.
 
 6. **The installer has not been tried on a clean Windows computer.**
    Previous installer checks used this machine. A fresh machine may be missing
@@ -109,10 +113,16 @@ open.
 2. **Sign the installer.** Current plan is to ship unsigned and warn users.
    Signing needs a certificate and a human budget decision.
 3. **Add FlareSolverr** if EZTV must work. That means another install.
-4. **Find a working AnimeTosho address** or drop it from the saved list.
-5. **Real anime source** (a separate service) if TMDB's filter is not enough.
-6. **Add OMDb age ratings** if users want them. Needs a key and a new decision.
-7. **Who signs the checkpoints** CP-0 to CP-7.
+4. **AnimeTosho is resolved.** It works through Prowlarr's native `Anime Tosho`
+   definition; no extra service is needed.
+5. **RARBG and Torrentio are not available** in Prowlarr. Adding them would
+   need a new search engine in our app — a separate decision, not a quick fix.
+6. **OMDb age ratings: decided to skip for v1.** There is no key and the
+   setting still says "Not available". Posters and search do not need it.
+   Revisit only if a user asks for age ratings.
+7. **Checkpoint sign-off: you sign them, I prepare the evidence.** CP-0 to CP-7
+   stay OPEN until you read the recorded results and agree. No agent signs a
+   checkpoint on your behalf.
 
 ---
 
@@ -122,8 +132,9 @@ open.
 - Real posters load from TMDB and are served as JPEG files from local cache.
 - TMDB catalogue returned 20 movie, 20 TV and 20 anime entries; 12 of each
   had posters; no key or address appeared in the reply.
-- Prowlarr setup found three sites already present and skipped two with fixed
-  reasons; no key or address appeared in the reply.
+- Prowlarr setup found the original three sites already present and skipped
+  two with fixed reasons; no key or address appeared in the reply. Anime Tosho
+  was then verified and added as the fourth working site.
 - Source search returned 10 real magnets for Arrival and 10 for Dune, sorted
   by seeders, with no key or address in the reply.
 - All Rust and frontend checks pass. Every feature had a separate worker and

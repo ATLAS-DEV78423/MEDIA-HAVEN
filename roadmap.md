@@ -1764,6 +1764,12 @@ these is unresolved, stop before implementation.
   (`indexers_seed`, `source_search`); a `SourceResults` panel on Details with a
   "Find sources" button. Search parses Torznab XML with simple string scanning
   and returns at most ten path-free candidates. No new dependency.
+- **Live result (2026-11-22):** one-click setup adds four working Prowlarr
+  sources — YTS, Nyaa.si, The Pirate Bay and Anime Tosho. Anime Tosho uses
+  Prowlarr's native `animetosho-xyz` definition because the bundled Miauflix
+  custom definition cannot be installed into Prowlarr. EZTV stays skipped
+  (Cloudflare). RARBG and Torrentio from the Miauflix list have no Prowlarr
+  definition and would need a separate search engine.
 - **Out of scope:** Bundled trackers, site lists, catalogues or unlawful
   acquisition guidance; auto-download, auto-selection or playback from search;
   a 26th renderer command (the contract stays at 25); live indexer calls in tests.
