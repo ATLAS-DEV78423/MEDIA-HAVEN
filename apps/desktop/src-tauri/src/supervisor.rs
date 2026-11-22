@@ -146,6 +146,9 @@ impl Supervisor {
         let compose = self.compose_path.to_str().ok_or_else(|| {
             SupervisorError::StartFailed("the compose path is not valid UTF-8".into())
         })?;
+        // `-f` is resolved inside the distro: a raw Windows temp path would not
+        // exist there. Keep stop() on the exact same converted path.
+        let compose = wsl_path(compose);
 
         // `SecretError` messages are fixed and carry no token, so this is safe
         // to surface. The token itself is never formatted into an error.
@@ -179,7 +182,7 @@ impl Supervisor {
             .wsl
             .run_with_env(
                 &self.distro,
-                &["docker", "compose", "-f", compose, "up", "-d"],
+                &["docker", "compose", "-f", compose.as_str(), "up", "-d"],
                 &env_refs,
                 START_TIMEOUT,
             )
@@ -211,12 +214,14 @@ impl Supervisor {
         let compose = self.compose_path.to_str().ok_or_else(|| {
             SupervisorError::StopFailed("the compose path is not valid UTF-8".into())
         })?;
+        // Match ensure_running(): both start and stop must address this file.
+        let compose = wsl_path(compose);
 
         let output = self
             .wsl
             .run(
                 &self.distro,
-                &["docker", "compose", "-f", compose, "down"],
+                &["docker", "compose", "-f", compose.as_str(), "down"],
                 START_TIMEOUT,
             )
             .map_err(|err| map_wsl_error(err, true))?;
@@ -239,6 +244,19 @@ impl Supervisor {
     fn port_is_open(&self) -> bool {
         TcpStream::connect_timeout(&self.address, POLL_INTERVAL).is_ok()
     }
+}
+
+/// Convert a Windows absolute path into the WSL form used by the distro.
+/// `std::env::temp_dir()` yields a normal drive path; WSL mounts drives at
+/// `/mnt/<lowercase-letter>/...`. Already-WSL paths pass through unchanged.
+fn wsl_path(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let bytes = normalized.as_bytes();
+    if bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/' && bytes[0].is_ascii_alphabetic() {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        return format!("/mnt/{drive}{}", &normalized[2..]);
+    }
+    normalized
 }
 
 fn map_wsl_error(err: WslError, stopping: bool) -> SupervisorError {
@@ -389,6 +407,30 @@ mod tests {
     fn closed_port_status_is_stopped() {
         let supervisor = test_supervisor();
         assert_eq!(supervisor.status(), SupervisorStatus::Stopped);
+    }
+
+    #[test]
+    fn wsl_path_converts_a_windows_temp_path() {
+        assert_eq!(
+            wsl_path(r"C:\Users\Stanley\AppData\Local\Temp\mediahaven-compose.yaml"),
+            "/mnt/c/Users/Stanley/AppData/Local/Temp/mediahaven-compose.yaml"
+        );
+    }
+
+    #[test]
+    fn wsl_path_leaves_an_existing_wsl_path_unchanged() {
+        assert_eq!(
+            wsl_path("/tmp/mediahaven-compose.yaml"),
+            "/tmp/mediahaven-compose.yaml"
+        );
+    }
+
+    #[test]
+    fn wsl_path_lowercases_the_drive_letter() {
+        assert_eq!(
+            wsl_path(r"d:\temp\compose.yaml"),
+            "/mnt/d/temp/compose.yaml"
+        );
     }
 
     #[test]
