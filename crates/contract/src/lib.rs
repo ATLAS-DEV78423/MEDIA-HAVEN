@@ -44,6 +44,7 @@ pub const COMMANDS: &[&str] = &[
     "playback_start",
     "playback_stop",
     "playback_checkpoint",
+    "discover_catalog",
 ];
 
 /// Typed form of [`COMMANDS`]. No `strum` dependency: the mapping is written
@@ -74,6 +75,7 @@ pub enum Command {
     PlaybackStart,
     PlaybackStop,
     PlaybackCheckpoint,
+    DiscoverCatalog,
 }
 
 impl Command {
@@ -104,6 +106,7 @@ impl Command {
             Command::PlaybackStart => "playback_start",
             Command::PlaybackStop => "playback_stop",
             Command::PlaybackCheckpoint => "playback_checkpoint",
+            Command::DiscoverCatalog => "discover_catalog",
         }
     }
 }
@@ -149,6 +152,7 @@ impl FromStr for Command {
             "playback_start" => Ok(Command::PlaybackStart),
             "playback_stop" => Ok(Command::PlaybackStop),
             "playback_checkpoint" => Ok(Command::PlaybackCheckpoint),
+            "discover_catalog" => Ok(Command::DiscoverCatalog),
             _ => Err(UnknownCommand),
         }
     }

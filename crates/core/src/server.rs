@@ -14,6 +14,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{header, HeaderName, HeaderValue, Method};
 use axum::middleware;
 use axum::Router;
+use media_metadata::{DiscoverOptions, DiscoverProvider};
 use media_persistence::sqlite::{connect_path, SqliteLibraryRepository};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -165,10 +166,16 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         tracing::warn!(recovered, "marked interrupted library scans as errors");
     }
     let artwork_dir = config.data_dir.join("artwork");
+    let discover = DiscoverProvider::with_options(DiscoverOptions {
+        enabled: media_metadata::tmdb::api_key_from_env().is_some(),
+        api_key: media_metadata::tmdb::api_key_from_env(),
+        cache_dir: config.data_dir.join("discover-cache"),
+    });
     let state = AppState::new(service, config.token)
         .with_imdb(crate::state::imdb_provider_from_env())
         .with_tmdb(crate::state::tmdb_provider_from_env(&config.data_dir))
-        .with_artwork_dir(artwork_dir);
+        .with_artwork_dir(artwork_dir)
+        .with_discover(discover);
 
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(config.bind)

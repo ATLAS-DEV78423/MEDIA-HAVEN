@@ -9,7 +9,8 @@ use app_core::application::LibraryService;
 use media_acquisition::AcquisitionState;
 use media_metadata::tmdb::{api_key_from_env, http_search_fetch, DEFAULT_MAX_CACHE_BYTES};
 use media_metadata::{
-    FileImdbFetch, ImdbArtworkProvider, ImdbOptions, ImdbProvider, TmdbOptions, TmdbProvider,
+    DiscoverOptions, DiscoverProvider, FileImdbFetch, ImdbArtworkProvider, ImdbOptions,
+    ImdbProvider, TmdbOptions, TmdbProvider,
 };
 use media_persistence::sqlite::SqliteLibraryRepository;
 
@@ -41,6 +42,9 @@ pub struct AppState {
     /// Directory of hashed, cached poster bytes. Set by the server; defaults to
     /// a temp dir so existing `AppState::new(...)` test callers still work.
     pub artwork_dir: Arc<PathBuf>,
+    /// Display-only TMDB discovery provider. Disabled by default: no key means
+    /// no fetch, no image read and an empty catalogue.
+    pub discover: Arc<DiscoverProvider>,
 }
 
 impl AppState {
@@ -53,6 +57,11 @@ impl AppState {
             tmdb: Arc::new(TmdbProvider::new(TmdbOptions::default())),
             imdb_artwork: Arc::new(ImdbArtworkProvider::new()),
             artwork_dir: Arc::new(std::env::temp_dir().join("media-haven-artwork")),
+            discover: Arc::new(DiscoverProvider::with_options(DiscoverOptions {
+                enabled: false,
+                api_key: None,
+                cache_dir: std::env::temp_dir().join("media-haven-discover-cache"),
+            })),
         }
     }
 
@@ -80,6 +89,13 @@ impl AppState {
     /// Point cached poster bytes at the install data directory.
     pub fn with_artwork_dir(mut self, dir: PathBuf) -> Self {
         self.artwork_dir = Arc::new(dir);
+        self
+    }
+
+    /// Attach a configured discovery provider. Test seam: exercises the
+    /// catalogue route with a fake fetch, no network and no process environment.
+    pub fn with_discover(mut self, provider: DiscoverProvider) -> Self {
+        self.discover = Arc::new(provider);
         self
     }
 }

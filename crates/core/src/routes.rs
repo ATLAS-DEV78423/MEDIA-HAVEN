@@ -11,7 +11,8 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{async_trait, Json, Router};
 use media_metadata::{
-    fetch_image_bytes, ArtworkCache, ImdbArtworkProvider, TmdbProvider, DEFAULT_MAX_CACHE_BYTES,
+    fetch_image_bytes, ArtworkCache, CatalogKind, ImdbArtworkProvider, TmdbProvider,
+    DEFAULT_MAX_CACHE_BYTES,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -158,6 +159,13 @@ struct RootIdArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct OrderedIdsArgs {
     ordered_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DiscoverArgs {
+    kind: String,
+    page: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +433,7 @@ pub fn protected_router() -> Router<AppState> {
         .route("/queue_add", post(queue_add))
         .route("/queue_remove", post(queue_remove))
         .route("/queue_reorder", post(queue_reorder))
+        .route("/discover_catalog", post(discover_catalog))
 }
 
 // ---------------------------------------------------------------------------
@@ -672,6 +681,75 @@ async fn downloads_list(State(state): State<AppState>) -> Result<Json<DownloadsS
     Ok(Json(state.service.downloads().await?))
 }
 
+/// Display-only TMDB catalogue. One blocking batch covers the provider fetch
+/// and the poster cache; without a key nothing is fetched or read.
+async fn discover_catalog(
+    State(state): State<AppState>,
+    ApiJson(args): ApiJson<DiscoverArgs>,
+) -> Result<Json<CatalogScreen>, ApiError> {
+    let kind = match args.kind.as_str() {
+        "movie" => CatalogKind::Movie,
+        "tv" => CatalogKind::Tv,
+        "anime" => CatalogKind::Anime,
+        _ => return Err(invalid("unknown catalogue kind")),
+    };
+    let page = args.page.clamp(1, 20);
+    if !state.discover.enabled() {
+        return Ok(Json(CatalogScreen {
+            available: false,
+            entries: Vec::new(),
+        }));
+    }
+    let discover = state.discover.clone();
+    let artwork_dir = state.artwork_dir.clone();
+    let entries = tokio::task::spawn_blocking(move || {
+        let cache = ArtworkCache::new(artwork_dir.as_ref().clone(), DEFAULT_MAX_CACHE_BYTES);
+        discover
+            .discover(kind, page)
+            .into_iter()
+            .map(|entry| {
+                let mut artwork = Vec::new();
+                if let Some(path) = entry.poster_path {
+                    let key = media_metadata::artwork_key(&path);
+                    if cache.get(&key).is_none() {
+                        if let Ok((bytes, content_type)) =
+                            media_metadata::fetch_artwork_bytes(&path)
+                        {
+                            let _ = cache.put(&key, &bytes, &content_type);
+                        }
+                    }
+                    if cache.get(&key).is_some() {
+                        artwork.push(ArtworkRef {
+                            variant: ArtworkVariant::Poster,
+                            url: Some(format!("/artwork/{key}")),
+                            alt: format!("{} poster", entry.title),
+                        });
+                    }
+                }
+                CatalogEntryDto {
+                    id: entry.id,
+                    kind: match entry.kind {
+                        CatalogKind::Movie => CatalogKindDto::Movie,
+                        CatalogKind::Tv => CatalogKindDto::Tv,
+                        CatalogKind::Anime => CatalogKindDto::Anime,
+                    },
+                    title: entry.title,
+                    year: entry.year,
+                    synopsis: entry.synopsis,
+                    rating: entry.vote_average,
+                    artwork,
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    Ok(Json(CatalogScreen {
+        available: true,
+        entries,
+    }))
+}
+
 async fn settings_get(State(state): State<AppState>) -> Result<Json<AppSettings>, ApiError> {
     Ok(Json(state.service.settings_get().await?))
 }
@@ -810,6 +888,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use media_metadata::tmdb::TmdbOptions;
+    use media_metadata::{DiscoverOptions, DiscoverProvider};
     use media_persistence::sqlite::{connect_path, SqliteLibraryRepository};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -1062,6 +1141,162 @@ mod tests {
         let items = enrich_artwork(&state, vec![summary_for_test()]).await;
         assert!(items[0].artwork.is_empty());
         assert_eq!(imdb_calls.load(Ordering::SeqCst), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Task 2: discover_catalog ------------------------------------------
+    // Handlers are called directly (not via a test router): the route-parity
+    // test counts route registrations in this file, so tests add none.
+
+    /// A fake TMDB discover page. The poster path is the only upstream detail
+    /// the provider keeps; the DTO must expose neither it nor the host or key.
+    const DISCOVER_JSON: &str = r#"{"page":1,"results":[
+      {"id":7,"title":"A Film","release_date":"2020-05-01","overview":"A story.","poster_path":"/p1.jpg","vote_average":7.2}
+    ]}"#;
+
+    const FAKE_DISCOVER_KEY: &str = "SENTINEL-DISCOVER-KEY";
+
+    fn discover_options(dir: &std::path::Path, enabled: bool) -> DiscoverOptions {
+        DiscoverOptions {
+            enabled,
+            api_key: Some(FAKE_DISCOVER_KEY.to_string()),
+            cache_dir: dir.join("discover-cache"),
+        }
+    }
+
+    fn args(kind: &str, page: u32) -> ApiJson<DiscoverArgs> {
+        ApiJson(DiscoverArgs {
+            kind: kind.to_string(),
+            page,
+        })
+    }
+
+    /// Drives the real handler with fakes and a pre-seeded JPEG: no network,
+    /// no image work, and the DTO carries only the hashed URL.
+    #[tokio::test]
+    async fn discover_catalog_emits_only_relative_hashed_poster_url() {
+        let dir = std::env::temp_dir().join(format!("mh-discover-route-{}", uuid::Uuid::new_v4()));
+        let artwork_dir = dir.join("artwork");
+        std::fs::create_dir_all(&artwork_dir).expect("create temp dir");
+        let poster_path = "/p1.jpg";
+        let key = media_metadata::artwork_key(poster_path);
+        std::fs::write(artwork_dir.join(&key), [0xFF, 0xD8, 0xFF, 0x00]).expect("seed poster");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetch_calls = calls.clone();
+        let provider = DiscoverProvider::with_fetch(
+            discover_options(&dir, true),
+            Box::new(move |_, _, supplied_key| {
+                fetch_calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(supplied_key, FAKE_DISCOVER_KEY);
+                Ok(DISCOVER_JSON.to_string())
+            }),
+        );
+        let state = AppState::new(service_for_test().await, "test-token")
+            .with_discover(provider)
+            .with_artwork_dir(artwork_dir);
+
+        let screen = discover_catalog(State(state), args("movie", 1))
+            .await
+            .ok()
+            .expect("discover succeeds")
+            .0;
+        let json = serde_json::to_string(&screen).expect("serialise DTO");
+        assert!(json.contains("\"available\":true"), "DTO: {json}");
+        let expected = format!("/artwork/{key}");
+        assert!(
+            json.contains(&expected),
+            "DTO must carry the hashed URL: {json}"
+        );
+        assert!(
+            !json.contains("image.tmdb.org"),
+            "DTO leaked the host: {json}"
+        );
+        assert!(
+            !json.contains(poster_path),
+            "DTO leaked the poster path: {json}"
+        );
+        assert!(
+            !json.contains(FAKE_DISCOVER_KEY),
+            "DTO leaked the API key: {json}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// No key means no fetch, no image read and an empty, unavailable screen.
+    #[tokio::test]
+    async fn discover_catalog_without_a_key_does_no_fetch() {
+        let dir = std::env::temp_dir().join(format!("mh-discover-off-{}", uuid::Uuid::new_v4()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let fetch_calls = calls.clone();
+        let provider = DiscoverProvider::with_fetch(
+            DiscoverOptions {
+                enabled: false,
+                api_key: None,
+                cache_dir: dir.join("discover-cache"),
+            },
+            Box::new(move |_, _, _| {
+                fetch_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(DISCOVER_JSON.to_string())
+            }),
+        );
+        let state = AppState::new(service_for_test().await, "test-token").with_discover(provider);
+
+        let screen = discover_catalog(State(state), args("movie", 1))
+            .await
+            .ok()
+            .expect("discover succeeds")
+            .0;
+        assert!(!screen.available);
+        assert!(screen.entries.is_empty());
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "no key must mean zero fetch"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Unknown kinds are refused before any provider or artwork work.
+    #[tokio::test]
+    async fn discover_catalog_rejects_unknown_kind() {
+        let dir = std::env::temp_dir().join(format!("mh-discover-kind-{}", uuid::Uuid::new_v4()));
+        let provider = DiscoverProvider::with_fetch(
+            discover_options(&dir, true),
+            Box::new(|_, _, _| Ok(DISCOVER_JSON.to_string())),
+        );
+        let state = AppState::new(service_for_test().await, "test-token").with_discover(provider);
+
+        let error = discover_catalog(State(state), args("other", 1))
+            .await
+            .expect_err("unknown kind must be refused");
+        assert_eq!(error.0.code, AppErrorCode::InvalidRequest);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Pages are clamped into 1..=20 before reaching the provider.
+    #[tokio::test]
+    async fn discover_catalog_clamps_the_page() {
+        let dir = std::env::temp_dir().join(format!("mh-discover-page-{}", uuid::Uuid::new_v4()));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let pages = seen.clone();
+        let provider = DiscoverProvider::with_fetch(
+            discover_options(&dir, true),
+            Box::new(move |_, page, _| {
+                pages.lock().expect("lock").push(page);
+                Ok(DISCOVER_JSON.to_string())
+            }),
+        );
+        let state = AppState::new(service_for_test().await, "test-token").with_discover(provider);
+
+        for page in [0, 999] {
+            let _ = discover_catalog(State(state.clone()), args("movie", page))
+                .await
+                .ok()
+                .expect("discover succeeds");
+        }
+        assert_eq!(*seen.lock().expect("lock"), vec![1, 20]);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

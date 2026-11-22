@@ -373,6 +373,13 @@ pub fn library_watchlist() -> Result<Value, CommandError> {
     post("library_watchlist", json!({}))
 }
 
+/// Display-only discovery catalogue (TMDB). No path, token or upstream URL
+/// crosses this boundary: posters are relative hashed `/artwork/<hash>` refs.
+#[tauri::command]
+pub fn discover_catalog(kind: &str, page: u32) -> Result<Value, CommandError> {
+    post("discover_catalog", json!({ "kind": kind, "page": page }))
+}
+
 // --- Watchlist -------------------------------------------------------------
 
 #[tauri::command]

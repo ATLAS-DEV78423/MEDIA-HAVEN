@@ -30,6 +30,35 @@ pub struct ArtworkRef {
     pub alt: String,
 }
 
+// Display-only discovery DTOs. No path, token, host or upstream URL is carried:
+// posters are the same relative hashed `/artwork/<64-hex>` refs as the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CatalogKindDto {
+    Movie,
+    Tv,
+    Anime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogEntryDto {
+    pub id: String,
+    pub kind: CatalogKindDto,
+    pub title: String,
+    pub year: Option<i64>,
+    pub synopsis: Option<String>,
+    pub rating: Option<f64>,
+    pub artwork: Vec<ArtworkRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogScreen {
+    pub available: bool,
+    pub entries: Vec<CatalogEntryDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum MediaAvailability {

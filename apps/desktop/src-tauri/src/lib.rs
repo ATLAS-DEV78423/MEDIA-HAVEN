@@ -61,6 +61,7 @@ pub fn run() {
             commands::queue_remove,
             commands::queue_reorder,
             commands::downloads_list,
+            commands::discover_catalog,
             commands::download_add,
             commands::source_set,
             commands::download_status,

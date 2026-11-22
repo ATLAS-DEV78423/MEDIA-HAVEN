@@ -4,7 +4,7 @@
 use mediahaven_contract::{sign, Command, ScanOutcome, COMMANDS};
 use std::str::FromStr;
 
-/// The 24 renderer routes in `crates/core/src/routes.rs` (probes excluded).
+/// The 25 renderer routes in `crates/core/src/routes.rs` (probes excluded).
 const EXPECTED_RENDERER_ROUTES: &[&str] = &[
     "library_home",
     "library_movies",
@@ -30,6 +30,7 @@ const EXPECTED_RENDERER_ROUTES: &[&str] = &[
     "playback_start",
     "playback_stop",
     "playback_checkpoint",
+    "discover_catalog",
 ];
 
 #[test]
@@ -38,7 +39,7 @@ fn commands_equal_renderer_routes_with_no_passthrough() {
         COMMANDS, EXPECTED_RENDERER_ROUTES,
         "the named command list must equal the renderer route list exactly"
     );
-    assert_eq!(COMMANDS.len(), 24);
+    assert_eq!(COMMANDS.len(), 25);
 
     for name in COMMANDS {
         assert!(!matches!(*name, "http_request" | "api_request"));

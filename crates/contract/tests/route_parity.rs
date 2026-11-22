@@ -133,8 +133,8 @@ fn command_lists_derive_from_one_source() {
     // required: source registrations, parsed routes and the command list.
     let post_calls = post_registration_count(&routes_src);
     assert_eq!(
-        post_calls, 24,
-        "routes.rs must register exactly 24 POST renderer commands"
+        post_calls, 25,
+        "routes.rs must register exactly 25 POST renderer commands"
     );
     assert_eq!(
         post_calls,
@@ -155,7 +155,7 @@ fn command_lists_derive_from_one_source() {
         contract, generated,
         "COMMANDS and generated CommandName diverged"
     );
-    assert_eq!(contract.len(), 24, "expected exactly 24 renderer commands");
+    assert_eq!(contract.len(), 25, "expected exactly 25 renderer commands");
 
     // The text-extracted list must also match the compiled constant, so a
     // parser that silently found the wrong block cannot make this test pass.
