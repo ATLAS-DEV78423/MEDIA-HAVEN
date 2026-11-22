@@ -6,9 +6,11 @@
 
 pub mod acquisition;
 pub mod auth;
+pub mod indexers;
 pub mod routes;
 pub mod seed;
 pub mod server;
 pub mod state;
 
+pub use indexers::{BundledIndexer, BUNDLED_INDEXERS};
 pub use server::{build_router, run, Config};
