@@ -482,9 +482,8 @@ fn xml_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
-/// Seeders from `<torznab:attr name="seeders" value="…"/>`; attribute order is
-/// not assumed. Missing or malformed values degrade to zero (sort falls back).
-fn xml_seeders(block: &str) -> u32 {
+/// Value of `<torznab:attr name="…" value="…"/>`; attribute order is not assumed.
+fn torznab_attr<'a>(block: &'a str, name: &str) -> Option<&'a str> {
     let mut from = 0usize;
     while let Some(relative) = block[from..].find("<torznab:attr") {
         let start = from + relative;
@@ -494,15 +493,30 @@ fn xml_seeders(block: &str) -> u32 {
             .or_else(|| block[start..].find('>').map(|offset| start + offset + 1))
             .unwrap_or(block.len());
         let attr = &block[start..end];
-        if xml_attr(attr, "name") == Some("seeders") {
-            return xml_attr(attr, "value")
-                .and_then(|value| value.parse::<f64>().ok())
-                .map(|value| value.max(0.0) as u32)
-                .unwrap_or(0);
+        if xml_attr(attr, "name") == Some(name) {
+            return xml_attr(attr, "value");
         }
         from = end;
     }
-    0
+    None
+}
+
+/// Seeders from `<torznab:attr name="seeders" value="…"/>`; missing or malformed
+/// values degrade to zero (sort falls back).
+fn xml_seeders(block: &str) -> u32 {
+    torznab_attr(block, "seeders")
+        .and_then(|value| value.parse::<f64>().ok())
+        .map(|value| value.max(0.0) as u32)
+        .unwrap_or(0)
+}
+
+/// Build a `btih` magnet from an exact 40-character ASCII hex infohash. Only a
+/// hash can take this path: no HTTP URL or bare path can pass the hex check.
+fn magnet_from_infohash(hash: &str) -> Option<String> {
+    if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("magnet:?xt=urn:btih:{}", hash.to_ascii_lowercase()))
 }
 
 fn numbered(tokens: &[&str], prefix: &str, wanted: u32) -> bool {
@@ -595,10 +609,18 @@ fn parse_item(
     let title = xml_value(block, "title")?;
     // A Torznab `<link>` is usually an HTTP details page, which the download
     // boundary rejects. Reuse that exact validator here so a candidate can
-    // never be offered with a source that `download_add` would refuse.
+    // never be offered with a source that `download_add` would refuse. Many
+    // feeds carry no usable link at all but do expose a 40-hex `infohash`;
+    // synthesise a btih magnet from it, then validate that too through the
+    // same boundary. An unusable raw link never becomes a candidate.
     let magnet = xml_value(block, "magnet:link")
         .or_else(|| xml_value(block, "link"))
-        .and_then(|raw| media_acquisition::validate_source(raw).ok())?;
+        .and_then(|raw| media_acquisition::validate_source(raw).ok())
+        .or_else(|| {
+            torznab_attr(block, "infohash")
+                .and_then(magnet_from_infohash)
+                .and_then(|magnet| media_acquisition::validate_source(&magnet).ok())
+        })?;
     let wanted = normalize_title(args.title.trim());
     let norm = normalize_title(title);
     if wanted.is_empty() || !norm.starts_with(&wanted) {
@@ -1448,6 +1470,78 @@ mod tests {
             "no details URL reaches the renderer"
         );
         assert!(!wire.contains("secrets"), "no path reaches the renderer");
+    }
+
+    /// Live feeds often carry only an HTTP details link plus a Torznab
+    /// infohash. A valid 40-hex hash must yield a btih magnet; a shorter one
+    /// and the HTTP link must never become candidates.
+    #[test]
+    fn source_search_recovers_btih_magnet_from_infohash_when_link_is_http() {
+        let http = ProwlarrHttp {
+            fetch: Box::new(|request| {
+                match request.path.as_str() {
+                "/api/v1/indexer" => Ok(serde_json::json!([{"id": 1, "enable": true}]).to_string()),
+                "/api/v1/indexer/1/newznab" => Ok(concat!(
+                    r#"<rss><channel>"#,
+                    r#"<item><title>Show.2024.hash</title>"#,
+                    r#"<link>https://indexer.invalid/api/download/1</link>"#,
+                    r#"<torznab:attr name="infohash" value="480B6B7D49D536F7881D66695C31F4B340372289"/>"#,
+                    r#"<torznab:attr name="seeders" value="5"/></item>"#,
+                    r#"<item><title>Show.2024.shorthash</title>"#,
+                    r#"<link>https://indexer.invalid/api/download/2</link>"#,
+                    r#"<torznab:attr name="infohash" value="480B6B7D49D536F7881D66695C31F4B34037228"/>"#,
+                    r#"<torznab:attr name="seeders" value="99"/></item>"#,
+                    r#"<item><title>Show.2024.magnet</title>"#,
+                    r#"<magnet:link>magnet:?xt=urn:btih:ABC</magnet:link>"#,
+                    r#"<torznab:attr name="seeders" value="1"/></item>"#,
+                    r#"</channel></rss>"#
+                )
+                .to_string()),
+                other => Err(format!("unexpected path: {other}")),
+            }
+            }),
+        };
+        let args = SourceSearchArgs {
+            title: "Show".to_string(),
+            year: Some(2024),
+            season: None,
+            episode: None,
+        };
+
+        let result = source_search_with(&http, "http://prowlarr.invalid", "sentinel", &args);
+
+        assert_eq!(
+            result.results.len(),
+            2,
+            "the HTTP-only item with a 39-char hash must be dropped"
+        );
+        let hashed = result
+            .results
+            .iter()
+            .find(|candidate| candidate.title == "Show.2024.hash")
+            .expect("infohash item kept");
+        assert!(
+            hashed.magnet.starts_with("magnet:?xt=urn:btih:"),
+            "infohash must become a btih magnet: {}",
+            hashed.magnet
+        );
+        assert!(result
+            .results
+            .iter()
+            .all(|candidate| candidate.title != "Show.2024.shorthash"));
+        assert!(result
+            .results
+            .iter()
+            .any(|candidate| candidate.magnet == "magnet:?xt=urn:btih:ABC"));
+        let wire = serde_json::to_string(&result).expect("serialize results");
+        assert!(
+            !wire.contains("https://"),
+            "no details URL reaches the renderer"
+        );
+        assert!(
+            !wire.contains("sentinel"),
+            "no credential reaches the renderer"
+        );
     }
 
     #[test]
