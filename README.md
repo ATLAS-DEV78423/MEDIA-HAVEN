@@ -26,7 +26,8 @@ browse and play them through a full-screen, remote-friendly interface.
 
 | Document | Purpose |
 |---|---|
-| `all-in-one-final.txt` | Single-file overview: how it works, standout features, requirements and installation |
+| `ALL-IN-ONE.md` | **Start here** — full user guide rendered by GitHub: how it works, standout features, requirements and installation |
+| `all-in-one-final.txt` | Same guide as a single plain-text file |
 | `Development.md` | The authoritative product and engineering contract |
 | `roadmap.md` | Phases, tasks, checkpoints and acceptance criteria |
 | `progress.md` | What actually works today, and the handover |
