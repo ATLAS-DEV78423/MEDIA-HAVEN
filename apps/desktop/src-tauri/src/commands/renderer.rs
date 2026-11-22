@@ -478,6 +478,15 @@ pub fn imdb_lookup(media_id: String) -> Result<Value, CommandError> {
     post_internal("host/imdb_lookup", json!({ "mediaId": media_id }))
 }
 
+/// One-click setup of the bundled sources in the operator's own Prowlarr. The
+/// address and key stay in the backend's environment; the renderer sends no
+/// credentials and receives only `{ added, skipped }` counts and fixed reasons.
+#[tauri::command]
+pub fn indexers_seed() -> Result<Value, String> {
+    post_internal("host/indexers_seed", json!({}))
+        .map_err(|_| "Sources could not be set up. Try again.".to_string())
+}
+
 /// Current acquisition rows (path-free identities) from the host-internal route.
 #[tauri::command]
 pub fn download_status() -> Result<Value, CommandError> {

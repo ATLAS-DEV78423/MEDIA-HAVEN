@@ -44,6 +44,7 @@ const CLEANUP_PASS_PATH: &str = "/host/acquisition_cleanup_pass";
 const INSPECT_PATH: &str = "/host/acquisition_inspect";
 const SOURCE_SET_PATH: &str = "/host/acquisition_source_set";
 const IMDB_LOOKUP_PATH: &str = "/host/imdb_lookup";
+const SEED_PATH: &str = "/host/indexers_seed";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -100,6 +101,7 @@ pub fn host_router() -> Router<AppState> {
         .route(INSPECT_PATH, post(inspect))
         .route(SOURCE_SET_PATH, post(source_set))
         .route(IMDB_LOOKUP_PATH, post(imdb_lookup))
+        .route(SEED_PATH, post(indexers_seed))
 }
 
 /// Attach an operator-supplied source to a library item (R-01 / ADR-0021).
@@ -195,6 +197,207 @@ async fn imdb_lookup(
     ApiJson(args): ApiJson<ImdbLookupArgs>,
 ) -> Result<Json<Value>, ApiError> {
     encode(lookup_display(&state, &args.media_id).await)
+}
+
+// ---------------------------------------------------------------------------
+// Seeded sources (Task 2). One host-internal route installs the bundled
+// Prowlarr-native definitions in the operator's own Prowlarr instance. The
+// address and key come only from this process's environment; neither enters a
+// DTO, a log line or an error string. No new renderer command is added.
+// ---------------------------------------------------------------------------
+
+const PROWLARR_URL_ENV: &str = "MEDIAHAVEN_PROWLARR_URL";
+const PROWLARR_KEY_ENV: &str = "MEDIAHAVEN_PROWLARR_API_KEY";
+
+/// Only these have a native `definitionName` in Prowlarr. The two custom
+/// Miauflix definitions are reported as skipped and are never posted.
+const SEED_IDS: [&str; 3] = ["yts", "nyaasi", "thepiratebay"];
+const CUSTOM_IDS: [&str; 2] = ["eztv-api", "animetosho"];
+
+const SKIP_CUSTOM: &str = "not in Prowlarr";
+const SKIP_UNAVAILABLE: &str = "not available in Prowlarr";
+const SKIP_PRESENT: &str = "already present";
+const SKIP_FAILED: &str = "Prowlarr rejected the definition";
+const TRANSPORT_ERROR: &str = "Prowlarr could not be reached.";
+const RESPONSE_ERROR: &str = "Prowlarr returned an unexpected response.";
+
+/// Counts and fixed reasons only. Never carries a URL, key, path or raw
+/// Prowlarr response text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SeedResult {
+    pub added: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// One Prowlarr call. Credentials are supplied per request by `seed_indexers`;
+/// the seam stores neither, so a test fake cannot leak them into a DTO.
+#[derive(Debug, Clone)]
+struct ProwlarrRequest {
+    base_url: String,
+    api_key: String,
+    path: String,
+    body: Option<Value>,
+}
+
+/// Mirrors the metadata crate's `FetchFn` seam: a boxed closure returning raw
+/// response text or a fixed error. Tests inject a fake; no live HTTP.
+type ProwlarrFetchFn = dyn Fn(&ProwlarrRequest) -> Result<String, String> + Send + Sync;
+
+struct ProwlarrHttp {
+    fetch: Box<ProwlarrFetchFn>,
+}
+
+impl ProwlarrHttp {
+    fn live() -> Self {
+        Self {
+            fetch: Box::new(|request| {
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(Duration::from_secs(2))
+                    .build()
+                    .map_err(|_| TRANSPORT_ERROR.to_string())?;
+                let url = format!(
+                    "{}{}?apikey={}",
+                    request.base_url.trim_end_matches('/'),
+                    request.path,
+                    request.api_key
+                );
+                let outgoing = match &request.body {
+                    Some(body) => client
+                        .post(&url)
+                        .header(reqwest::header::CONTENT_TYPE, "application/json")
+                        .body(serde_json::to_vec(body).map_err(|_| RESPONSE_ERROR.to_string())?),
+                    None => client.get(&url),
+                };
+                let response = outgoing.send().map_err(|_| TRANSPORT_ERROR.to_string())?;
+                if !response.status().is_success() {
+                    return Err(RESPONSE_ERROR.to_string());
+                }
+                response.text().map_err(|_| RESPONSE_ERROR.to_string())
+            }),
+        }
+    }
+
+    fn call(
+        &self,
+        base_url: &str,
+        api_key: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value, String> {
+        let text = (self.fetch)(&ProwlarrRequest {
+            base_url: base_url.to_string(),
+            api_key: api_key.to_string(),
+            path: path.to_string(),
+            body,
+        })?;
+        serde_json::from_str(&text).map_err(|_| RESPONSE_ERROR.to_string())
+    }
+}
+
+/// Read the operator inputs from this process only and seed through the live
+/// transport. Called from a `spawn_blocking` task by the host route.
+pub fn seed_indexers() -> SeedResult {
+    let url = std::env::var(PROWLARR_URL_ENV).unwrap_or_default();
+    let key = std::env::var(PROWLARR_KEY_ENV).unwrap_or_default();
+    seed_indexers_with(&ProwlarrHttp::live(), &url, &key)
+}
+
+/// The whole seeding flow behind an injectable HTTP seam. Every failure
+/// degrades to a fixed reason; no transport text or credential is returned.
+fn seed_indexers_with(http: &ProwlarrHttp, base_url: &str, api_key: &str) -> SeedResult {
+    let mut result = SeedResult {
+        added: Vec::new(),
+        skipped: Vec::new(),
+    };
+    if base_url.trim().is_empty() || api_key.trim().is_empty() {
+        return result;
+    }
+    for id in CUSTOM_IDS {
+        result.skipped.push(format!("{id}: {SKIP_CUSTOM}"));
+    }
+
+    let Ok(schema) = http.call(base_url, api_key, "/api/v1/indexer/schema", None) else {
+        return result;
+    };
+    let Some(schema) = schema.as_array() else {
+        return result;
+    };
+    let Ok(indexers) = http.call(base_url, api_key, "/api/v1/indexer", None) else {
+        return result;
+    };
+    let existing: HashSet<String> = indexers
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|row| row["name"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for id in SEED_IDS {
+        let Some(entry) = schema
+            .iter()
+            .find(|item| item["definitionName"].as_str() == Some(id))
+        else {
+            result.skipped.push(format!("{id}: {SKIP_UNAVAILABLE}"));
+            continue;
+        };
+        let Some(name) = entry["name"].as_str() else {
+            result.skipped.push(format!("{id}: {SKIP_UNAVAILABLE}"));
+            continue;
+        };
+        if existing.contains(name) {
+            result.skipped.push(format!("{id}: {SKIP_PRESENT}"));
+            continue;
+        }
+        // Prowlarr returns 400 when `fields` is missing or empty: the schema's
+        // own field array must be forwarded verbatim.
+        let Some(fields) = entry["fields"].as_array() else {
+            result.skipped.push(format!("{id}: {SKIP_UNAVAILABLE}"));
+            continue;
+        };
+        let Some(base) = entry["indexerUrls"]
+            .as_array()
+            .and_then(|urls| urls.first())
+            .and_then(Value::as_str)
+        else {
+            result.skipped.push(format!("{id}: {SKIP_UNAVAILABLE}"));
+            continue;
+        };
+        let body = serde_json::json!({
+            "name": name,
+            "implementation": entry["implementation"],
+            "configContract": entry["configContract"],
+            "protocol": entry["protocol"],
+            "appProfileId": 1,
+            "enable": true,
+            "priority": 1,
+            "tags": [],
+            "fields": fields,
+            "settings": { "definitionFile": id, "baseUrl": base },
+        });
+        match http.call(base_url, api_key, "/api/v1/indexer", Some(body)) {
+            Ok(_) => result.added.push(id.to_string()),
+            Err(_) => result.skipped.push(format!("{id}: {SKIP_FAILED}")),
+        }
+    }
+    result
+}
+
+/// Install the bundled sources in the operator's Prowlarr. The blocking client
+/// runs off the tokio workers; the response is counts and fixed reasons only.
+async fn indexers_seed() -> Result<Json<Value>, ApiError> {
+    let result = tokio::task::spawn_blocking(seed_indexers)
+        .await
+        .map_err(|_| {
+            ApiError(AppError::new(
+                AppErrorCode::Internal,
+                "The seeding request failed.",
+                true,
+            ))
+        })?;
+    encode(result)
 }
 
 fn map_error(error: AcquireError) -> ApiError {
@@ -834,6 +1037,8 @@ async fn run_prefetch(state: &AppState, media_id: &str) -> Result<(), AppError> 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
 
     #[test]
@@ -848,9 +1053,162 @@ mod tests {
             INSPECT_PATH,
             SOURCE_SET_PATH,
             IMDB_LOOKUP_PATH,
+            SEED_PATH,
         ] {
             assert!(path.starts_with(HOST_PREFIX), "host-only path: {path}");
         }
+    }
+
+    /// Offline Prowlarr fixture: three native definitions plus two custom ids
+    /// that must never be posted (no matching `definitionName` in Prowlarr).
+    fn seed_schema() -> Value {
+        serde_json::json!([
+            {
+                "definitionName": "yts",
+                "name": "YTS",
+                "implementation": "YTS",
+                "configContract": "YTSSettings",
+                "protocol": "torrent",
+                "fields": [{"name": "baseUrl", "value": ""}],
+                "indexerUrls": ["https://yts.example"]
+            },
+            {
+                "definitionName": "nyaasi",
+                "name": "Nyaa.si",
+                "implementation": "NyaaSi",
+                "configContract": "NyaaSiSettings",
+                "protocol": "torrent",
+                "fields": [{"name": "baseUrl", "value": ""}],
+                "indexerUrls": ["https://nyaa.example"]
+            },
+            {
+                "definitionName": "thepiratebay",
+                "name": "The Pirate Bay",
+                "implementation": "ThePirateBay",
+                "configContract": "ThePirateBaySettings",
+                "protocol": "torrent",
+                "fields": [{"name": "baseUrl", "value": ""}],
+                "indexerUrls": ["https://tpb.example"]
+            }
+        ])
+    }
+
+    fn fake_prowlarr(calls: Arc<Mutex<Vec<ProwlarrRequest>>>, existing: Value) -> ProwlarrHttp {
+        ProwlarrHttp {
+            fetch: Box::new(move |request| {
+                calls.lock().expect("record call").push(request.clone());
+                match request.path.as_str() {
+                    "/api/v1/indexer/schema" => Ok(seed_schema().to_string()),
+                    "/api/v1/indexer" if request.body.is_none() => Ok(existing.to_string()),
+                    "/api/v1/indexer" => Ok(serde_json::json!({"id": 1}).to_string()),
+                    other => Err(format!("unexpected path: {other}")),
+                }
+            }),
+        }
+    }
+
+    #[test]
+    fn seed_indexers_adds_native_definitions_and_skips_custom_ones() {
+        use std::sync::{Arc, Mutex};
+
+        const KEY: &str = "sentinel-prowlarr-key";
+        const URL: &str = "http://prowlarr.invalid:9696";
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let http = fake_prowlarr(calls.clone(), serde_json::json!([]));
+
+        let result = seed_indexers_with(&http, URL, KEY);
+
+        assert_eq!(result.added, ["yts", "nyaasi", "thepiratebay"]);
+        assert!(result
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("eztv-api") && reason.contains("not in Prowlarr")));
+        assert!(result
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("animetosho") && reason.contains("not in Prowlarr")));
+
+        let recorded = calls.lock().expect("recorded calls");
+        let posts: Vec<&ProwlarrRequest> = recorded
+            .iter()
+            .filter(|request| request.body.is_some())
+            .collect();
+        assert_eq!(
+            posts.len(),
+            3,
+            "only the three native definitions are posted"
+        );
+        for post in &posts {
+            let body = post.body.as_ref().expect("post body");
+            assert!(
+                body["fields"]
+                    .as_array()
+                    .is_some_and(|fields| !fields.is_empty()),
+                "the schema's own fields must be forwarded; Prowlarr returns 400 without them"
+            );
+            let definition = body["settings"]["definitionFile"].as_str().unwrap_or("");
+            assert!(["yts", "nyaasi", "thepiratebay"].contains(&definition));
+            assert!(body["settings"]["baseUrl"]
+                .as_str()
+                .is_some_and(|url| !url.is_empty()));
+            assert_eq!(body["appProfileId"], 1);
+            assert_eq!(body["enable"], true);
+            assert_eq!(body["priority"], 1);
+            assert_eq!(body["tags"], serde_json::json!([]));
+        }
+
+        // No credential or address reaches the renderer-facing result.
+        let wire = serde_json::to_string(&result).expect("serialize result");
+        assert!(!wire.contains(KEY));
+        assert!(!wire.contains("http://"));
+    }
+
+    #[test]
+    fn seed_indexers_skips_an_already_present_definition() {
+        use std::sync::{Arc, Mutex};
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let http = fake_prowlarr(calls.clone(), serde_json::json!([{"name": "YTS"}]));
+
+        let result = seed_indexers_with(&http, "http://prowlarr.invalid:9696", "sentinel-key");
+
+        assert!(!result.added.iter().any(|id| id == "yts"));
+        assert!(result
+            .skipped
+            .iter()
+            .any(|reason| reason.contains("yts") && reason.contains("already present")));
+        let posted: Vec<String> = calls
+            .lock()
+            .expect("recorded calls")
+            .iter()
+            .filter_map(|request| {
+                request.body.as_ref().map(|body| {
+                    body["settings"]["definitionFile"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string()
+                })
+            })
+            .collect();
+        assert_eq!(posted, ["nyaasi", "thepiratebay"]);
+    }
+
+    #[test]
+    fn seed_indexers_without_configuration_returns_an_empty_result() {
+        use std::sync::{Arc, Mutex};
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let http = fake_prowlarr(calls.clone(), serde_json::json!([]));
+
+        let result = seed_indexers_with(&http, "  ", "sentinel-key");
+        assert!(result.added.is_empty() && result.skipped.is_empty());
+
+        let result = seed_indexers_with(&http, "http://prowlarr.invalid:9696", "   ");
+        assert!(result.added.is_empty() && result.skipped.is_empty());
+        assert!(
+            calls.lock().expect("recorded calls").is_empty(),
+            "no Prowlarr call without both inputs"
+        );
     }
 
     #[test]

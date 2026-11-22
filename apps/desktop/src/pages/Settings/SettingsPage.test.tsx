@@ -50,6 +50,11 @@ beforeEach(() => {
       configured[args?.kind as string] = false;
       return Promise.resolve(null);
     }
+    if (command === "indexers_seed")
+      return Promise.resolve({
+        added: ["yts", "nyaasi", "thepiratebay"],
+        skipped: ["eztv-api: not in Prowlarr", "animetosho: not in Prowlarr"],
+      });
     return Promise.resolve(null);
   });
   window.__TAURI_INTERNALS__ = { invoke } as unknown as {
@@ -175,5 +180,27 @@ describe("Prowlarr provider inputs", () => {
       expect(invoke).toHaveBeenCalledWith("provider_secret_clear", { kind: "prowlarr_key" }),
     );
     expect(within(row).getByText("Not configured")).toBeInTheDocument();
+  });
+});
+
+describe("source setup", () => {
+  it("reports counts only and never puts the address or key in the DOM", async () => {
+    const user = userEvent.setup();
+    const url = "http://127.0.0.1:9696";
+    const key = "prowlarr-sentinel-key-for-seeding";
+    mount();
+
+    await user.type(await screen.findByLabelText("Prowlarr address"), url);
+    await user.click(screen.getByRole("button", { name: "Save address" }));
+    await user.type(await screen.findByLabelText("Prowlarr API key"), key);
+    await user.click(screen.getByRole("button", { name: "Save key" }));
+
+    await user.click(screen.getByRole("button", { name: "Set up sources" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("indexers_seed", undefined));
+    expect(await screen.findByText("3 added, 2 skipped.")).toBeInTheDocument();
+
+    const dom = document.body.innerHTML;
+    expect(dom).not.toContain(url);
+    expect(dom).not.toContain(key);
   });
 });

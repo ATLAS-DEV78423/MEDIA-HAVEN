@@ -8,6 +8,7 @@ import {
   hasProviderSecret,
   setProviderSecret,
 } from "@/services/providerSecrets";
+import { seedSources } from "@/services/sources";
 import { call } from "@/services/transport";
 import type { RuntimeStatus } from "@/services/types";
 import type { SubtitleSize } from "@/state/AppState";
@@ -51,6 +52,8 @@ export function SettingsPage() {
   const [prowlarrKeyDraft, setProwlarrKeyDraft] = useState("");
   const [prowlarrKeyConfigured, setProwlarrKeyConfigured] = useState(false);
   const [prowlarrKeyNotice, setProwlarrKeyNotice] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const [seedNotice, setSeedNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -163,6 +166,19 @@ export function SettingsPage() {
       setProwlarrKeyNotice("Prowlarr API key removed. Restart the app to stop using it.");
     } catch {
       setProwlarrKeyNotice("The Prowlarr API key could not be removed. Try again.");
+    }
+  };
+
+  const setupSources = async () => {
+    setSeeding(true);
+    setSeedNotice(null);
+    try {
+      const result = await seedSources();
+      setSeedNotice(`${result.added.length} added, ${result.skipped.length} skipped.`);
+    } catch {
+      setSeedNotice("Sources could not be set up. Try again.");
+    } finally {
+      setSeeding(false);
     }
   };
 
@@ -439,9 +455,29 @@ export function SettingsPage() {
                 {prowlarrKeyNotice}
               </p>
             ) : null}
+            <FieldRow
+              label="Source setup"
+              hint="Installs the bundled definitions into your own Prowlarr. Already added and unsupported entries are skipped."
+            >
+              <button
+                type="button"
+                className={buttonClass("glass")}
+                data-focusable="true"
+                disabled={seeding}
+                onClick={() => void setupSources()}
+              >
+                Set up sources
+              </button>
+            </FieldRow>
+            {seedNotice ? (
+              <p className={styles.rootHint} role="status">
+                {seedNotice}
+              </p>
+            ) : null}
             <p className={styles.rootHint}>
-              Prowlarr is not contacted until you configure it here. No site
-              list, indexer or catalogue is bundled with the app.
+              Prowlarr is not contacted until you configure it here. The
+              definitions ship with the app and are installed only into a
+              Prowlarr instance you run yourself.
             </p>
           </Panel>
         </section>
