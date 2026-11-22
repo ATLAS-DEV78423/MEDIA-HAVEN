@@ -9,9 +9,9 @@ explicitly superseded where they disagree with the newest entry.
 ## 2026-11-22 — Operator-supplied TMDB token (Tasks 1–3; live token run NOT RUN)
 
 Implemented per `docs/superpowers/plans/2026-11-21-operator-tmdb-token.md` on
-the isolated worktree `ea5b46` (branch `tmdb-artwork-and-exe-guard`, base
-`d503b66`). No new dependency, no push/merge/install; Playwright config and
-`vite.config.ts` untouched. Full detail:
+the isolated worktree `ea5b46` (branch `tmdb-artwork-and-exe-guard`, Task-1
+base `d85d332`, Task-3 base `d503b66`). No new dependency, no push/merge/install;
+Playwright config and `vite.config.ts` untouched. Full detail:
 `.superpowers/sdd/2026-11-21-operator-tmdb-token/task-{1,2,3}-report.md`.
 
 - **Tasks 1–2 (already landed before this entry; unchanged here).** Generic

@@ -249,6 +249,10 @@ fn redact(text: &str) -> String {
     let mut masked = String::with_capacity(text.len());
     let mut pos = 0;
     for (at, _) in text.match_indices('=') {
+        // An '=' inside a value masked on an earlier pass lies before pos.
+        if at < pos {
+            continue;
+        }
         let key = text[pos..at]
             .rsplit(|c: char| c.is_whitespace() || c == ',' || c == '"' || c == '\'')
             .next()
@@ -381,6 +385,16 @@ mod tests {
             assert!(cleaned.contains("compose error:"), "prefix lost: {cleaned}");
             assert!(cleaned.contains(" failed"), "tail lost: {cleaned}");
         }
+    }
+
+    #[test]
+    fn redaction_handles_a_value_containing_an_equals_sign() {
+        // The second '=' sits inside the value already masked by the first;
+        // slicing text[pos..at] for it must not panic or leak the value.
+        let cleaned = redact("token=a=b failed");
+        assert!(!cleaned.contains("a=b"), "value survived: {cleaned}");
+        assert!(cleaned.contains("[redacted]"), "no marker: {cleaned}");
+        assert!(cleaned.contains(" failed"), "tail lost: {cleaned}");
     }
 
     #[test]

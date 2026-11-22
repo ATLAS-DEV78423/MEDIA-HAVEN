@@ -64,6 +64,10 @@ services:
       # The host-side WebUI client logs in with it; never a default, never in an
       # image, a log or a renderer DTO (ADR-0018).
       MEDIAHAVEN_QB_TOKEN: "${MEDIAHAVEN_QB_TOKEN:?host-generated}"
+      # Operator TMDB token, forwarded by the supervisor. Compose injects only
+      # declared variables; the blank default keeps the no-token case startable
+      # and api_key_from_env() treats blank as absent.
+      MEDIAHAVEN_TMDB_API_KEY: "${MEDIAHAVEN_TMDB_API_KEY:-}"
       MEDIAHAVEN_DATA_DIR: "/var/lib/mediahaven"
       MEDIAHAVEN_STAGING_DIR: "/var/lib/mediahaven/staging"
       MEDIAHAVEN_CACHE_DIR: "/var/cache/mediahaven"

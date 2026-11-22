@@ -253,7 +253,10 @@ export function SettingsPage() {
                   autoComplete="off"
                   aria-label="TMDB read access token"
                   value={tokenDraft}
-                  onChange={(event) => setTokenDraft(event.target.value)}
+                  onChange={(event) => {
+                    setTokenDraft(event.target.value);
+                    setTokenNotice(null);
+                  }}
                   placeholder="Paste token"
                 />
                 <span className={styles.tokenStatus} aria-live="polite">

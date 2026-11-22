@@ -819,6 +819,24 @@ mod tests {
     }
 
     #[test]
+    fn compose_declares_the_tmdb_key_for_core_with_a_blank_safe_default() {
+        const COMPOSE: &str = include_str!("../../../../../infrastructure/containers/compose.yaml");
+        // Compose injects only variables declared in a service's environment
+        // map. The supervisor forwards the key into the process environment,
+        // so core must declare it or artwork lookup never sees it in the
+        // mandatory container.
+        let core = COMPOSE
+            .split("  core:")
+            .nth(1)
+            .and_then(|rest| rest.split("  probe:").next())
+            .expect("core service block");
+        assert!(
+            core.contains(r#"MEDIAHAVEN_TMDB_API_KEY: "${MEDIAHAVEN_TMDB_API_KEY:-}""#),
+            "core must declare the TMDB key with a blank-safe default, got:\n{core}"
+        );
+    }
+
+    #[test]
     fn download_root_setting_requires_an_absolute_path() {
         assert!(validate_download_root("").is_err());
         assert!(validate_download_root("  ").is_err());
