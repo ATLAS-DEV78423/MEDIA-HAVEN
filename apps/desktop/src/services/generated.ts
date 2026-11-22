@@ -29,7 +29,8 @@ export type CommandName =
   | "settings_set"
   | "playback_start"
   | "playback_stop"
-  | "playback_checkpoint";
+  | "playback_checkpoint"
+  | "discover_catalog";
 
 /* Response shapes of the `mediahaven-core` HTTP API.
    Field names mirror the Rust DTOs exactly (serde camelCase). */
