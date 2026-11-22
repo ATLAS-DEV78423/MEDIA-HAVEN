@@ -235,7 +235,7 @@ fn sanitize(raw: &str, max_chars: usize) -> Option<String> {
 
 /// TMDB artwork paths are CDN-relative (`/abc123.jpg`). Accept only that
 /// shape so a hostile payload cannot become a local path, URL or script.
-fn sanitize_poster(raw: &str) -> Option<String> {
+pub fn sanitize_poster(raw: &str) -> Option<String> {
     let value = raw.trim();
     if value.is_empty()
         || value.len() > 512

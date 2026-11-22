@@ -6,6 +6,7 @@
 //! are cached locally, and bundled art is the fallback.
 
 pub mod cache;
+pub mod discover;
 pub mod imdb;
 pub mod imdb_artwork;
 pub mod model;
@@ -14,6 +15,9 @@ pub mod omdb;
 pub mod tmdb;
 
 pub use cache::{RatingCache, CACHE_TTL, DEFAULT_IMDB_CACHE_MAX_BYTES};
+pub use discover::{
+    http_discover_fetch, CatalogEntry, CatalogKind, DiscoverOptions, DiscoverProvider,
+};
 pub use imdb::{
     merge, parse_age_ratings, parse_basics, parse_ratings, FileImdbFetch, ImdbFetch, ImdbOptions,
     ImdbProvider, MemoryFetch, IMDB_ATTRIBUTION,
