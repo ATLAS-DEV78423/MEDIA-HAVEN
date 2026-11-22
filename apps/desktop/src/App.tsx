@@ -80,6 +80,8 @@ export function App() {
     status,
     data,
     bootError,
+    startupStatus,
+    setStartupStatus,
     retry,
     activeProfile,
     actionError,
@@ -88,15 +90,43 @@ export function App() {
   const { pathname, key } = useLocation();
   useSpatialFocus();
   useBackNavigation();
-  // The host starts the backend once on mount; a failure must not replace the
-  // existing service-down UI, so the promise is deliberately ignored here.
+  // The host starts the backend once on mount. Only a fixed notice crosses this
+  // boundary; readiness itself is detected by AppState's bounded retry loop.
   useEffect(() => {
-    void startRuntime().catch(() => undefined);
-  }, []);
+    let cancelled = false;
+    void startRuntime()
+      .then((result) => {
+        if (cancelled) return;
+        if (result === "setup-required") {
+          setStartupStatus("Setup is required: install WSL2 and Docker first.");
+        } else if (result === "failed") {
+          setStartupStatus(
+            "The media service could not start. Check the diagnostics page.",
+          );
+        } else {
+          setStartupStatus(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStartupStatus(
+            "The media service could not start. Check the diagnostics page.",
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [setStartupStatus]);
 
   if (status === "loading") return <BootScreen />;
   if (status === "error" || !data) {
-    return <ServiceDown message={bootError} onRetry={() => void retry()} />;
+    return (
+      <ServiceDown
+        message={startupStatus ?? bootError}
+        onRetry={() => void retry()}
+      />
+    );
   }
 
   const chromeless =

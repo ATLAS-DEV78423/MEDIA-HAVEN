@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { api } from "@/services/api";
+import { startRuntime } from "@/services/runtime";
 import { AppStateProvider } from "./state/AppState";
 
 const settings = {
@@ -74,6 +76,10 @@ vi.mock("@/services/api", () => ({
   },
 }));
 
+vi.mock("@/services/runtime", () => ({
+  startRuntime: vi.fn(async () => "ready"),
+}));
+
 function mount(route = "/") {
   return render(
     <AppStateProvider>
@@ -87,6 +93,13 @@ function mount(route = "/") {
 beforeEach(() => {
   window.localStorage.clear();
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+const notListening = () =>
+  Object.assign(new Error("not listening"), { code: "backend_unreachable" });
 
 describe("app shell", () => {
   it("opens on profile selection when no profile is active", async () => {
@@ -109,5 +122,54 @@ describe("app shell", () => {
       await screen.findByRole("heading", { name: "The Quiet Earth" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+  });
+
+  it("retries a starting backend until it answers, then opens the app", async () => {
+    vi.useFakeTimers();
+    const ready = vi.mocked(api.ready);
+    ready.mockReset();
+    ready
+      .mockRejectedValueOnce(notListening())
+      .mockRejectedValueOnce(notListening())
+      .mockResolvedValueOnce({ status: "ready" });
+
+    mount();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(ready).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(ready).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(ready).toHaveBeenCalledTimes(3);
+    expect(
+      screen.getByRole("heading", { name: /who's watching/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("stops immediately on a configuration error and shows fixed setup text", async () => {
+    const ready = vi.mocked(api.ready);
+    ready.mockReset();
+    ready.mockRejectedValueOnce(
+      Object.assign(new Error("config"), { code: "credential_mismatch" }),
+    );
+    vi.mocked(startRuntime).mockResolvedValueOnce("setup-required");
+
+    mount();
+
+    expect(
+      await screen.findByText(/Setup is required: install WSL2 and Docker first\./),
+    ).toBeInTheDocument();
+    expect(ready).toHaveBeenCalledTimes(1);
+    const dom = document.body.innerHTML;
+    expect(dom).not.toContain("MEDIA_HAVEN");
+    expect(dom).not.toContain("compose.yaml");
   });
 });

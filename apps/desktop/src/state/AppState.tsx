@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -85,6 +86,24 @@ function readLocal(): LocalState {
   }
 }
 
+const BOOT_MAX_ATTEMPTS = 30;
+const BOOT_RETRY_MS = 1000;
+const BOOT_STARTING_CODES = new Set([
+  "backend_unreachable",
+  "runtime_unavailable",
+  "runtime_unhealthy",
+]);
+
+/** True only when a failure means "the backend is not listening yet".
+ *  Auth/configuration errors must stop the boot retry loop immediately. */
+function isBackendStarting(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  if (typeof error === "object" && error !== null && "code" in error) {
+    return typeof error.code === "string" && BOOT_STARTING_CODES.has(error.code);
+  }
+  return false;
+}
+
 async function fetchSnapshot(): Promise<LibrarySnapshot> {
   await api.ready();
   const [home, movies, shows, watchlist, roots, settings, downloads] = await Promise.all([
@@ -107,6 +126,8 @@ const profileColour = /^#[0-9a-f]{6}$/i;
 interface AppStateValue {
   status: Status;
   bootError: string | null;
+  startupStatus: string | null;
+  setStartupStatus: (value: string | null) => void;
   actionError: string | null;
   clearActionError: () => void;
   data: LibrarySnapshot | null;
@@ -143,7 +164,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [data, setData] = useState<LibrarySnapshot | null>(null);
   const [status, setStatus] = useState<Status>("loading");
   const [bootError, setBootError] = useState<string | null>(null);
+  const [startupStatus, setStartupStatus] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // A generation invalidates in-flight retries on unmount or a fresh load.
+  const generationRef = useRef(0);
+  const retryTimerRef = useRef<number | null>(null);
+  const wakeRetryRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     try {
@@ -157,17 +183,53 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     document.documentElement.dataset.motion = local.reduceMotion ? "reduced" : "full";
   }, [local.reduceMotion]);
 
-  const load = useCallback(async () => {
-    try {
-      const snapshot = await fetchSnapshot();
-      setData(snapshot);
-      setBootError(null);
-      setStatus("ready");
-    } catch (error) {
-      setBootError(describeError(error));
-      setStatus("error");
+  // Invalidate any pending retry and release a sleeping loop so it can exit.
+  const cancelRetry = useCallback(() => {
+    generationRef.current += 1;
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
     }
+    wakeRetryRef.current?.();
+    wakeRetryRef.current = null;
   }, []);
+
+  const waitBeforeRetry = useCallback(
+    () =>
+      new Promise<void>((resolve) => {
+        wakeRetryRef.current = resolve;
+        retryTimerRef.current = window.setTimeout(() => {
+          retryTimerRef.current = null;
+          wakeRetryRef.current = null;
+          resolve();
+        }, BOOT_RETRY_MS);
+      }),
+    [],
+  );
+
+  const load = useCallback(async () => {
+    cancelRetry();
+    const generation = generationRef.current;
+    for (let attempt = 1; attempt <= BOOT_MAX_ATTEMPTS; attempt += 1) {
+      if (generation !== generationRef.current) return;
+      try {
+        const snapshot = await fetchSnapshot();
+        if (generation !== generationRef.current) return;
+        setData(snapshot);
+        setBootError(null);
+        setStatus("ready");
+        return;
+      } catch (error) {
+        if (generation !== generationRef.current) return;
+        if (attempt >= BOOT_MAX_ATTEMPTS || !isBackendStarting(error)) {
+          setBootError(describeError(error));
+          setStatus("error");
+          return;
+        }
+        await waitBeforeRetry();
+      }
+    }
+  }, [cancelRetry, waitBeforeRetry]);
 
   useEffect(() => {
     // Deferred one task so the first paint is the loading state rather than a
@@ -175,8 +237,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const timer = window.setTimeout(() => {
       void load();
     }, 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
+    return () => {
+      window.clearTimeout(timer);
+      cancelRetry();
+    };
+  }, [load, cancelRetry]);
 
   const refresh = useCallback(async () => {
     try {
@@ -358,6 +423,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     () => ({
       status,
       bootError,
+      startupStatus,
+      setStartupStatus,
       actionError,
       clearActionError,
       data,
@@ -382,6 +449,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [
       status,
       bootError,
+      startupStatus,
+      setStartupStatus,
       actionError,
       clearActionError,
       data,
