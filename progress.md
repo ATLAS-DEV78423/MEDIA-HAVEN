@@ -2236,7 +2236,7 @@ the real Prowlarr instance.
 Built the unsigned per-user NSIS installer with
 `infrastructure/packaging/windows/build.ps1`:
 `target/release/bundle/nsis/MEDIA_HAVEN_0.1.0_x64-setup.exe`, 3.63 MiB,
-SHA-256 `2115685f962c1efbeffb12e40bbcbfe16bd6d5a476b8c9fded0ac866a87e9107`.
+SHA-256 `6d794e07324dd71fbb6e8bf281cfb944d8cd7e35e1a745ad0d14de011a3096a9`.
 SBOM bundling was NOT RUN (no `sbom/bom.json`). Nothing was published.
 
 Ran a full download path with two locally created torrents, a local tracker,
@@ -2269,3 +2269,4 @@ Full report: `docs/testing/browser-qa-2026-11-23.md`.
 
 Still NOT RUN: native mpv playback (not installed), axe-core, visual baseline,
 packaged cold start, second-machine LAN check, checkpoint sign-off.
+

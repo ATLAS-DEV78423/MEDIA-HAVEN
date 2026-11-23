@@ -144,7 +144,7 @@ open.
   file was written. Details: `docs/testing/end-to-end-2026-11-23.md`.
 - An unsigned per-user installer was built at
   `target/release/bundle/nsis/MEDIA_HAVEN_0.1.0_x64-setup.exe`, SHA-256
-  `2115685f962c1efbeffb12e40bbcbfe16bd6d5a476b8c9fded0ac866a87e9107`.
+  `6d794e07324dd71fbb6e8bf281cfb944d8cd7e35e1a745ad0d14de011a3096a9`.
 - All Rust and frontend checks pass. Every feature had a separate worker and
   reviewer, and all review findings were fixed and rechecked.
 
@@ -165,3 +165,4 @@ open.
 6. Sit at TV distance with a remote-style keyboard and review readability.
 7. Try the installer on a clean Windows machine.
 8. Get human sign-off on CP-0 to CP-7, then invite the first users.
+
