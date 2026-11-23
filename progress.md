@@ -2236,7 +2236,7 @@ the real Prowlarr instance.
 Built the unsigned per-user NSIS installer with
 `infrastructure/packaging/windows/build.ps1`:
 `target/release/bundle/nsis/MEDIA_HAVEN_0.1.0_x64-setup.exe`, 3.63 MiB,
-SHA-256 `6d794e07324dd71fbb6e8bf281cfb944d8cd7e35e1a745ad0d14de011a3096a9`.
+SHA-256 `41a9b747b10977618bc91a95d802cb7e4e605919ac9f1a37f4f9152e3b325c09`.
 SBOM bundling was NOT RUN (no `sbom/bom.json`). Nothing was published.
 
 Ran a full download path with two locally created torrents, a local tracker,
@@ -2270,3 +2270,31 @@ Full report: `docs/testing/browser-qa-2026-11-23.md`.
 Still NOT RUN: native mpv playback (not installed), axe-core, visual baseline,
 packaged cold start, second-machine LAN check, checkpoint sign-off.
 
+
+## 2026-11-23 - Installed app, full stack and folder import
+
+Installed mpv and ffmpeg (portable, no admin) and verified mpv decodes a real
+clip. Built and installed the NSIS app, then cold-started it through the new
+Windows Docker engine mode: all three containers came up with the app's own
+DPAPI token. TMDB discovery (movie/tv/anime) and Prowlarr source search returned
+live data.
+
+Found a real gap: the installed app could not import a host media folder because
+the mount wiring was never implemented (deferred task). Wired it up: host-side
+mount records, stable container paths, override staging in startup, root
+add/remove remount with rollback, and host-path resolution for mpv. Review
+found a startup-blocking stale-path regression and three consistency gaps; all
+fixed and rechecked (63 tests).
+
+Live evidence: cold start stages the override; docker inspect shows the test
+folder and downloads mounted read-only; backend registers the container path;
+scan found 2 files; playback_start returned a session; a stale record was
+filtered without blocking startup. Details:
+\docs/testing/mount-integration-2026-11-23.md\.
+
+Installer rebuilt (unsigned, per-user), SHA-256
+\41a9b747b10977618bc91a95d802cb7e4e605919ac9f1a37f4f9152e3b325c09\.
+Human test guide: \docs/testing/human-test-guide.md\.
+
+Still NOT RUN: UI click -> Tauri command -> mpv window (human test), WSL engine
+mode, axe-core, visual baseline, second-machine LAN check, checkpoint sign-off.

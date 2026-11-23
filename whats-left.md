@@ -144,7 +144,7 @@ open.
   file was written. Details: `docs/testing/end-to-end-2026-11-23.md`.
 - An unsigned per-user installer was built at
   `target/release/bundle/nsis/MEDIA_HAVEN_0.1.0_x64-setup.exe`, SHA-256
-  `6d794e07324dd71fbb6e8bf281cfb944d8cd7e35e1a745ad0d14de011a3096a9`.
+  `41a9b747b10977618bc91a95d802cb7e4e605919ac9f1a37f4f9152e3b325c09`.
 - All Rust and frontend checks pass. Every feature had a separate worker and
   reviewer, and all review findings were fixed and rechecked.
 
@@ -166,3 +166,12 @@ open.
 7. Try the installer on a clean Windows machine.
 8. Get human sign-off on CP-0 to CP-7, then invite the first users.
 
+
+## G. Ready for human end-to-end test (2026-11-23)
+
+Everything is installed and running on this machine. The one remaining gap - a
+host media folder could not be imported into the containerised app - is fixed
+and live-verified. Two lawful test clips are already in the library. Follow
+\docs/testing/human-test-guide.md\. The only automation gap is the visible
+mpv window: helpers, backend and mount chain are proven, but a human must click
+Play. WSL engine mode stays untested; this host uses Windows engine mode.

@@ -636,7 +636,7 @@ safely and can be verified by CI.
   recreate-and-verify test; a mount-scope test; an orphan-container check.
 - **Risks:** Building product features on a boundary that was never
   exercised; a container that can reach more than it should.
-- **Status:** Code complete, unproven — compose/Dockerfile/mount-override code exists; no live engine build or docker inspect evidence (needs consent).
+- **Status:** Live-verified 2026-11-23 (Windows engine mode). Compose up, `docker inspect` mount scope, cold start, root add/scan and playback resolution observed. WSL engine mode still untested. Details: `docs/testing/mount-integration-2026-11-23.md`.
 
 ### [~] P1-08 — Implement the host↔container boundary and the supervisor lifecycle
 
