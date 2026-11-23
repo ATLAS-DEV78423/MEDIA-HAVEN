@@ -1,16 +1,19 @@
 //! Container workspace lifecycle.
 //!
-//! The supervisor starts, waits for, health-checks and stops the `core`
-//! container through `wsl.exe` (ADR-0005 §3, ADR-0013). It never invokes
-//! `docker.exe` on Windows and never enables a TCP Docker endpoint.
+//! By default the supervisor starts, waits for, health-checks and stops the
+//! `core` container through `wsl.exe` (ADR-0005 §3, ADR-0013). An opt-in
+//! `MEDIAHAVEN_ENGINE=windows` uses the Windows Docker CLI instead. No TCP
+//! Docker endpoint is ever enabled.
 //!
 //! Readiness here is a **transport** check: can the host open the loopback
 //! port? The authenticated `/readyz` call is the command layer's gate (A5/A7),
 //! which owns the HMAC signing — building the signature here would build it
 //! twice.
 
+use std::io::Read;
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::secret::{
@@ -29,6 +32,11 @@ const WSLENV: &str = "WSLENV";
 const TMDB_KEY_ENV: &str = "MEDIAHAVEN_TMDB_API_KEY";
 const PROWLARR_URL_ENV: &str = "MEDIAHAVEN_PROWLARR_URL";
 const PROWLARR_KEY_ENV: &str = "MEDIAHAVEN_PROWLARR_API_KEY";
+const ENGINE_ENV: &str = "MEDIAHAVEN_ENGINE";
+
+// Fixed, user-safe messages: no path, CLI error text or host detail.
+const WINDOWS_SPAWN_FAILED: &str = "the Windows Docker CLI could not be started";
+const WINDOWS_TIMEOUT: &str = "the Windows Docker CLI did not finish in time";
 
 /// Child-only environment for `compose up`. `WSLENV` lists each forwarded name
 /// with no flag suffix: the values are plain text, so WSL passes them through
@@ -58,6 +66,27 @@ fn build_wsl_env(
         }
     }
     env
+}
+
+/// Which host CLI drives the engine. WSL stays the default (ADR-0001).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EngineMode {
+    Wsl,
+    Windows,
+}
+
+impl EngineMode {
+    fn from_env() -> Self {
+        engine_mode_from(std::env::var(ENGINE_ENV).ok().as_deref())
+    }
+}
+
+/// Only the exact value `windows` opts in; every other value keeps ADR-0001.
+fn engine_mode_from(value: Option<&str>) -> EngineMode {
+    match value {
+        Some("windows") => EngineMode::Windows,
+        _ => EngineMode::Wsl,
+    }
 }
 
 /// The legible lifecycle states from ADR-0005 §5.
@@ -121,6 +150,7 @@ pub struct Supervisor {
     compose_path: PathBuf,
     address: SocketAddr,
     wsl: Wsl,
+    engine_mode: EngineMode,
 }
 
 impl Supervisor {
@@ -134,6 +164,43 @@ impl Supervisor {
             compose_path: compose_path.into(),
             address,
             wsl: Wsl::new(),
+            engine_mode: EngineMode::from_env(),
+        }
+    }
+
+    /// Build the `docker compose -f <path> …` argv for the active engine.
+    /// Only WSL gets the `/mnt/<drive>/…` form; Windows keeps the native path.
+    fn compose_args(&self, compose: &str, rest: &[&str]) -> Vec<String> {
+        let path = match self.engine_mode {
+            EngineMode::Wsl => wsl_path(compose),
+            EngineMode::Windows => compose.to_string(),
+        };
+        let mut args = vec![
+            "docker".to_string(),
+            "compose".to_string(),
+            "-f".to_string(),
+            path,
+        ];
+        args.extend(rest.iter().map(|arg| (*arg).to_string()));
+        args
+    }
+
+    /// Run `docker compose` through the active engine with a hard timeout.
+    fn run_compose(
+        &self,
+        compose: &str,
+        rest: &[&str],
+        env: &[(&str, &str)],
+        stopping: bool,
+    ) -> Result<Output, SupervisorError> {
+        let args = self.compose_args(compose, rest);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        match self.engine_mode {
+            EngineMode::Wsl => self
+                .wsl
+                .run_with_env(&self.distro, &refs, env, START_TIMEOUT)
+                .map_err(|err| map_wsl_error(err, stopping)),
+            EngineMode::Windows => run_windows(&refs, env, START_TIMEOUT, stopping),
         }
     }
 
@@ -146,9 +213,6 @@ impl Supervisor {
         let compose = self.compose_path.to_str().ok_or_else(|| {
             SupervisorError::StartFailed("the compose path is not valid UTF-8".into())
         })?;
-        // `-f` is resolved inside the distro: a raw Windows temp path would not
-        // exist there. Keep stop() on the exact same converted path.
-        let compose = wsl_path(compose);
 
         // `SecretError` messages are fixed and carry no token, so this is safe
         // to surface. The token itself is never formatted into an error.
@@ -178,15 +242,7 @@ impl Supervisor {
             .map(|(key, value)| (key.as_str(), value.as_str()))
             .collect();
 
-        let output = self
-            .wsl
-            .run_with_env(
-                &self.distro,
-                &["docker", "compose", "-f", compose.as_str(), "up", "-d"],
-                &env_refs,
-                START_TIMEOUT,
-            )
-            .map_err(|err| map_wsl_error(err, false))?;
+        let output = self.run_compose(compose, &["up", "-d"], &env_refs, false)?;
 
         if !output.status.success() {
             return Err(SupervisorError::StartFailed(engine_message(&output)));
@@ -214,17 +270,8 @@ impl Supervisor {
         let compose = self.compose_path.to_str().ok_or_else(|| {
             SupervisorError::StopFailed("the compose path is not valid UTF-8".into())
         })?;
-        // Match ensure_running(): both start and stop must address this file.
-        let compose = wsl_path(compose);
 
-        let output = self
-            .wsl
-            .run(
-                &self.distro,
-                &["docker", "compose", "-f", compose.as_str(), "down"],
-                START_TIMEOUT,
-            )
-            .map_err(|err| map_wsl_error(err, true))?;
+        let output = self.run_compose(compose, &["down"], &[], true)?;
 
         if !output.status.success() {
             return Err(SupervisorError::StopFailed(engine_message(&output)));
@@ -257,6 +304,59 @@ fn wsl_path(path: &str) -> String {
         return format!("/mnt/{drive}{}", &normalized[2..]);
     }
     normalized
+}
+
+/// Run the Windows Docker CLI with the same hard timeout as the WSL driver.
+fn run_windows(
+    args: &[&str],
+    env: &[(&str, &str)],
+    timeout: Duration,
+    stopping: bool,
+) -> Result<Output, SupervisorError> {
+    let wrapper = if stopping {
+        SupervisorError::StopFailed
+    } else {
+        SupervisorError::StartFailed
+    };
+    let mut cmd = Command::new("docker");
+    cmd.args(args).envs(env.iter().copied());
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|_| wrapper(WINDOWS_SPAWN_FAILED.into()))?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut pipe) = child.stdout.take() {
+                    pipe.read_to_end(&mut stdout)
+                        .map_err(|err| wrapper(err.to_string()))?;
+                }
+                if let Some(mut pipe) = child.stderr.take() {
+                    pipe.read_to_end(&mut stderr)
+                        .map_err(|err| wrapper(err.to_string()))?;
+                }
+                return Ok(Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(wrapper(WINDOWS_TIMEOUT.into()));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => return Err(wrapper(err.to_string())),
+        }
+    }
 }
 
 fn map_wsl_error(err: WslError, stopping: bool) -> SupervisorError {
@@ -368,6 +468,44 @@ mod tests {
             PathBuf::from("tests/fixtures/compose.yaml"),
             "127.0.0.1:1".parse().unwrap(),
         )
+    }
+
+    #[test]
+    fn engine_mode_selects_windows_only_for_the_exact_value() {
+        assert_eq!(engine_mode_from(Some("windows")), EngineMode::Windows);
+        assert_eq!(engine_mode_from(None), EngineMode::Wsl);
+        assert_eq!(engine_mode_from(Some("wsl")), EngineMode::Wsl);
+        assert_eq!(engine_mode_from(Some("Windows")), EngineMode::Wsl);
+    }
+
+    #[test]
+    fn supervisor_new_reads_the_engine_env() {
+        let previous = std::env::var_os(ENGINE_ENV);
+        std::env::set_var(ENGINE_ENV, "windows");
+        assert_eq!(test_supervisor().engine_mode, EngineMode::Windows);
+        std::env::set_var(ENGINE_ENV, "other");
+        assert_eq!(test_supervisor().engine_mode, EngineMode::Wsl);
+        match previous {
+            Some(value) => std::env::set_var(ENGINE_ENV, value),
+            None => std::env::remove_var(ENGINE_ENV),
+        }
+    }
+
+    #[test]
+    fn windows_mode_keeps_the_native_compose_path() {
+        const NATIVE: &str = r"C:\Users\Stanley\AppData\Local\Temp\mediahaven-compose.yaml";
+        let mut supervisor = test_supervisor();
+        supervisor.engine_mode = EngineMode::Windows;
+        let args = supervisor.compose_args(NATIVE, &["up", "-d"]);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert_eq!(refs, ["docker", "compose", "-f", NATIVE, "up", "-d"]);
+
+        // The default WSL mode still converts the exact same path.
+        let args = test_supervisor().compose_args(NATIVE, &["down"]);
+        assert_eq!(
+            args[3],
+            "/mnt/c/Users/Stanley/AppData/Local/Temp/mediahaven-compose.yaml"
+        );
     }
 
     #[test]
