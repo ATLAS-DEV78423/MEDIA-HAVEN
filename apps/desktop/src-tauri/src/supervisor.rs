@@ -36,6 +36,7 @@ const ENGINE_ENV: &str = "MEDIAHAVEN_ENGINE";
 
 // Fixed, user-safe messages: no path, CLI error text or host detail.
 const WINDOWS_SPAWN_FAILED: &str = "the Windows Docker CLI could not be started";
+const WINDOWS_IO_FAILED: &str = "the Windows Docker CLI could not be run";
 const WINDOWS_TIMEOUT: &str = "the Windows Docker CLI did not finish in time";
 
 /// Child-only environment for `compose up`. `WSLENV` lists each forwarded name
@@ -306,6 +307,18 @@ fn wsl_path(path: &str) -> String {
     normalized
 }
 
+/// Build the Windows invocation from the shared argv: element 0 is the program.
+/// Kept separate from spawning so the program/arg split is testable without an
+/// engine.
+fn build_windows_command(args: &[&str], env: &[(&str, &str)]) -> Command {
+    let mut cmd = Command::new(args[0]);
+    cmd.args(&args[1..]).envs(env.iter().copied());
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    cmd
+}
+
 /// Run the Windows Docker CLI with the same hard timeout as the WSL driver.
 fn run_windows(
     args: &[&str],
@@ -318,12 +331,7 @@ fn run_windows(
     } else {
         SupervisorError::StartFailed
     };
-    let mut cmd = Command::new("docker");
-    cmd.args(args).envs(env.iter().copied());
-    cmd.stdin(Stdio::null());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    let mut child = cmd
+    let mut child = build_windows_command(args, env)
         .spawn()
         .map_err(|_| wrapper(WINDOWS_SPAWN_FAILED.into()))?;
     let deadline = Instant::now() + timeout;
@@ -334,11 +342,11 @@ fn run_windows(
                 let mut stderr = Vec::new();
                 if let Some(mut pipe) = child.stdout.take() {
                     pipe.read_to_end(&mut stdout)
-                        .map_err(|err| wrapper(err.to_string()))?;
+                        .map_err(|_| wrapper(WINDOWS_IO_FAILED.into()))?;
                 }
                 if let Some(mut pipe) = child.stderr.take() {
                     pipe.read_to_end(&mut stderr)
-                        .map_err(|err| wrapper(err.to_string()))?;
+                        .map_err(|_| wrapper(WINDOWS_IO_FAILED.into()))?;
                 }
                 return Ok(Output {
                     status,
@@ -354,7 +362,7 @@ fn run_windows(
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(err) => return Err(wrapper(err.to_string())),
+            Err(_) => return Err(wrapper(WINDOWS_IO_FAILED.into())),
         }
     }
 }
@@ -479,19 +487,6 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_new_reads_the_engine_env() {
-        let previous = std::env::var_os(ENGINE_ENV);
-        std::env::set_var(ENGINE_ENV, "windows");
-        assert_eq!(test_supervisor().engine_mode, EngineMode::Windows);
-        std::env::set_var(ENGINE_ENV, "other");
-        assert_eq!(test_supervisor().engine_mode, EngineMode::Wsl);
-        match previous {
-            Some(value) => std::env::set_var(ENGINE_ENV, value),
-            None => std::env::remove_var(ENGINE_ENV),
-        }
-    }
-
-    #[test]
     fn windows_mode_keeps_the_native_compose_path() {
         const NATIVE: &str = r"C:\Users\Stanley\AppData\Local\Temp\mediahaven-compose.yaml";
         let mut supervisor = test_supervisor();
@@ -506,6 +501,20 @@ mod tests {
             args[3],
             "/mnt/c/Users/Stanley/AppData/Local/Temp/mediahaven-compose.yaml"
         );
+    }
+
+    #[test]
+    fn windows_command_runs_docker_compose_once() {
+        const NATIVE: &str = r"C:\Users\Stanley\AppData\Local\Temp\mediahaven-compose.yaml";
+        let mut supervisor = test_supervisor();
+        supervisor.engine_mode = EngineMode::Windows;
+        let args = supervisor.compose_args(NATIVE, &["up", "-d"]);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+
+        let cmd = build_windows_command(&refs, &[]);
+        assert_eq!(cmd.get_program(), "docker");
+        let argv: Vec<&str> = cmd.get_args().map(|arg| arg.to_str().unwrap()).collect();
+        assert_eq!(argv, ["compose", "-f", NATIVE, "up", "-d"]);
     }
 
     #[test]

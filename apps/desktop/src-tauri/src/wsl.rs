@@ -1,8 +1,10 @@
 //! Minimal `wsl.exe` driver.
 //!
-//! Every invocation is an **argument vector** — never a shell string. The host
-//! never calls `docker.exe` on Windows and never enables a TCP Docker endpoint
-//! (ADR-0005 §3); all container work happens inside the dedicated WSL2 distro.
+//! Every invocation is an **argument vector** — never a shell string. This
+//! default WSL path does not call `docker.exe` on Windows and never enables a
+//! TCP Docker endpoint (ADR-0005 §3); container work happens inside the
+//! dedicated WSL2 distro. The opt-in `MEDIAHAVEN_ENGINE=windows` supervisor
+//! mode drives the Windows Docker CLI instead, still without a TCP endpoint.
 //!
 //! `wsl.exe` has no built-in timeout, so the driver polls `try_wait` against a
 //! deadline and kills the child on expiry. A killed `wsl.exe` may leave the
