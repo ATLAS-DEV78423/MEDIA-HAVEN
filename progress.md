@@ -2254,3 +2254,18 @@ test; installer rebuilt afterwards. Full detail:
 
 Still NOT RUN: external torrent download, live ffprobe/Defender gates, browser
 screenshot, packaged cold start, second-machine LAN check, checkpoint sign-off.
+
+## 2026-11-23 — Browser click-through
+
+Drove the Vite UI with Playwright against the real backend. Profile selection,
+Home, Movies, Details, Discover, Anime, Setup and Player all rendered. Added a
+local folder through the UI, scanned one file, opened it, clicked Play, and
+reached the player preview with a running timer.
+
+Four real bugs were found and fixed: snake_case vs camelCase command arguments,
+a wrapped `source_search` body, movie Play links derived from episode lists,
+and a missing Anime navigation tab. All 59 frontend tests and six gates pass.
+Full report: `docs/testing/browser-qa-2026-11-23.md`.
+
+Still NOT RUN: native mpv playback (not installed), axe-core, visual baseline,
+packaged cold start, second-machine LAN check, checkpoint sign-off.

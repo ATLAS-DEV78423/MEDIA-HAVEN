@@ -34,8 +34,8 @@ describe("renderer transport", () => {
     await api.episodes("s1", 2);
 
     expect(invoke).toHaveBeenCalledWith("library_episodes", {
-      series_id: "s1",
-      season_number: 2,
+      seriesId: "s1",
+      seasonNumber: 2,
     });
   });
 

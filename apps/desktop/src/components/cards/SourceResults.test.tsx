@@ -52,7 +52,8 @@ describe("SourceResults", () => {
 
     expect(await screen.findByText("A.Local.Film.2024.1080p")).toBeTruthy();
     expect(invoke).toHaveBeenCalledWith("source_search", {
-      args: { title: "A Local Film", year: 2024 },
+      title: "A Local Film",
+      year: 2024,
     });
   });
 
@@ -67,7 +68,7 @@ describe("SourceResults", () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("download_add", { source: MAGNET });
       expect(invoke).toHaveBeenCalledWith("source_set", {
-        media_id: "m1",
+        mediaId: "m1",
         source: MAGNET,
       });
     });
@@ -107,7 +108,7 @@ describe("SourceResults", () => {
     );
     expect(invoke).toHaveBeenCalledWith("download_add", { source: MAGNET });
     expect(invoke).toHaveBeenCalledWith("source_set", {
-      media_id: "m1",
+      mediaId: "m1",
       source: MAGNET,
     });
     expect(screen.getByRole("status").textContent).not.toContain(MAGNET);

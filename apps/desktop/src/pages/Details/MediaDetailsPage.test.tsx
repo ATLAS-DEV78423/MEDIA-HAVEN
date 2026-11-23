@@ -87,7 +87,7 @@ describe("Details source field", () => {
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("source_set", {
-        media_id: "m1",
+        mediaId: "m1",
         source: magnet,
       });
     });

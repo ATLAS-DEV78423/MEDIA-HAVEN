@@ -25,10 +25,11 @@ open.
    when you open the app has not been tried inside a real install. If it fails,
    the app will just show "service down".
 
-2. **We have never seen the app on a screen.**
-   All proof came from commands and files. Nobody has opened a browser or the
-   desktop window and looked at the posters, the Discover tab, or the source
-   list. Something could look wrong even though the data is right.
+2. **The app was driven in a browser, but not viewed on a TV or desktop window.**
+   Playwright clicked through Home, Movies, Details, Discover, Anime, Setup
+   and the Player page; posters rendered. Four bugs were found and fixed.
+   Details: `docs/testing/browser-qa-2026-11-23.md`. No axe run or visual
+   baseline yet, and no native mpv window in the browser.
 
 3. **A chosen torrent has downloaded, but not from the internet.**
    The full app path was tested with two locally made torrents and a local

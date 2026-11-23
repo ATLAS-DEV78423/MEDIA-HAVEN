@@ -202,9 +202,16 @@ export function MediaDetailsPage() {
 
   const isSeries = media.kind === "series";
   const listed = isListed(media.id);
+  const availability = detail?.kind === "movie" ? detail.availability : null;
   const resumeEpisode = episodes.find((episode) => episode.progress && !episode.progress.completed);
   const playEpisode = resumeEpisode ?? episodes[0];
-  const playHref = playEpisode ? `/player/${playEpisode.id}` : null;
+  const playHref = isSeries
+    ? playEpisode
+      ? `/player/${playEpisode.id}`
+      : null
+    : availability?.state === "available"
+      ? `/player/${media.id}`
+      : null;
   const facts = [
     media.year ? { label: "Year", value: String(media.year) } : null,
     media.minutes ? { label: "Runtime", value: media.runtime } : null,
@@ -226,8 +233,6 @@ export function MediaDetailsPage() {
       ? { label: "Genres", value: media.genres.join(", ") }
       : null,
   ].filter((fact): fact is { label: string; value: string } => Boolean(fact));
-
-  const availability = detail?.kind === "movie" ? detail.availability : null;
 
   return (
     <div className={`page ${styles.page}`}>

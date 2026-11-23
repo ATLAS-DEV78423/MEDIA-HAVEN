@@ -89,7 +89,7 @@ export const api = {
   detail: async (id: string): Promise<MediaDetail> => {
     const base = await call<MediaDetail>("library_detail", { id });
     try {
-      const imdb = await call<ImdbLookup>("imdb_lookup", { media_id: id });
+      const imdb = await call<ImdbLookup>("imdb_lookup", { mediaId: id });
       return { ...base, ...imdb } as MediaDetail;
     } catch {
       // The offline opt-in lookup is additive: a failure (including opt-in off
@@ -100,8 +100,8 @@ export const api = {
 
   episodes: (seriesId: string, seasonNumber: number) =>
     call<EpisodeSummary[]>("library_episodes", {
-      series_id: seriesId,
-      season_number: seasonNumber,
+      seriesId,
+      seasonNumber,
     }),
 
   search: (text: string, genres: string[] = []) =>
@@ -112,27 +112,27 @@ export const api = {
   roots: () => call<LibraryScreen>("library_roots", {}),
 
   rootAdd: (displayName: string, path: string) =>
-    call<LibraryRoot>("library_root_add", { display_name: displayName, path }),
+    call<LibraryRoot>("library_root_add", { displayName, path }),
 
-  rootRemove: (rootId: string) => call<null>("library_root_remove", { root_id: rootId }),
+  rootRemove: (rootId: string) => call<null>("library_root_remove", { rootId }),
 
-  scan: (rootId: string) => call<ScanOutcome>("library_scan", { root_id: rootId }),
+  scan: (rootId: string) => call<ScanOutcome>("library_scan", { rootId }),
 
   watchlist: () => call<WatchlistScreen>("library_watchlist", {}),
 
-  watchlistAdd: (mediaId: string) => call<null>("watchlist_add", { media_id: mediaId }),
+  watchlistAdd: (mediaId: string) => call<null>("watchlist_add", { mediaId }),
 
   watchlistRemove: (mediaId: string) =>
-    call<null>("watchlist_remove", { media_id: mediaId }),
+    call<null>("watchlist_remove", { mediaId }),
 
   queueList: () => call<QueueScreen>("queue_list", {}),
 
-  queueAdd: (mediaId: string) => call<null>("queue_add", { media_id: mediaId }),
+  queueAdd: (mediaId: string) => call<null>("queue_add", { mediaId }),
 
-  queueRemove: (queueId: string) => call<null>("queue_remove", { queue_id: queueId }),
+  queueRemove: (queueId: string) => call<null>("queue_remove", { queueId }),
 
   queueReorder: (orderedIds: string[]) =>
-    call<null>("queue_reorder", { ordered_ids: orderedIds }),
+    call<null>("queue_reorder", { orderedIds }),
 
   downloads: () => call<DownloadsScreen>("downloads_list", {}),
 
@@ -154,9 +154,9 @@ export const api = {
 
   /** Attach an operator-supplied source to one item (R-01 / ADR-0021). */
   sourceSet: (mediaId: string, source: string) =>
-    call<null>("source_set", { media_id: mediaId, source }),
+    call<null>("source_set", { mediaId, source }),
 
   /** Path-free source candidates from the configured indexers. No download. */
   sourceSearch: (query: SourceQuery) =>
-    call<SourceSearchResult>("source_search", { args: query }),
+    call<SourceSearchResult>("source_search", { ...query }),
 };

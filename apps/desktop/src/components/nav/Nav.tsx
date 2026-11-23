@@ -8,6 +8,7 @@ const TABS = [
   { to: "/", label: "Home", end: true },
   { to: "/movies", label: "Movies" },
   { to: "/shows", label: "TV Shows" },
+  { to: "/anime", label: "Anime" },
   { to: "/library", label: "Library" },
   { to: "/watchlist", label: "My List" },
   { to: "/queue", label: "Queue" },

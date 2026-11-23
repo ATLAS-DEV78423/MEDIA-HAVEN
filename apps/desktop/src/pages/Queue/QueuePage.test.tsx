@@ -52,7 +52,7 @@ function installTransport() {
       case "queue_list":
         return { entries: stored.map((item) => ({ ...item })) };
       case "queue_add": {
-        const mediaId = args?.media_id as string;
+        const mediaId = args?.mediaId as string;
         // Duplicate suppression belongs to the backend, never the UI.
         if (!stored.some((item) => item.media.id === mediaId)) {
           stored.push({
@@ -65,12 +65,12 @@ function installTransport() {
         return null;
       }
       case "queue_remove": {
-        const queueId = args?.queue_id as string;
+        const queueId = args?.queueId as string;
         stored = stored.filter((item) => item.id !== queueId);
         return null;
       }
       case "queue_reorder": {
-        const orderedIds = args?.ordered_ids as string[];
+        const orderedIds = args?.orderedIds as string[];
         stored = orderedIds.map((id) => {
           const found = stored.find((item) => item.id === id);
           if (!found) throw new Error(`unknown queue id: ${id}`);
@@ -145,7 +145,7 @@ describe("queue screen", () => {
 
     await screen.findByRole("list");
     expect(listedTitles()).toEqual(["First Film"]);
-    expect(invoke).toHaveBeenCalledWith("queue_add", { media_id: "m1" });
+    expect(invoke).toHaveBeenCalledWith("queue_add", { mediaId: "m1" });
 
     // The same title stays in the picker; the UI still forwards the add and
     // the backend (faked here) is the one that keeps a single entry.
@@ -171,7 +171,7 @@ describe("queue screen", () => {
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("queue_reorder", {
-        ordered_ids: ["q2", "q1"],
+        orderedIds: ["q2", "q1"],
       });
     });
     await waitFor(() => {
@@ -194,7 +194,7 @@ describe("queue screen", () => {
     await user.click(screen.getByRole("button", { name: /^remove$/i }));
 
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith("queue_remove", { queue_id: "q1" });
+      expect(invoke).toHaveBeenCalledWith("queue_remove", { queueId: "q1" });
     });
     expect(
       await screen.findByRole("heading", { name: /your queue is empty/i }),
