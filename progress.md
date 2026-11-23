@@ -2230,3 +2230,27 @@ Live recheck after wiring: `POST /host/indexers_seed` reported all four sites
 as already present (`yts`, `nyaasi`, `thepiratebay`, `animetosho-xyz`) and only
 `eztv-api` as not in Prowlarr. This confirms the native definition name matches
 the real Prowlarr instance.
+
+## 2026-11-23 — Installer and end-to-end torrent test
+
+Built the unsigned per-user NSIS installer with
+`infrastructure/packaging/windows/build.ps1`:
+`target/release/bundle/nsis/MEDIA_HAVEN_0.1.0_x64-setup.exe`, 3.63 MiB,
+SHA-256 `2115685f962c1efbeffb12e40bbcbfe16bd6d5a476b8c9fded0ac866a87e9107`.
+SBOM bundling was NOT RUN (no `sbom/bom.json`). Nothing was published.
+
+Ran a full download path with two locally created torrents, a local tracker,
+and two throwaway qBittorrent containers:
+- safe `sample.mkv` (86,016 bytes) added through the app's signed
+  `/host/acquisition_add`, added paused, passed the file-name guard, resumed,
+  and downloaded. qB state `stalledUP`, progress 1, file present.
+- unsafe `installer.exe` torrent added through the same API was rejected with
+  `400 invalid_request`; no `.exe` task or file remained.
+
+Live test found a real bug: `QbClient::resume` used qB's `/api/v2/torrents/resume`
+(404) instead of `/api/v2/torrents/start` (200). Fixed and pinned with a unit
+test; installer rebuilt afterwards. Full detail:
+`docs/testing/end-to-end-2026-11-23.md`.
+
+Still NOT RUN: external torrent download, live ffprobe/Defender gates, browser
+screenshot, packaged cold start, second-machine LAN check, checkpoint sign-off.

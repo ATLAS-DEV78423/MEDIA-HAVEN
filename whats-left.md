@@ -30,14 +30,15 @@ open.
    desktop window and looked at the posters, the Discover tab, or the source
    list. Something could look wrong even though the data is right.
 
-3. **We have never downloaded a chosen torrent all the way.**
-   We proved search results exist. We have not clicked one and watched it
-   download, get checked for `.exe` files, get scanned, and become playable.
-   The safety checks exist but have only been tested with fake files.
+3. **A chosen torrent has downloaded, but not from the internet.**
+   The full app path was tested with two locally made torrents and a local
+   tracker. qBittorrent really downloaded an 86 KB file. An external torrent
+   and the following ffprobe/Defender gates are still untested.
 
-4. **We have not tested the "bad file" safety check with real qBittorrent.**
-   The code that refuses a torrent with an executable file name was tested
-   with fake data. It needs one real test with an authorized source.
+4. **The `.exe` guard was tested with real qBittorrent.**
+   A torrent containing `installer.exe` was rejected; no executable was
+   written. Live testing found and fixed a wrong qB endpoint (`/resume` →
+   `/start`) that would otherwise have rejected safe torrents.
 
 5. **One saved site does not work.**
    EZTV is blocked by a website guard. The other four are active: YTS, Nyaa,
@@ -137,6 +138,12 @@ open.
   was then verified and added as the fourth working site.
 - Source search returned 10 real magnets for Arrival and 10 for Dune, sorted
   by seeders, with no key or address in the reply.
+- The full download path worked with real qBittorrent: a safe 86 KB file was
+  downloaded, and a torrent containing `installer.exe` was rejected before any
+  file was written. Details: `docs/testing/end-to-end-2026-11-23.md`.
+- An unsigned per-user installer was built at
+  `target/release/bundle/nsis/MEDIA_HAVEN_0.1.0_x64-setup.exe`, SHA-256
+  `2115685f962c1efbeffb12e40bbcbfe16bd6d5a476b8c9fded0ac866a87e9107`.
 - All Rust and frontend checks pass. Every feature had a separate worker and
   reviewer, and all review findings were fixed and rechecked.
 
@@ -148,9 +155,11 @@ open.
 2. Start the installed app cold on this machine and confirm the backend comes
    up, posters appear, and the Discover tab works — with a human watching the
    screen.
-3. Click one source result and follow it through download, safety checks and
-   playback. Do this with an authorized file you own.
-4. Test the bad-file check with a real torrent that contains an executable.
+3. Finish the download path with an external, lawful torrent: after the file
+   arrives, observe the ffprobe and Defender gates and playback. The app-side
+   download and the `.exe` rejection were already proven locally.
+4. Confirm the bad-file check again on a clean machine; the local qB test is
+   recorded in `docs/testing/end-to-end-2026-11-23.md`.
 5. Check the service cannot be reached from a second computer.
 6. Sit at TV distance with a remote-style keyboard and review readability.
 7. Try the installer on a clean Windows machine.

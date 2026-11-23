@@ -17,6 +17,10 @@ pub const DEFAULT_BASE: &str = "http://qbittorrent:8080";
 /// WebUI username configured by the container init (ADR-0018).
 pub const DEFAULT_USERNAME: &str = "admin";
 
+/// qBittorrent 5.x uses `start` to resume a torrent. Kept as a constant so a
+/// regression test can pin the verified live endpoint.
+pub const RESUME_PATH: &str = "/api/v2/torrents/start";
+
 /// A path-free torrent status. `state` is qBittorrent's own state string.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TorrentStatus {
@@ -288,7 +292,7 @@ impl TorrentApi for QbClient {
 
     fn resume(&self, hash: &str) -> Result<(), QbError> {
         let body = form(&[("hashes", hash)]);
-        self.api("POST", "/api/v2/torrents/resume", Some(&body))?;
+        self.api("POST", RESUME_PATH, Some(&body))?;
         Ok(())
     }
 
@@ -335,5 +339,16 @@ impl TorrentApi for QbClient {
         ]);
         self.api("POST", "/api/v2/torrents/delete", Some(&body))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RESUME_PATH;
+
+    #[test]
+    fn resume_uses_the_qbittorrent_5_start_endpoint() {
+        assert_eq!(RESUME_PATH, "/api/v2/torrents/start");
+        assert_ne!(RESUME_PATH, "/api/v2/torrents/resume");
     }
 }
