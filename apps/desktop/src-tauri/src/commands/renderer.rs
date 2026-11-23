@@ -331,14 +331,15 @@ fn load_mount_records() -> Result<Vec<MountRecord>, CommandError> {
     load_mount_records_from(&mounts_file()?)
 }
 
-/// Path-parameterised core of [`save_mount_records`].
+/// Path-parameterised core of [`save_mount_records`]. The authority file is
+/// written atomically so a crash cannot leave it truncated.
 fn save_mount_records_to(path: &Path, records: &[MountRecord]) -> Result<(), CommandError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| CommandError::new(AppErrorCode::Internal))?;
     }
     let json = serde_json::to_string_pretty(records)
         .map_err(|_| CommandError::new(AppErrorCode::Internal))?;
-    std::fs::write(path, json).map_err(|_| CommandError::new(AppErrorCode::Internal))
+    write_atomic(path, &json).map_err(|_| CommandError::new(AppErrorCode::Internal))
 }
 
 fn save_mount_records(records: &[MountRecord]) -> Result<(), CommandError> {
@@ -368,11 +369,29 @@ fn records_to_specs(records: &[MountRecord], download_root: &Path) -> Vec<RootSp
     specs
 }
 
+/// Keep only records whose host path is still a valid, existing directory.
+/// Reusing `render_mounts` on one spec applies the full lexical/containment/
+/// reparse/existence validation, so a moved, deleted or offline folder is
+/// skipped rather than bricking startup or playback. Pure: the persisted list
+/// is never mutated, so a temporarily offline drive can come back later.
+fn resolvable_records(records: &[MountRecord]) -> Vec<MountRecord> {
+    records
+        .iter()
+        .filter(|record| {
+            let spec = RootSpec::new("resolvable", PathBuf::from(&record.host_path));
+            render_mounts(std::slice::from_ref(&spec)).is_ok()
+        })
+        .cloned()
+        .collect()
+}
+
 /// Render the override from current host records and stage it atomically so a
-/// later `compose up` binds the right host folders into `core`.
+/// later `compose up` binds the right host folders into `core`. Stale records
+/// are skipped; the authority file on disk is left untouched.
 fn render_and_stage_override(records: &[MountRecord]) -> Result<(), CommandError> {
     let download_root = acquisition_root()?;
-    let specs = records_to_specs(records, &download_root);
+    let available = resolvable_records(records);
+    let specs = records_to_specs(&available, &download_root);
     let rendered = render_mounts(&specs).map_err(|_| CommandError::new(AppErrorCode::Internal))?;
     write_atomic(&override_file()?, &rendered.fragment)
         .map_err(|_| CommandError::new(AppErrorCode::Internal))
@@ -423,12 +442,35 @@ fn remount_core() -> Result<(), CommandError> {
         .map_err(|_| CommandError::new(AppErrorCode::Internal))
 }
 
-/// Rebuild A9's container→host map from the persisted host records. A stale or
-/// missing record makes `render_mounts` fail, so resolution fails closed.
+/// Best-effort cleanup of a backend root left behind when an add fails after
+/// the backend accepted it (applied but response lost). Every error is ignored:
+/// host rollback stays the primary authority and this must never mask it.
+fn compensate_backend_root(container_path: &str) {
+    if let Ok(roots) = post("library_roots", json!({})) {
+        let orphan_id = roots
+            .get("roots")
+            .and_then(Value::as_array)
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .find(|entry| entry.get("path").and_then(Value::as_str) == Some(container_path))
+            })
+            .and_then(|entry| entry.get("id").and_then(Value::as_str))
+            .map(str::to_string);
+        if let Some(id) = orphan_id {
+            let _ = post("library_root_remove", json!({ "rootId": id }));
+        }
+    }
+}
+
+/// Rebuild A9's container→host map from the persisted host records. Corrupt
+/// state fails closed; stale/offline records are skipped so a missing folder
+/// cannot block playback of the remaining, still-resolvable roots.
 fn load_host_path_map() -> Result<BTreeMap<String, PathBuf>, CommandError> {
     let records = load_mount_records().map_err(|_| CommandError::source_unavailable())?;
     let download_root = acquisition_root().map_err(|_| CommandError::source_unavailable())?;
-    let specs = records_to_specs(&records, &download_root);
+    let available = resolvable_records(&records);
+    let specs = records_to_specs(&available, &download_root);
     render_mounts(&specs)
         .map(|rendered| rendered.host_path_map())
         .map_err(|_| CommandError::source_unavailable())
@@ -497,13 +539,17 @@ pub fn library_root_add(display_name: String, path: String) -> Result<Value, Com
         )
     })();
 
-    if outcome.is_err() {
+    if let Err(error) = outcome {
         // Never leave host state ahead of the backend: restore the previous
         // record set, re-stage and remount before returning the original error.
         records.pop();
+        // The backend may have applied the add even though its reply was lost;
+        // remove that orphan root too (best effort, never replaces `error`).
+        compensate_backend_root(&container_path);
         let _ = save_mount_records(&records);
         let _ = render_and_stage_override(&records);
         let _ = remount_core();
+        return Err(error);
     }
     outcome
 }
@@ -523,14 +569,25 @@ pub fn library_root_remove(root_id: String) -> Result<Value, CommandError> {
         .map(str::to_string);
 
     if let Some(container_path) = container_path {
-        let mut records = load_mount_records()?;
+        let original = load_mount_records()?;
+        let mut records = original.clone();
         let before = records.len();
         // Surviving records keep their stored container paths: no re-indexing.
         records.retain(|record| record.container_path != container_path);
         if records.len() != before {
-            save_mount_records(&records)?;
-            render_and_stage_override(&records)?;
-            remount_core()?;
+            let staged = (|| -> Result<(), CommandError> {
+                save_mount_records(&records)?;
+                render_and_stage_override(&records)?;
+                remount_core()
+            })();
+            if let Err(error) = staged {
+                // Mirror add: restore the original list, re-stage and remount
+                // before surfacing the original failure.
+                let _ = save_mount_records(&original);
+                let _ = render_and_stage_override(&original);
+                let _ = remount_core();
+                return Err(error);
+            }
         }
     }
     // Removing an unknown id is still idempotent on the backend side.
@@ -1045,6 +1102,43 @@ mod tests {
         let error = load_mount_records_from(&file).expect_err("corrupt file fails");
         assert_eq!(error.code, AppErrorCode::InvalidRequest);
         assert!(!serde_json::to_string(&error).unwrap().contains("Media"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn stale_records_are_filtered_while_valid_ones_are_kept() {
+        let base = std::env::temp_dir().join(format!("mh-stale-records-{}", std::process::id()));
+        let live = base.join("live");
+        let stale = base.join("moved-or-offline");
+        let file_path = base.join("not-a-directory.txt");
+        std::fs::create_dir_all(&live).unwrap();
+        std::fs::write(&file_path, b"x").unwrap();
+
+        let records = [
+            MountRecord {
+                container_path: "/media/root-0".into(),
+                host_path: stale.to_string_lossy().into_owned(),
+            },
+            MountRecord {
+                container_path: "/media/root-1".into(),
+                host_path: live.to_string_lossy().into_owned(),
+            },
+            MountRecord {
+                container_path: "/media/root-2".into(),
+                host_path: file_path.to_string_lossy().into_owned(),
+            },
+        ];
+
+        let filtered = resolvable_records(&records);
+        assert_eq!(
+            filtered.len(),
+            1,
+            "only the live directory survives: {filtered:?}"
+        );
+        assert_eq!(filtered[0].container_path, "/media/root-1");
+        // The filter is pure: the persisted list is left intact for recovery.
+        assert_eq!(records.len(), 3);
 
         let _ = std::fs::remove_dir_all(&base);
     }
