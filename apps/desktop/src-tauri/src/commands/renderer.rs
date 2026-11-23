@@ -14,12 +14,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use app_core::domain::AppErrorCode;
 use mediahaven_contract::{sign as sign_request, COMMANDS};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::player::{resolve_for_media, spawn_status_poller, PlayerState};
 use crate::secret::{account_for, load_or_create_token, TOKEN_ACCOUNT, TOKEN_SERVICE};
-use crate::{render_mounts, RootSpec};
+use crate::supervisor::Supervisor;
+use crate::{render_mounts, write_atomic, RootSpec};
 
 /// The loopback API published by the supervisor. Matches `core`'s default bind.
 const API_ADDR: &str = "127.0.0.1:8080";
@@ -285,37 +286,149 @@ fn acquisition_root() -> Result<PathBuf, CommandError> {
     Ok(path)
 }
 
-/// Build the specs that drive BOTH the override fragment (`/downloads:ro`) and
-/// the persisted container→host map. Without `download_root`, acquired files
-/// could not be resolved by mpv at runtime (Task 2 review finding).
-fn root_specs(roots: &Value, download_root: &Path) -> Result<Vec<RootSpec>, CommandError> {
-    let entries = roots
-        .get("roots")
-        .and_then(Value::as_array)
+// --- Host-side mount persistence --------------------------------------------
+
+/// One persisted library root: the stable container path the backend scans and
+/// the host path the supervisor actually binds. Stored only on the host; the
+/// renderer never sees either field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MountRecord {
+    container_path: String,
+    host_path: String,
+}
+
+/// Host state lives beside the acquisition root, under `%APPDATA%\MEDIA_HAVEN`.
+fn host_state_dir() -> Result<PathBuf, CommandError> {
+    let base = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
         .ok_or_else(|| CommandError::new(AppErrorCode::Internal))?;
-    let mut specs: Vec<RootSpec> = entries
+    Ok(base.join("MEDIA_HAVEN"))
+}
+
+fn mounts_file() -> Result<PathBuf, CommandError> {
+    Ok(host_state_dir()?.join("mounts.json"))
+}
+
+fn override_file() -> Result<PathBuf, CommandError> {
+    Ok(host_state_dir()?.join("override.yaml"))
+}
+
+/// Path-parameterised core of [`load_mount_records`] so it can be tested
+/// without mutating process-global environment variables.
+fn load_mount_records_from(path: &Path) -> Result<Vec<MountRecord>, CommandError> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        // A first run has no file yet: that is an empty mount set, not an error.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        // Never surface the failing path or I/O detail to the renderer.
+        Err(_) => return Err(CommandError::new(AppErrorCode::InvalidRequest)),
+    };
+    serde_json::from_str(&raw).map_err(|_| CommandError::new(AppErrorCode::InvalidRequest))
+}
+
+fn load_mount_records() -> Result<Vec<MountRecord>, CommandError> {
+    load_mount_records_from(&mounts_file()?)
+}
+
+/// Path-parameterised core of [`save_mount_records`].
+fn save_mount_records_to(path: &Path, records: &[MountRecord]) -> Result<(), CommandError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| CommandError::new(AppErrorCode::Internal))?;
+    }
+    let json = serde_json::to_string_pretty(records)
+        .map_err(|_| CommandError::new(AppErrorCode::Internal))?;
+    std::fs::write(path, json).map_err(|_| CommandError::new(AppErrorCode::Internal))
+}
+
+fn save_mount_records(records: &[MountRecord]) -> Result<(), CommandError> {
+    save_mount_records_to(&mounts_file()?, records)
+}
+
+/// Turn persisted records into the specs that drive BOTH the override fragment
+/// (`/downloads:ro`) and the persisted container→host map. Each record keeps
+/// its stored container path, so removing a sibling never re-indexes it.
+fn records_to_specs(records: &[MountRecord], download_root: &Path) -> Vec<RootSpec> {
+    let mut specs: Vec<RootSpec> = records
         .iter()
-        .filter_map(|root| {
-            let id = root.get("id")?.as_str()?;
-            let path = root.get("path")?.as_str()?;
-            Some(RootSpec::new(id, path))
+        .enumerate()
+        .map(|(i, record)| {
+            let mut spec = RootSpec::new(format!("root-{i}"), PathBuf::from(&record.host_path));
+            spec.container_path = Some(record.container_path.clone());
+            spec.download_root = Some(download_root.to_path_buf());
+            spec
         })
         .collect();
     if specs.is_empty() {
         // No library root yet: the acquisition mount must still be rendered.
-        specs.push(RootSpec::new("downloads", download_root));
-    }
-    for spec in &mut specs {
+        let mut spec = RootSpec::new("downloads", download_root);
         spec.download_root = Some(download_root.to_path_buf());
+        specs.push(spec);
     }
-    Ok(specs)
+    specs
 }
 
-/// Rebuild A9's container→host map from the persisted roots. A stale or
-/// missing root makes `render_mounts` fail, so resolution fails closed.
+/// Render the override from current host records and stage it atomically so a
+/// later `compose up` binds the right host folders into `core`.
+fn render_and_stage_override(records: &[MountRecord]) -> Result<(), CommandError> {
+    let download_root = acquisition_root()?;
+    let specs = records_to_specs(records, &download_root);
+    let rendered = render_mounts(&specs).map_err(|_| CommandError::new(AppErrorCode::Internal))?;
+    write_atomic(&override_file()?, &rendered.fragment)
+        .map_err(|_| CommandError::new(AppErrorCode::Internal))
+}
+
+/// Validate a candidate host path by reusing `render_mounts`' lexical,
+/// containment and reparse checks. `MountError` detail (which can embed the
+/// path) is deliberately discarded; the renderer only gets a fixed error.
+fn validate_host_path(path: &str) -> Result<(), CommandError> {
+    let spec = RootSpec::new("candidate", path);
+    render_mounts(std::slice::from_ref(&spec))
+        .map(|_| ())
+        .map_err(|_| CommandError::new(AppErrorCode::InvalidRequest))
+}
+
+/// Next stable container index: one past the highest `/media/root-<n>` suffix,
+/// or zero when there are none. `root-0` and `root-7` yield `root-8`.
+fn next_container_index(records: &[MountRecord]) -> usize {
+    records
+        .iter()
+        .filter_map(|record| record.container_path.strip_prefix("/media/root-"))
+        .filter_map(|suffix| suffix.parse::<usize>().ok())
+        .max()
+        .map_or(0, |highest| highest + 1)
+}
+
+/// Build the supervisor exactly as startup does: same distro default, staged
+/// compose, loopback address and staged override file.
+fn build_supervisor() -> Result<Supervisor, CommandError> {
+    let distro =
+        std::env::var("MEDIAHAVEN_WSL_DISTRO").unwrap_or_else(|_| "MEDIA_HAVEN".to_string());
+    let address: std::net::SocketAddr = API_ADDR
+        .parse()
+        .map_err(|_| CommandError::new(AppErrorCode::Internal))?;
+    let compose = stage_compose().map_err(|_| CommandError::new(AppErrorCode::Internal))?;
+    Ok(Supervisor::new(distro, compose, address).with_override(override_file()?))
+}
+
+/// Recreate `core` so it picks up the freshly staged override, then wait for
+/// the loopback port. Used only by root add/remove, never by startup.
+fn remount_core() -> Result<(), CommandError> {
+    let supervisor = build_supervisor()?;
+    supervisor
+        .ensure_running()
+        .map_err(|_| CommandError::new(AppErrorCode::Internal))?;
+    supervisor
+        .wait_ready()
+        .map_err(|_| CommandError::new(AppErrorCode::Internal))
+}
+
+/// Rebuild A9's container→host map from the persisted host records. A stale or
+/// missing record makes `render_mounts` fail, so resolution fails closed.
 fn load_host_path_map() -> Result<BTreeMap<String, PathBuf>, CommandError> {
-    let value = post("library_roots", json!({}))?;
-    let specs = root_specs(&value, &acquisition_root()?)?;
+    let records = load_mount_records().map_err(|_| CommandError::source_unavailable())?;
+    let download_root = acquisition_root().map_err(|_| CommandError::source_unavailable())?;
+    let specs = records_to_specs(&records, &download_root);
     render_mounts(&specs)
         .map(|rendered| rendered.host_path_map())
         .map_err(|_| CommandError::source_unavailable())
@@ -363,14 +476,64 @@ pub fn library_roots() -> Result<Value, CommandError> {
 
 #[tauri::command]
 pub fn library_root_add(display_name: String, path: String) -> Result<Value, CommandError> {
-    post(
-        "library_root_add",
-        json!({ "displayName": display_name, "path": path }),
-    )
+    // Validate before touching any host state. A bad path yields a fixed error.
+    validate_host_path(&path)?;
+
+    let mut records = load_mount_records()?;
+    let container_path = format!("/media/root-{}", next_container_index(&records));
+    records.push(MountRecord {
+        container_path: container_path.clone(),
+        host_path: path,
+    });
+
+    let outcome = (|| -> Result<Value, CommandError> {
+        save_mount_records(&records)?;
+        render_and_stage_override(&records)?;
+        remount_core()?;
+        // The backend runs in `core`, where only the container path exists.
+        post(
+            "library_root_add",
+            json!({ "displayName": display_name, "path": container_path }),
+        )
+    })();
+
+    if outcome.is_err() {
+        // Never leave host state ahead of the backend: restore the previous
+        // record set, re-stage and remount before returning the original error.
+        records.pop();
+        let _ = save_mount_records(&records);
+        let _ = render_and_stage_override(&records);
+        let _ = remount_core();
+    }
+    outcome
 }
 
 #[tauri::command]
 pub fn library_root_remove(root_id: String) -> Result<Value, CommandError> {
+    let roots = post("library_roots", json!({}))?;
+    let container_path = roots
+        .get("roots")
+        .and_then(Value::as_array)
+        .and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(root_id.as_str()))
+        })
+        .and_then(|entry| entry.get("path").and_then(Value::as_str))
+        .map(str::to_string);
+
+    if let Some(container_path) = container_path {
+        let mut records = load_mount_records()?;
+        let before = records.len();
+        // Surviving records keep their stored container paths: no re-indexing.
+        records.retain(|record| record.container_path != container_path);
+        if records.len() != before {
+            save_mount_records(&records)?;
+            render_and_stage_override(&records)?;
+            remount_core()?;
+        }
+    }
+    // Removing an unknown id is still idempotent on the backend side.
     post("library_root_remove", json!({ "rootId": root_id }))
 }
 
@@ -688,11 +851,15 @@ pub fn provider_secret_clear(kind: &str) -> Result<(), String> {
 pub fn runtime_start() -> Result<String, String> {
     let distro =
         std::env::var("MEDIAHAVEN_WSL_DISTRO").unwrap_or_else(|_| "MEDIA_HAVEN".to_string());
-    let address: std::net::SocketAddr = "127.0.0.1:8080"
-        .parse()
-        .map_err(|_| "setup-required".to_string())?;
+    let address: std::net::SocketAddr =
+        API_ADDR.parse().map_err(|_| "setup-required".to_string())?;
     let compose = stage_compose().map_err(|_| "failed".to_string())?;
-    let supervisor = crate::supervisor::Supervisor::new(distro, compose, address);
+    // Host records are the authority on what to mount; stage the override
+    // before the supervisor starts so `core` sees the right bind sources.
+    let records = load_mount_records().map_err(|_| "failed".to_string())?;
+    render_and_stage_override(&records).map_err(|_| "failed".to_string())?;
+    let override_path = override_file().map_err(|_| "failed".to_string())?;
+    let supervisor = Supervisor::new(distro, compose, address).with_override(override_path);
     // Readiness is detected by the UI's normal API calls; a blocking poll here
     // would hold the command open past the startup deadline.
     let result = supervisor.ensure_running();
@@ -817,8 +984,11 @@ mod tests {
         std::fs::create_dir_all(&movies).unwrap();
         std::fs::create_dir_all(&downloads).unwrap();
 
-        let roots = json!({ "roots": [{ "id": "r1", "path": movies.to_string_lossy() }] });
-        let specs = root_specs(&roots, &downloads).expect("specs carry the download root");
+        let records = [MountRecord {
+            container_path: "/media/root-0".to_string(),
+            host_path: movies.to_string_lossy().into_owned(),
+        }];
+        let specs = records_to_specs(&records, &downloads);
         let rendered = render_mounts(&specs).expect("override renders");
 
         // The override fragment has the real read-only acquisition bind.
@@ -829,14 +999,78 @@ mod tests {
             map["/downloads"],
             std::fs::canonicalize(&downloads).unwrap()
         );
-        assert!(map.contains_key("/media/root-0"));
+        assert_eq!(
+            map["/media/root-0"],
+            std::fs::canonicalize(&movies).unwrap()
+        );
 
         // With no library roots the acquisition mount is still rendered.
-        let empty = root_specs(&json!({ "roots": [] }), &downloads).unwrap();
+        let empty = records_to_specs(&[], &downloads);
         let only_downloads = render_mounts(&empty).expect("download-only render");
         assert!(only_downloads.host_path_map().contains_key("/downloads"));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn mount_records_roundtrip_and_corrupt_file_is_fixed_error() {
+        let base =
+            std::env::temp_dir().join(format!("mh-mount-records-roundtrip-{}", std::process::id()));
+        let file = base.join("mounts.json");
+        let _ = std::fs::remove_dir_all(&base);
+
+        // A missing file is a legitimate empty mount set.
+        assert!(load_mount_records_from(&file)
+            .expect("missing file is empty")
+            .is_empty());
+
+        let records = vec![
+            MountRecord {
+                container_path: "/media/root-0".into(),
+                host_path: r"C:\Media\Movies".into(),
+            },
+            MountRecord {
+                container_path: "/media/root-7".into(),
+                host_path: r"C:\Media\Shows".into(),
+            },
+        ];
+        save_mount_records_to(&file, &records).expect("records save");
+        assert_eq!(
+            load_mount_records_from(&file).expect("records load"),
+            records
+        );
+
+        // Corrupt JSON produces a fixed error with no leaked path text.
+        std::fs::write(&file, b"{ not json").unwrap();
+        let error = load_mount_records_from(&file).expect_err("corrupt file fails");
+        assert_eq!(error.code, AppErrorCode::InvalidRequest);
+        assert!(!serde_json::to_string(&error).unwrap().contains("Media"));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn next_container_index_uses_the_highest_existing_suffix() {
+        assert_eq!(next_container_index(&[]), 0);
+        let records = [
+            MountRecord {
+                container_path: "/media/root-2".into(),
+                host_path: "a".into(),
+            },
+            MountRecord {
+                container_path: "/media/root-0".into(),
+                host_path: "b".into(),
+            },
+            MountRecord {
+                container_path: "/downloads".into(),
+                host_path: "c".into(),
+            },
+            MountRecord {
+                container_path: "/media/root-not-a-number".into(),
+                host_path: "d".into(),
+            },
+        ];
+        assert_eq!(next_container_index(&records), 3);
     }
 
     #[test]

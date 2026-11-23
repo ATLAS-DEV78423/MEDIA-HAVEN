@@ -152,6 +152,9 @@ pub struct Supervisor {
     address: SocketAddr,
     wsl: Wsl,
     engine_mode: EngineMode,
+    /// Optional rendered mount override. When present it is passed as a second
+    /// `-f` immediately after the base compose so its mounts override/merge in.
+    override_path: Option<PathBuf>,
 }
 
 impl Supervisor {
@@ -166,22 +169,36 @@ impl Supervisor {
             address,
             wsl: Wsl::new(),
             engine_mode: EngineMode::from_env(),
+            override_path: None,
         }
     }
 
-    /// Build the `docker compose -f <path> …` argv for the active engine.
-    /// Only WSL gets the `/mnt/<drive>/…` form; Windows keeps the native path.
+    /// Attach a rendered host-mounted override file (builder: `new` stays
+    /// unchanged for existing callers and tests).
+    pub fn with_override(mut self, path: impl Into<PathBuf>) -> Self {
+        self.override_path = Some(path.into());
+        self
+    }
+
+    /// Build the `docker compose -f <path> [-f <override>] …` argv for the
+    /// active engine. Only WSL gets the `/mnt/<drive>/…` form; Windows keeps
+    /// both paths native.
     fn compose_args(&self, compose: &str, rest: &[&str]) -> Vec<String> {
-        let path = match self.engine_mode {
-            EngineMode::Wsl => wsl_path(compose),
-            EngineMode::Windows => compose.to_string(),
+        let map_path = |raw: &str| match self.engine_mode {
+            EngineMode::Wsl => wsl_path(raw),
+            EngineMode::Windows => raw.to_string(),
         };
         let mut args = vec![
             "docker".to_string(),
             "compose".to_string(),
             "-f".to_string(),
-            path,
+            map_path(compose),
         ];
+        if let Some(over) = &self.override_path {
+            let over = over.to_string_lossy().into_owned();
+            args.push("-f".to_string());
+            args.push(map_path(&over));
+        }
         args.extend(rest.iter().map(|arg| (*arg).to_string()));
         args
     }
@@ -501,6 +518,46 @@ mod tests {
             args[3],
             "/mnt/c/Users/Stanley/AppData/Local/Temp/mediahaven-compose.yaml"
         );
+    }
+
+    #[test]
+    fn override_follows_the_base_compose_in_both_engine_modes() {
+        const NATIVE: &str = r"C:\Users\Stanley\AppData\Local\Temp\mediahaven-compose.yaml";
+        const OVER: &str = r"C:\Users\Stanley\AppData\Local\Temp\override.yaml";
+
+        let mut wsl = test_supervisor().with_override(OVER);
+        wsl.engine_mode = EngineMode::Wsl;
+        let args = wsl.compose_args(NATIVE, &["up", "-d"]);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert_eq!(
+            refs,
+            [
+                "docker",
+                "compose",
+                "-f",
+                "/mnt/c/Users/Stanley/AppData/Local/Temp/mediahaven-compose.yaml",
+                "-f",
+                "/mnt/c/Users/Stanley/AppData/Local/Temp/override.yaml",
+                "up",
+                "-d",
+            ]
+        );
+
+        let mut windows = test_supervisor().with_override(OVER);
+        windows.engine_mode = EngineMode::Windows;
+        let args = windows.compose_args(NATIVE, &["down"]);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert_eq!(
+            refs,
+            ["docker", "compose", "-f", NATIVE, "-f", OVER, "down"]
+        );
+
+        // No override keeps the historical argv byte-for-byte.
+        let mut windows_plain = test_supervisor();
+        windows_plain.engine_mode = EngineMode::Windows;
+        let args = windows_plain.compose_args(NATIVE, &["down"]);
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert_eq!(refs, ["docker", "compose", "-f", NATIVE, "down"]);
     }
 
     #[test]

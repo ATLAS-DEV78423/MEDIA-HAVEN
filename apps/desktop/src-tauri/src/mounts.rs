@@ -22,6 +22,10 @@ use serde::{Deserialize, Serialize};
 pub struct RootSpec {
     pub id: String,
     pub path: PathBuf,
+    /// Stable container path for this root. `None` keeps the historical
+    /// positional assignment (`/media/root-<index>`); a persisted explicit
+    /// value survives removal of a sibling root without re-indexing.
+    pub container_path: Option<String>,
     /// Optional host acquisition directory (storage option B, ADR-0018). When
     /// set on any spec, `render_mounts` also emits a read-only `/downloads`
     /// bind for `core` and records `/downloads` in the persisted host map.
@@ -33,6 +37,7 @@ impl RootSpec {
         Self {
             id: id.into(),
             path: path.into(),
+            container_path: None,
             download_root: None,
         }
     }
@@ -193,7 +198,12 @@ pub fn render_mounts(roots: &[RootSpec]) -> Result<RenderOutput, MountError> {
     let mut mounts = Vec::with_capacity(canonical.len());
     let mut lines = Vec::with_capacity(canonical.len());
     for (n, (_, host)) in canonical.iter().enumerate() {
-        let container_path = format!("/media/root-{n}");
+        // Persisted roots carry their stable container path; an absent value
+        // keeps the positional default so existing callers/tests are unchanged.
+        let container_path = roots[n]
+            .container_path
+            .clone()
+            .unwrap_or_else(|| format!("/media/root-{n}"));
         // Rust's canonicalize() on Windows returns a `\\?\`-prefixed path.
         // Docker rejects that as a bind source ("too many colons"), so strip
         // the prefix ONLY for the Compose fragment. The canonical path stays
@@ -297,6 +307,30 @@ mod tests {
         let map = two.host_path_map();
         assert_eq!(map.len(), 2);
         assert_eq!(map["/media/root-1"], std::fs::canonicalize(&shows).unwrap());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn explicit_container_path_is_rendered_and_keys_the_host_map() {
+        let base = temp_dir("explicit-path");
+        let movies = base.join("movies");
+        std::fs::create_dir_all(&movies).unwrap();
+
+        let mut spec = RootSpec::new("r1", &movies);
+        spec.container_path = Some("/media/root-7".to_string());
+        let rendered = render_mounts(&[spec]).expect("explicit path renders");
+
+        assert_eq!(rendered.mounts.len(), 1);
+        assert_eq!(rendered.mounts[0].container_path, "/media/root-7");
+        assert!(rendered.fragment.contains("/media/root-7:ro"));
+        let map = rendered.host_path_map();
+        assert_eq!(map.len(), 1);
+        assert_eq!(
+            map["/media/root-7"],
+            std::fs::canonicalize(&movies).unwrap()
+        );
+        assert!(!map.contains_key("/media/root-0"));
 
         let _ = std::fs::remove_dir_all(&base);
     }
