@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { MediaDetail } from "@/services/types";
+import type { EpisodeSummary, MediaDetail } from "@/services/types";
 import { MediaDetailsPage } from "./MediaDetailsPage";
 
 vi.mock("@/state/AppState", () => ({
@@ -29,8 +29,35 @@ const DETAIL: MediaDetail = {
   availability: { state: "available" },
 };
 
+const SERIES_DETAIL: MediaDetail = {
+  id: "s1",
+  kind: "series",
+  title: "A Local Series",
+  year: 2023,
+  synopsis: null,
+  genres: [],
+  artwork: [],
+  seasons: [{ number: 1, title: "Season 1", episodeCount: 1 }],
+};
+
+const EPISODE: EpisodeSummary = {
+  id: "e1",
+  seriesId: "s1",
+  seriesTitle: "A Local Series",
+  seasonNumber: 1,
+  episodeNumber: 1,
+  title: "Pilot",
+  runtimeMinutes: 45,
+  artwork: [],
+  availability: { state: "available" },
+  progress: null,
+  nextUp: false,
+};
+
 let invoke: ReturnType<typeof vi.fn>;
 let searchResult: unknown;
+let detailResult: MediaDetail;
+let episodeResult: EpisodeSummary[];
 
 const MAGNET =
   "magnet:?xt=urn:btih:TESTHASH&dn=film&tr=https%3A%2F%2Ftracker.example%2Fannounce%3Fkey%3DSECRET123";
@@ -48,12 +75,14 @@ const SHORTLIST = [
 
 beforeEach(() => {
   searchResult = { items: SHORTLIST };
+  detailResult = DETAIL;
+  episodeResult = [];
   invoke = vi.fn(async (command: string) => {
     switch (command) {
       case "library_detail":
-        return DETAIL;
+        return detailResult;
       case "library_episodes":
-        return [];
+        return episodeResult;
       case "source_search":
         return searchResult;
       case "source_set":
@@ -70,15 +99,15 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-async function mount() {
+async function mount(id = "m1", title = "A Local Film") {
   render(
-    <MemoryRouter initialEntries={["/details/m1"]}>
+    <MemoryRouter initialEntries={[`/details/${id}`]}>
       <Routes>
         <Route path="/details/:mediaId" element={<MediaDetailsPage />} />
       </Routes>
     </MemoryRouter>,
   );
-  await screen.findByRole("heading", { name: "A Local Film" });
+  await screen.findByRole("heading", { name: title });
 }
 
 describe("Details source field", () => {
@@ -163,5 +192,35 @@ describe("Details shortlist", () => {
     expect(
       screen.queryByRole("list", { name: "Source candidates" }),
     ).toBeNull();
+  });
+});
+
+describe("Details play control", () => {
+  it("links a movie with no episodes to its own player route", async () => {
+    await mount();
+
+    const play = screen.getByRole("link", { name: /^play$/i });
+    expect(play).toHaveAttribute("href", "/player/m1");
+    expect(screen.queryByText("No episodes indexed")).toBeNull();
+  });
+
+  it("keeps the disabled Play span for a series with no episodes", async () => {
+    detailResult = SERIES_DETAIL;
+    await mount("s1", "A Local Series");
+
+    const disabled = screen
+      .getByText("No episodes indexed")
+      .closest("span[aria-disabled]");
+    expect(disabled).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("link", { name: /^play$/i })).toBeNull();
+  });
+
+  it("uses the first episode id for a series with an episode", async () => {
+    detailResult = SERIES_DETAIL;
+    episodeResult = [EPISODE];
+    await mount("s1", "A Local Series");
+
+    const play = await screen.findByRole("link", { name: /^play$/i });
+    expect(play).toHaveAttribute("href", "/player/e1");
   });
 });

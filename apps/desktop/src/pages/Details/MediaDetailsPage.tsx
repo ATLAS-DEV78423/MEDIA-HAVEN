@@ -257,7 +257,11 @@ export function MediaDetailsPage() {
   const listed = isListed(media.id);
   const resumeEpisode = episodes.find((episode) => episode.progress && !episode.progress.completed);
   const playEpisode = resumeEpisode ?? episodes[0];
-  const playHref = playEpisode ? `/player/${playEpisode.id}` : null;
+  const playHref = playEpisode
+    ? `/player/${playEpisode.id}`
+    : isSeries
+      ? null
+      : `/player/${media.id}`;
   const facts = [
     media.year ? { label: "Year", value: String(media.year) } : null,
     media.minutes ? { label: "Runtime", value: media.runtime } : null,
