@@ -15,6 +15,7 @@ use app_core::domain::{
     AppError, AppErrorCode, BrowseQuery, BrowseSort, CleanupEntry, DownloadState,
     MediaAvailability, MediaDetail,
 };
+use app_core::ports::LibraryRepository;
 use axum::extract::State;
 use axum::routing::post;
 use axum::{Json, Router};
@@ -29,6 +30,7 @@ use media_persistence::sqlite::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::Digest;
 
 use crate::routes::{ApiError, ApiJson};
 use crate::state::AppState;
@@ -44,6 +46,7 @@ const CLEANUP_PASS_PATH: &str = "/host/acquisition_cleanup_pass";
 const INSPECT_PATH: &str = "/host/acquisition_inspect";
 const SOURCE_SET_PATH: &str = "/host/acquisition_source_set";
 const IMDB_LOOKUP_PATH: &str = "/host/imdb_lookup";
+const CATALOG_WANTED_ADD_PATH: &str = "/host/catalog_wanted_add";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -62,6 +65,16 @@ struct RemoveArgs {
 struct SourceSetArgs {
     media_id: String,
     source: String,
+}
+
+/// A catalog pick promoted to a "wanted" library item (ADR-0024). Display-only
+/// fields; no path or credential ever enters this shape.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CatalogWantedAddArgs {
+    title: String,
+    year: Option<i64>,
+    kind: String,
 }
 
 /// Host-internal inspection trigger for a completed download. `containerPath`
@@ -100,6 +113,7 @@ pub fn host_router() -> Router<AppState> {
         .route(INSPECT_PATH, post(inspect))
         .route(SOURCE_SET_PATH, post(source_set))
         .route(IMDB_LOOKUP_PATH, post(imdb_lookup))
+        .route(CATALOG_WANTED_ADD_PATH, post(catalog_wanted_add))
 }
 
 /// Attach an operator-supplied source to a library item (R-01 / ADR-0021).
@@ -121,6 +135,54 @@ async fn source_set(
         .await
         .map_err(ApiError)?;
     Ok(Json(Value::Null))
+}
+
+// ---------------------------------------------------------------------------
+// Catalog "wanted" item (ADR-0024). A pick becomes an unavailable media_items
+// row with a stable id so the existing source_set -> playback chain has a
+// mediaId to act on. All input is validated here at the host trust boundary.
+// ---------------------------------------------------------------------------
+
+/// Reject kinds outside the library schema and hostile/path-like titles before
+/// anything reaches storage or a display surface. A colon or interior dots are
+/// safe (real TMDB titles use both): the id is a content hash and the title is
+/// bound as a DB value, never a path. Path separators and a leading dot remain
+/// rejected.
+fn validate_wanted(title: &str, kind: &str) -> Result<(), ApiError> {
+    if !matches!(kind, "movie" | "series") {
+        return Err(cleanup_invalid("kind must be movie or series."));
+    }
+    if title.trim().is_empty()
+        || title.len() > 512
+        || title.chars().any(char::is_control)
+        || title.starts_with('.')
+        || title.chars().any(|c| matches!(c, '/' | '\\'))
+    {
+        return Err(cleanup_invalid("A valid title is required."));
+    }
+    Ok(())
+}
+
+/// Stable, content-addressed id: `catalog-{kind}-{sha256(title|year)[..32]}`.
+fn catalog_wanted_id(title: &str, year: Option<i64>, kind: &str) -> String {
+    let digest = hex::encode(sha2::Sha256::digest(
+        format!("{}|{}", title, year.unwrap_or(0)).as_bytes(),
+    ));
+    format!("catalog-{}-{}", kind, &digest[..32])
+}
+
+async fn catalog_wanted_add(
+    State(_state): State<AppState>,
+    ApiJson(args): ApiJson<CatalogWantedAddArgs>,
+) -> Result<Json<Value>, ApiError> {
+    validate_wanted(&args.title, &args.kind)?;
+    let id = catalog_wanted_id(&args.title, args.year, &args.kind);
+    // Same library.db the service uses; reuse the lazy host-internal repo.
+    verify_repo()
+        .await?
+        .wanted_add(&args.title, args.year, &args.kind, &id)
+        .await?;
+    Ok(Json(serde_json::json!({ "mediaId": id })))
 }
 
 /// Display-only IMDb/OMDb fields returned to the renderer, keyed by media id.
@@ -848,6 +910,7 @@ mod tests {
             INSPECT_PATH,
             SOURCE_SET_PATH,
             IMDB_LOOKUP_PATH,
+            CATALOG_WANTED_ADD_PATH,
         ] {
             assert!(path.starts_with(HOST_PREFIX), "host-only path: {path}");
         }
@@ -1026,6 +1089,157 @@ tt0111161\tR\n",
             "the dataset directory path must not reach the renderer"
         );
 
+        pool.close().await;
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Post a signed JSON body exactly as the host does. The fake token is the
+    /// shared secret the middleware checks; no live service or network is used.
+    async fn post_signed(
+        router: &axum::Router,
+        token: &str,
+        path: &str,
+        body: serde_json::Value,
+    ) -> (axum::http::StatusCode, serde_json::Value) {
+        use axum::body::{to_bytes, Body};
+        use axum::http::{header, Request};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tower::ServiceExt;
+
+        let text = body.to_string();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_secs()
+            .to_string();
+        let signature = crate::auth::sign(token, &timestamp, "POST", path, text.as_bytes());
+        let request = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(crate::auth::HEADER_TIMESTAMP, &timestamp)
+            .header(crate::auth::HEADER_SIGNATURE, &signature)
+            .body(Body::from(text))
+            .expect("build signed request");
+        let response = router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("route responds");
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("read body");
+        let wire = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, wire)
+    }
+
+    #[tokio::test]
+    async fn catalog_wanted_add_route_is_signed_stable_and_validated() {
+        use app_core::application::LibraryService;
+
+        // Point the lazy host repo at a scratch DB so the signed route writes
+        // nowhere near real user data. This test is the only caller of
+        // verify_repo() in this binary, so its OnceLock opens this DB.
+        let dir = std::env::temp_dir().join(format!("mh-wanted-route-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        std::env::set_var("MEDIAHAVEN_DATA_DIR", &dir);
+        let pool = connect_path(&dir.join("library.db"))
+            .await
+            .expect("connect and migrate");
+        let service = LibraryService::new(SqliteLibraryRepository::new(pool.clone()));
+        let router = crate::server::build_router(AppState::new(service, "test-token"));
+
+        let body = serde_json::json!({ "title": "Arrival", "year": 2016, "kind": "movie" });
+        let (status, wire) =
+            post_signed(&router, "test-token", CATALOG_WANTED_ADD_PATH, body.clone()).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let expected = catalog_wanted_id("Arrival", Some(2016), "movie");
+        assert_eq!(wire["mediaId"], serde_json::json!(expected));
+        assert_eq!(
+            expected, "catalog-movie-91f4d2cff0e9b19e24c33e21b4a7f800",
+            "stable id uses the exact contract formula"
+        );
+
+        // Repeating the pick returns the same id and leaves one, unavailable,
+        // file-less row.
+        let (status2, wire2) =
+            post_signed(&router, "test-token", CATALOG_WANTED_ADD_PATH, body).await;
+        assert_eq!(status2, axum::http::StatusCode::OK);
+        assert_eq!(wire2["mediaId"], serde_json::json!(expected));
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items WHERE id = ?")
+            .bind(&expected)
+            .fetch_one(&pool)
+            .await
+            .expect("count media");
+        assert_eq!(count, 1);
+        let avail: String =
+            sqlx::query_scalar("SELECT availability_state FROM media_items WHERE id = ?")
+                .bind(&expected)
+                .fetch_one(&pool)
+                .await
+                .expect("read state");
+        assert_eq!(avail, "unavailable");
+        let files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE media_id = ?")
+            .bind(&expected)
+            .fetch_one(&pool)
+            .await
+            .expect("count files");
+        assert_eq!(files, 0);
+
+        // A colon-bearing title is a real catalog title (e.g. "Star Trek:
+        // Discovery"). The id is a content hash and the title is bound as a DB
+        // value, so ':' is safe and produces a stable id.
+        let colon = "Star Trek: Discovery";
+        let colon_body = serde_json::json!({ "title": colon, "year": 2017, "kind": "series" });
+        let (colon_status, colon_wire) = post_signed(
+            &router,
+            "test-token",
+            CATALOG_WANTED_ADD_PATH,
+            colon_body.clone(),
+        )
+        .await;
+        assert_eq!(
+            colon_status,
+            axum::http::StatusCode::OK,
+            "colon in title must not be rejected"
+        );
+        assert_eq!(
+            colon_wire["mediaId"],
+            serde_json::json!(catalog_wanted_id(colon, Some(2017), "series"))
+        );
+        let (colon_status2, colon_wire2) =
+            post_signed(&router, "test-token", CATALOG_WANTED_ADD_PATH, colon_body).await;
+        assert_eq!(colon_status2, axum::http::StatusCode::OK);
+        assert_eq!(colon_wire2["mediaId"], colon_wire["mediaId"]);
+
+        // Interior dots are a real catalog pattern ("The Movie ... Final Cut")
+        // and must be accepted; only separators/leading dot are path-like.
+        let dots = "The Movie ... Final Cut";
+        let dots_body = serde_json::json!({ "title": dots, "year": 2024, "kind": "movie" });
+        let (dots_status, dots_wire) =
+            post_signed(&router, "test-token", CATALOG_WANTED_ADD_PATH, dots_body).await;
+        assert_eq!(dots_status, axum::http::StatusCode::OK);
+        assert_eq!(
+            dots_wire["mediaId"],
+            serde_json::json!(catalog_wanted_id(dots, Some(2024), "movie"))
+        );
+
+        // Bad kind and hostile/path-like titles are refused at the boundary.
+        for bad in [
+            serde_json::json!({ "title": "Arrival", "year": 2016, "kind": "tv" }),
+            serde_json::json!({ "title": "../etc/passwd", "year": 2016, "kind": "movie" }),
+            serde_json::json!({ "title": "C:\\movies\\film", "year": 2016, "kind": "movie" }),
+            serde_json::json!({ "title": ".hidden", "year": 2016, "kind": "movie" }),
+            serde_json::json!({ "title": "", "year": 2016, "kind": "movie" }),
+        ] {
+            let (status, _) =
+                post_signed(&router, "test-token", CATALOG_WANTED_ADD_PATH, bad).await;
+            assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        }
+
+        std::env::remove_var("MEDIAHAVEN_DATA_DIR");
         pool.close().await;
         std::fs::remove_dir_all(&dir).ok();
     }

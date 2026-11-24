@@ -38,6 +38,9 @@ const session: PlaybackSession = {
 
 let invoke: ReturnType<typeof vi.fn>;
 let emit: (payload: unknown) => void;
+let observe: ReturnType<typeof vi.fn>;
+let disconnect: ReturnType<typeof vi.fn>;
+let resizeCallback: ResizeObserverCallback;
 
 beforeEach(() => {
   emit = () => {};
@@ -56,10 +59,23 @@ beforeEach(() => {
     unregisterCallback: () => {},
   };
   window.__TAURI_INTERNALS__ = internals;
+
+  observe = vi.fn();
+  disconnect = vi.fn();
+  class ResizeObserverMock {
+    constructor(callback: ResizeObserverCallback) {
+      resizeCallback = callback;
+    }
+    observe = observe;
+    unobserve = vi.fn();
+    disconnect = disconnect;
+  }
+  vi.stubGlobal("ResizeObserver", ResizeObserverMock);
 });
 
 afterEach(() => {
   delete window.__TAURI_INTERNALS__;
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
@@ -109,6 +125,96 @@ describe("player driven by the engine", () => {
         action: "pause",
         value: null,
       });
+    });
+  });
+});
+
+describe("video surface attachment", () => {
+  it("sends only four numbers and no path or token", async () => {
+    mount();
+    await screen.findByText("First Film");
+
+    const commands = invoke.mock.calls.map(([command]) => command);
+    const attachIndex = commands.indexOf("player_attach_surface");
+    expect(attachIndex).toBeGreaterThanOrEqual(0);
+
+    const attachCall = invoke.mock.calls[attachIndex]!;
+    const rect = attachCall[1] as Record<string, unknown>;
+    expect(Object.keys(rect).sort()).toEqual(["height", "width", "x", "y"]);
+    for (const value of Object.values(rect)) {
+      expect(typeof value).toBe("number");
+    }
+    const serialised = JSON.stringify(attachCall);
+    expect(serialised.toLowerCase()).not.toContain("path");
+    expect(serialised.toLowerCase()).not.toContain("token");
+  });
+
+  it("attaches before starting playback on first mount", async () => {
+    mount();
+    await screen.findByText("First Film");
+
+    const commands = invoke.mock.calls.map(([command]) => command);
+    expect(commands.indexOf("player_attach_surface")).toBeLessThan(
+      commands.indexOf("playback_start"),
+    );
+  });
+});
+
+describe("player teardown and layout observation", () => {
+  it("stops playback on unmount before saving", async () => {
+    const { unmount } = mount();
+    await screen.findByText("First Film");
+
+    unmount();
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("player_control", {
+        action: "stop",
+        value: null,
+      });
+    });
+  });
+
+  it("does not stop playback when the session loads — only on real unmount", async () => {
+    const { unmount } = mount();
+    await screen.findByText("First Film");
+    // Flush passive effects from the null→session transition, where `save`
+    // changes identity. The old cleanup dispatched `stop` here, killing mpv
+    // immediately after it started.
+    await act(async () => {});
+
+    expect(invoke).not.toHaveBeenCalledWith("player_control", {
+      action: "stop",
+      value: null,
+    });
+
+    unmount();
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("player_control", {
+        action: "stop",
+        value: null,
+      });
+    });
+  });
+
+  it("uses a ResizeObserver on the player root and reports the surface", async () => {
+    mount();
+    await screen.findByText("First Film");
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    const root = observe.mock.calls[0]![0] as HTMLElement;
+    expect(root).toBeInstanceOf(HTMLElement);
+
+    // A layout-only change (no window resize) must recompute the surface.
+    invoke.mockClear();
+    act(() => {
+      resizeCallback([], {} as ResizeObserver);
+    });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        "player_attach_surface",
+        expect.objectContaining({ x: 0 }),
+      );
     });
   });
 });

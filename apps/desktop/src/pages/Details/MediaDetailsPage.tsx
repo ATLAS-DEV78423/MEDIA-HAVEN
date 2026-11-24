@@ -8,7 +8,7 @@ import { ActionButton, Chip, ProgressBar, buttonClass } from "@/components/ui/Co
 import { Icon } from "@/components/ui/Icon";
 import { EmptyState } from "@/components/ui/Surfaces";
 import { artFor, type Media } from "@/data/catalog";
-import { api, describeError } from "@/services/api";
+import { api, describeError, type ShortlistItem } from "@/services/api";
 import {
   detailToMedia,
   seasonsWithEpisodes,
@@ -30,6 +30,13 @@ function hasControl(value: string): boolean {
     const code = ch.codePointAt(0) ?? 0;
     return code <= 0x1f || code === 0x7f;
   });
+}
+
+function shortlistSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "Unknown size";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const power = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** power).toFixed(power === 0 ? 0 : 1)} ${units[power]}`;
 }
 
 function sourceProblem(raw: string): string | null {
@@ -66,6 +73,12 @@ export function MediaDetailsPage() {
   const [sourceError, setSourceError] = useState<string | null>(null);
   const [sourceSaved, setSourceSaved] = useState(false);
   const [savingSource, setSavingSource] = useState(false);
+  const [shortlist, setShortlist] = useState<ShortlistItem[]>([]);
+  const [shortlistState, setShortlistState] = useState<
+    "idle" | "loading" | "ready" | "setup_required" | "error"
+  >("idle");
+  const [shortlistError, setShortlistError] = useState<string | null>(null);
+  const [confirmingMagnet, setConfirmingMagnet] = useState<string | null>(null);
 
   const loadDetail = useCallback(async () => {
     if (!mediaId) return;
@@ -76,6 +89,10 @@ export function MediaDetailsPage() {
     setSource("");
     setSourceError(null);
     setSourceSaved(false);
+    setShortlist([]);
+    setShortlistState("idle");
+    setShortlistError(null);
+    setConfirmingMagnet(null);
     try {
       setDetail(await api.detail(mediaId));
     } catch (error) {
@@ -110,6 +127,44 @@ export function MediaDetailsPage() {
       setSavingSource(false);
     }
   }, [mediaId, source]);
+
+  const findSources = useCallback(async () => {
+    if (!detail) return;
+    setShortlist([]);
+    setShortlistError(null);
+    setShortlistState("loading");
+    try {
+      const result = await api.sourceSearch(detail.title, detail.year);
+      if (result.setup_required === true) {
+        setShortlistState("setup_required");
+        return;
+      }
+      setShortlist(result.items ?? []);
+      setShortlistState("ready");
+    } catch (error) {
+      setShortlistError(describeError(error));
+      setShortlistState("error");
+    }
+  }, [detail]);
+
+  const confirmSource = useCallback(
+    async (magnet: string) => {
+      if (!mediaId) return;
+      setSourceError(null);
+      setConfirmingMagnet(magnet);
+      try {
+        await api.sourceSet(mediaId, magnet);
+        setSourceSaved(true);
+        setDetail(await api.detail(mediaId));
+      } catch (error) {
+        setSourceError(describeError(error));
+        setSourceSaved(false);
+      } finally {
+        setConfirmingMagnet(null);
+      }
+    },
+    [mediaId],
+  );
 
   const activeSeason =
     detail?.kind === "series"
@@ -313,6 +368,70 @@ export function MediaDetailsPage() {
             ageRating={detail?.ageRating}
           />
         </div>
+
+        <section className={styles.sourceSection} aria-label="Find sources">
+          <h2 className={styles.sectionTitle}>Find sources</h2>
+          <p className={styles.sourceHint}>
+            Search the operator-configured indexer for this title. Nothing is
+            downloaded until you confirm a result; the manual field below stays
+            available as a fallback.
+          </p>
+          <div className={styles.sourceRow}>
+            <ActionButton
+              variant="glass"
+              onClick={() => void findSources()}
+              disabled={!detail || shortlistState === "loading"}
+            >
+              {shortlistState === "loading" ? "Searching…" : "Find sources"}
+            </ActionButton>
+          </div>
+          {shortlistState === "loading" ? (
+            <p className={styles.sourceHint} role="status">
+              Searching the configured indexer…
+            </p>
+          ) : null}
+          {shortlistState === "setup_required" ? (
+            <p className={styles.sourceHint} role="status">
+              Source search is not set up. Ask the operator to configure the
+              Torznab endpoint and key. No request was made.
+            </p>
+          ) : null}
+          {shortlistState === "error" ? (
+            <p className={styles.sourceError} role="alert">
+              Source search is unavailable. {shortlistError}
+            </p>
+          ) : null}
+          {shortlistState === "ready" && shortlist.length === 0 ? (
+            <p className={styles.sourceHint} role="status">
+              No candidates were returned.
+            </p>
+          ) : null}
+          {shortlistState === "ready" && shortlist.length > 0 ? (
+            <ol className={styles.shortlist} aria-label="Source candidates">
+              {shortlist.map((candidate, index) => (
+                <li
+                  key={`${candidate.source}-${index}`}
+                  className={styles.shortlistRow}
+                >
+                  <span className={styles.candidateCopy}>
+                    <span className={styles.candidateTitle}>{candidate.title}</span>
+                    <span className={styles.candidateMeta}>
+                      {shortlistSize(candidate.sizeBytes)} · {candidate.seeders} seeders ·{" "}
+                      {candidate.resolution} · {candidate.source}
+                    </span>
+                  </span>
+                  <ActionButton
+                    variant="glass"
+                    onClick={() => void confirmSource(candidate.magnet)}
+                    disabled={confirmingMagnet !== null}
+                  >
+                    Confirm
+                  </ActionButton>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </section>
 
         <section className={styles.sourceSection} aria-label="Acquisition source">
           <label className={styles.sourceLabel} htmlFor="item-source">

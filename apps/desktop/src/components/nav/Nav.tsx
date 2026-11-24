@@ -6,6 +6,7 @@ import styles from "./nav.module.css";
 
 const TABS = [
   { to: "/", label: "Home", end: true },
+  { to: "/discover", label: "Discover" },
   { to: "/movies", label: "Movies" },
   { to: "/shows", label: "TV Shows" },
   { to: "/library", label: "Library" },

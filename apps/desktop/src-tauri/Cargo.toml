@@ -27,3 +27,4 @@ hex = { workspace = true }
 tauri = { workspace = true }
 windows = { workspace = true }
 thiserror = { workspace = true }
+reqwest = { version = "0.13", features = ["blocking", "rustls"], default-features = false }

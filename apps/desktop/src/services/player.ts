@@ -15,7 +15,7 @@ export interface PlayerStateEvent {
   mediaId: string;
 }
 
-export type PlayerControlAction = "play" | "pause" | "seek" | "volume";
+export type PlayerControlAction = "play" | "pause" | "seek" | "volume" | "stop";
 
 const PLAYER_STATE_EVENT = "player://state";
 
@@ -74,4 +74,17 @@ export function listenPlayerState(cb: (state: PlayerStateEvent) => void): () => 
 export function playerControl(action: PlayerControlAction, value?: number): Promise<void> {
   if (!isTauriHost()) return Promise.resolve();
   return call<void>("player_control", { action, value: value ?? null });
+}
+
+export interface SurfaceRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Attach the native video surface. No-op outside the Tauri host. */
+export function attachPlayerSurface(rect: SurfaceRect): Promise<void> {
+  if (!isTauriHost()) return Promise.resolve();
+  return call<void>("player_attach_surface", { ...rect });
 }

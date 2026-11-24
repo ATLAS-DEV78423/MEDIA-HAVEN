@@ -40,4 +40,4 @@ hex = "0.4"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tauri = { version = "2", features = [] }
 tauri-build = { version = "2", features = [] }
-windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader"] }

@@ -808,7 +808,7 @@ touching their files.
 - **Tests:** Unit tests for the query builder including wildcard escaping;
   timing test on the fixture.
 - **Risks:** SQL injection via search input; unindexed full scans.
-- **Status:** In progress — local search implemented and timed at crate level; 10k-item frontend check and wildcard-input proof remain open.
+- **Status:** In progress — local search implemented and timed at crate level; 10k-item frontend check and wildcard-input proof remain open. 2026-11-23: local genre chips added to Search, wired through the existing `api.search(text, genres)`; reviewed with minors only. Still no network call.
 
 ### [~] P2-06 — Metadata and artwork cache with offline fallback
 
@@ -912,7 +912,7 @@ Purpose: video actually plays, and the app remembers where the user was.
 - **Tests:** Codec matrix replay as an automated or scripted suite; kill-file
   test; exit-leak test.
 - **Risks:** Engine update changing codec support; orphaned player processes.
-- **Status:** In progress — engine adapter wired into host + renderer with headless evidence (2026-11-20, ADR-0015); live playback/codec/hardware-decode NOT RUN (mpv absent, install needs consent).
+- **Status:** In progress — engine adapter wired into host + renderer with headless evidence (2026-11-20, ADR-0015). 2026-11-23: user-supplied mpv present; video embedded as a Win32 child HWND of the single `main` window via `--wid`, fail-closed when no surface, stopped on PlayerPage unmount. Throwaway `spikes/mpv-embed/` probe observed no visible second video window, resize following the surface rect, and no orphan on kill. Real-app WebView2 z-order/click-through, codec matrix and hardware-decode remain NOT RUN; no checkpoint passed by an agent. See `progress.md` and `docs/reference/mauflix-cross-reference.md`.
 
 ### [ ] P3-02 — Implement playback controls and overlay
 
@@ -1197,7 +1197,7 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Tests:** Fixture-driven frontend tests for shelf order, empty states, and
   focus scaling without reflow.
 - **Risks:** Layout shift on artwork load; hero gradient failing on pale art.
-- **Status:** In progress — hero/shelves/cards built and browser-checked; fixture-driven shelf-order and empty-state tests remain.
+- **Status:** In progress — hero/shelves/cards built and browser-checked; fixture-driven shelf-order and empty-state tests remain. 2026-11-23: added a deterministic, offline "Because you watched" shelf (genre overlap with the highest-progress watched title), reviewed Approved with one deferred minor. Still no remote recommendation engine.
 
 ### [~] P4-03 — Implement keyboard and remote focus navigation
 
@@ -1255,6 +1255,43 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Risks:** Settings that write but never apply, or apply without persisting.
 - **Status:** In progress — details/settings/setup screens built; settings validation and diagnostics-view tests remain.
 
+### [~] P4-09 — Browse and search public title catalogs
+
+- **Goal:** Users can browse and search movies, TV, and anime, then add a
+  selection through the existing wanted-item and Details/source-selection flow.
+- **Scope:** TMDB movie/TV browse and search; explicit AniList anime browse and
+  search; capped transient responses, sanitized display fields/artwork,
+  attribution, and existing catalog cards. No provider login, list syncing,
+  watch-history upload, local-library upload, or response cache.
+- **Out of scope:** Automatic source selection/download, any live catalogue
+  request in tests, and a persistent artwork cache.
+- **Dependencies:** Accepted ADR-0024; TMDB opt-in/key for TMDB calls. AniList
+  public metadata is requested only when the user opens Anime or searches it.
+- **Implementation areas:** `apps/desktop/src/pages/Discover`,
+  `apps/desktop/src/services/api.ts`, `apps/desktop/src-tauri/src/discovery.rs`,
+  and host command registration.
+- **Acceptance criteria:**
+  - [ ] Browse and search works per provider, with TMDB used for movies/TV and
+        AniList for anime.
+  - [ ] AniList requests are read-only, bounded, transient, and contain no
+        local library or watch data; responses never enter persistent storage.
+  - [ ] Host parsing rejects invalid/adult/unexpected media and unsafe artwork;
+        result count and response bytes are bounded.
+  - [ ] Provider attribution is visible and the UI preserves the existing card
+        selection → wanted item → Details flow.
+  - [ ] Fake-response tests cover request shape, filtering, title/year/kind,
+        artwork, response limits, and invalid configuration; no live catalogue
+        request is made by tests.
+- **Tests:** Focused host tests; Discover/API frontend tests; TypeScript, lint and
+  production build. Live provider requests remain opt-in/manual and are not a
+  test gate.
+- **Risks:** Provider terms or availability changes; direct artwork loads
+  require the provider image host in CSP. AniList commercial use eligibility
+  must be confirmed before a commercial release.
+- **Status:** In progress — implementation and fake-response tests exist;
+  focused gates pass. Full workspace checks and visual/runtime verification
+  remain open.
+
 ### [~] P4-05 — Validate readability and performance at TV distance
 
 - **Goal:** Prove the interface works at 3 metres, not just at desk distance.
@@ -1279,7 +1316,7 @@ Purpose: the product becomes pleasant to use from a couch.
 
 ### Checkpoint CP-4 — Usable from the couch — OPEN
 
-- **Gate:** P4-01 … P4-08 complete.
+- **Gate:** P4-01 … P4-09 complete.
 - **Evidence required:**
   - [ ] Keyboard-only walkthrough video or step log across every screen.
   - [ ] Before/after focus-restoration proof for each overlay.
@@ -1563,17 +1600,18 @@ these is unresolved, stop before implementation.
   a container upgrade that loses watch history.
 - **Status:** Not started
 
-### [ ] P6-07 — TMDB artwork transport (opt-in) — planned, not started
+### [~] P6-07 — TMDB artwork transport (opt-in) — artwork cache deferred
 
-- **Goal:** Serve real TMDB posters in the UI, off by default, cached on disk,
-  attributed, and fully offline once cached.
+- **Goal:** Persistently cache provider artwork for offline use. TMDB catalog
+  posters currently load directly from TMDB after opt-in; AniList cover artwork
+  loads directly from AniList on the explicit Anime surface (P4-09).
 - **Scope:** Fill the `TmdbProvider` HTTPS transport seam, add a SHA-256-keyed
   size-capped image cache and a loopback `GET /artwork/:key` route, enrich the
   existing `artwork` DTO, and prefer backend posters over bundled art in the
   frontend. ADR-0023 (Proposed) widens the CSP `img-src` by one loopback origin
   and declares the `reqwest`/`sha2` dependencies.
-- **Out of scope:** Any scraper, indexer, catalogue or downloader; any live call
-  before an operator supplies a key and opts in.
+- **Out of scope:** Scraping, indexers, and downloaders. The bounded, transient
+  TMDB/AniList catalog browse/search is implemented separately under P4-09.
 - **Dependencies:** ADR-0023 accepted by the human; P2-06 (metadata provider).
 - **Implementation areas:** `crates/metadata`, `crates/core`, `apps/desktop`.
 - **Acceptance criteria:**
@@ -1590,9 +1628,9 @@ these is unresolved, stop before implementation.
 - **Risks:** A new HTTP client and loopback image origin enter the trust surface;
   both are bounded by opt-in, loopback bind and opaque keys. Requires human
   acceptance of ADR-0023 before implementation.
-- **Status:** Not started. Full step-by-step plan written 2026-11-21 at
-  `docs/superpowers/plans/2026-11-21-tmdb-artwork.md` — **every step unchecked,
-  no code written**. Do not report this as in progress or complete.
+- **Status:** Artwork cache not started; direct poster rendering is implemented
+  under P4-09. Persistent/offline cache remains deferred until separately
+  approved and planned.
 
 ### Checkpoint CP-6 — Required workspace is contained — OPEN
 
@@ -1803,7 +1841,7 @@ approved requirement and a spec update.
 | O-07 | Whether to reuse an existing Docker Desktop engine instead of a dedicated distro | **Decided 2026-11-18** — no reuse; the product ships its own dedicated distro | Isolation vs install friction | Detection still reported to the user, never silent | Before CP-0 |
 | O-08 | Installer signing certificate | **Decided 2026-11-20** — ship unsigned in v1, publish the SmartScreen caveat; a signed build needs a future human budget decision (ADR-0016) | Trust/SmartScreen | Document caveat at P7-03 | Before P7-01 |
 | O-09 | libmpv LGPL vs GPL build | **Decided 2026-11-18** — LGPL build (ADR-0002 acceptance record) | **Project licence compatibility** | Confirm the shipped artefact really is LGPL-configured | Before CP-0 |
-| O-10 | Source discovery with operator confirmation | **Proposed 2026-11-21 (ADR-0024, minimal-change variant)** — host-side Torznab search → ranked top-N → user picks → existing `source_set`; no core/network/schema/gate change; would supersede ADR-0021's no-discovery clause and amend ADR-0018 §5 | Legal gate + one HTTP/Torznab client dependency approval | Human accepts ADR-0024 and the legal/dependency gates; TMDB catalog deferred to ADR-0023/P6-07 | Before any discovery work starts |
+| O-10 | Source discovery with operator confirmation | **Accepted 2026-11-24 (ADR-0024)** by explicit human override of the project docs — host-side Torznab search → ranked top-N → user picks → existing `source_set`; no core/network/schema/gate change; supersedes ADR-0021's no-discovery clause and amends ADR-0018 §5 and AGENTS.md 'No bundled content sources' | One HTTP/Torznab client dependency approval; operator supplies endpoint/key; TMDB catalog via ADR-0023/P6-07 | Implementation 2026-11-24 (uncommitted; no checkpoint passed; final review APPROVED + polish fixes re-reviewed) | Done |
 
 **Rule:** an agent may propose options for any `O-*` item and must record the
 proposal in `docs/decisions/`. An agent may not mark one accepted. Only the

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,14 +30,32 @@ const DETAIL: MediaDetail = {
 };
 
 let invoke: ReturnType<typeof vi.fn>;
+let searchResult: unknown;
+
+const MAGNET =
+  "magnet:?xt=urn:btih:TESTHASH&dn=film&tr=https%3A%2F%2Ftracker.example%2Fannounce%3Fkey%3DSECRET123";
+
+const SHORTLIST = [
+  {
+    title: "A Local Film 2024 1080p",
+    sizeBytes: 2147483648,
+    seeders: 42,
+    resolution: "1080p",
+    source: "Example Tracker",
+    magnet: MAGNET,
+  },
+];
 
 beforeEach(() => {
+  searchResult = { items: SHORTLIST };
   invoke = vi.fn(async (command: string) => {
     switch (command) {
       case "library_detail":
         return DETAIL;
       case "library_episodes":
         return [];
+      case "source_search":
+        return searchResult;
       case "source_set":
         return null;
       default:
@@ -93,5 +111,57 @@ describe("Details source field", () => {
     });
     expect(await screen.findByRole("status")).toHaveTextContent(/source saved/i);
     expect(document.body.textContent).not.toContain("/downloads/");
+  });
+});
+
+describe("Details shortlist", () => {
+  it("searches, shows ranked fields and confirms the chosen magnet", async () => {
+    const user = userEvent.setup();
+    await mount();
+
+    await user.click(screen.getByRole("button", { name: /^find sources$/i }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("source_search", {
+        title: "A Local Film",
+        year: 2024,
+      });
+    });
+
+    const list = await screen.findByRole("list", { name: "Source candidates" });
+    const row = within(list).getByRole("listitem");
+    expect(row).toHaveTextContent(/42 seeders/);
+    expect(row).toHaveTextContent(/1080p/);
+    expect(row).toHaveTextContent(/Example Tracker/);
+
+    await user.click(within(row).getByRole("button", { name: /^confirm$/i }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("source_set", {
+        media_id: "m1",
+        source: MAGNET,
+      });
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(/source saved/i);
+
+    // The chosen magnet carries a tracker credential; it goes to source_set
+    // verbatim but is never painted into the renderer's DOM.
+    const rendered = document.body.textContent ?? "";
+    expect(rendered).not.toContain(MAGNET);
+    expect(rendered).not.toContain("SECRET123");
+    expect(rendered).not.toContain("/downloads/");
+  });
+
+  it("shows a clear setup state instead of an empty result", async () => {
+    const user = userEvent.setup();
+    searchResult = { items: [], setup_required: true };
+    await mount();
+
+    await user.click(screen.getByRole("button", { name: /^find sources$/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/not set up/i);
+    expect(
+      screen.queryByRole("list", { name: "Source candidates" }),
+    ).toBeNull();
   });
 });

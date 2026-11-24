@@ -158,22 +158,40 @@ impl<T: IpcTransport> MpvPlayer<T, ProcessChild> {
     }
 }
 
+fn mpv_args(pipe_path: &str, parent: Option<usize>) -> Vec<String> {
+    let mut args = vec![
+        format!("--input-ipc-server={pipe_path}"),
+        "--idle=yes".to_string(),
+        "--hwdec=auto-safe".to_string(),
+        "--no-config".to_string(),
+    ];
+    if let Some(hwnd) = parent {
+        args.push(format!("--wid={hwnd}"));
+    }
+    args
+}
+
 impl MpvPlayer<ConnectedIpc, ProcessChild> {
     /// Spawn mpv idle with a unique IPC endpoint, then connect within 5 s.
     /// Argument vectors only; no shell. The child is killed on drop.
     pub fn spawn(mpv_exe: &Path) -> Result<Self, PlayerError> {
+        Self::spawn_with_parent(mpv_exe, None)
+    }
+
+    /// Spawn mpv idle, optionally embedding it in a parent HWND (Task 1 spike).
+    /// Argument vectors only; no shell. The child is killed on drop.
+    pub fn spawn_with_parent(mpv_exe: &Path, parent: Option<usize>) -> Result<Self, PlayerError> {
         let pipe_path = unique_ipc_path();
-        let child = Command::new(mpv_exe)
-            .arg(format!("--input-ipc-server={pipe_path}"))
-            .arg("--idle=yes")
-            .arg("--hwdec=auto-safe")
-            .arg("--no-config")
+        let mut command = Command::new(mpv_exe);
+        for arg in mpv_args(&pipe_path, parent) {
+            command.arg(arg);
+        }
+        let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .map_err(PlayerError::Spawn)?;
-
         let transport = match ipc::connect(&pipe_path, Duration::from_secs(5)) {
             Ok(transport) => transport,
             Err(err) => {
@@ -302,6 +320,17 @@ mod tests {
         fn wait(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn mpv_args_embed_only_when_a_parent_is_given() {
+        let embedded = super::mpv_args("pipe-1", Some(4242));
+        assert!(embedded.iter().any(|a| a == "--wid=4242"));
+        assert!(embedded.iter().any(|a| a == "--input-ipc-server=pipe-1"));
+        assert!(embedded.iter().any(|a| a == "--idle=yes"));
+        assert!(embedded.iter().any(|a| a == "--no-config"));
+        let standalone = super::mpv_args("pipe-2", None);
+        assert!(!standalone.iter().any(|a| a.starts_with("--wid=")));
     }
 
     #[test]

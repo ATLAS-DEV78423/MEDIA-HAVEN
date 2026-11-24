@@ -8,6 +8,7 @@ import { MoviesPage } from "./pages/Movies/MoviesPage";
 import { ShowsPage } from "./pages/Shows/ShowsPage";
 import { AnimePage } from "./pages/Anime/AnimePage";
 import { MediaDetailsPage } from "./pages/Details/MediaDetailsPage";
+import { DiscoverPage } from "./pages/Discover/DiscoverPage";
 import { LibraryPage } from "./pages/Library/LibraryPage";
 import { WatchlistPage } from "./pages/Watchlist/WatchlistPage";
 import { QueuePage } from "./pages/Queue/QueuePage";
@@ -109,6 +110,7 @@ export function App() {
       <main id="main">
         <Routes>
           <Route path="/" element={<HomePage />} />
+          <Route path="/discover" element={<DiscoverPage />} />
           <Route path="/movies" element={<MoviesPage />} />
           <Route path="/shows" element={<ShowsPage />} />
           <Route path="/anime" element={<AnimePage />} />

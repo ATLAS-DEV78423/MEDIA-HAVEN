@@ -2,10 +2,129 @@
 
 ## Last updated
 
-2026-11-22 (pre-release published at HEAD `7a062c4`). The newest dated entry is
-first; earlier sections are retained as history and are explicitly superseded
-where they disagree with it. See `roadmap.md` for sequencing and `CHANGELOG.md`
-for a feature summary.
+2026-11-24 (human override accepted: ADR-0024 source discovery + opt-in TMDB
+catalog now in progress). The newest dated entry is first; earlier sections are
+retained as history and are explicitly superseded where they disagree with it.
+See `roadmap.md` for sequencing and `CHANGELOG.md` for a feature summary.
+
+## 2026-11-24 — human overrides project docs; source discovery + catalog approved
+
+The human explicitly instructed: "what all i wanted to be added ... even if its
+against the .md file, i only made the .md file ... please implement the features
+and changes i had requested", then approved "Yes — build both". This is the
+human acceptance that ADR-0024 required; it overrides the earlier refusal.
+
+- ADR-0024 status changed Proposed -> **Accepted 2026-11-24**, with attribution,
+  in `docs/decisions/0024-...md` and `docs/decisions/README.md`.
+- `AGENTS.md` non-negotiable amended: no *bundled* sources; an operator-configured
+  lawful-use-only search endpoint is permitted, human confirms each source.
+- `roadmap.md` O-10 updated to Accepted / in progress.
+- Design approved: host-side Torznab search (operator endpoint + key in the
+  existing secret store) -> ranked shortlist -> user confirms on Details ->
+  existing `source_set` -> qB -> probe/Defender gates -> playback; plus an
+  opt-in TMDB catalog for title discovery. No indexer definitions, tracker lists
+  or unlawful-acquisition instructions will be bundled.
+- Implementation not started at the time of this entry; no code, no network call.
+
+### 2026-11-24 — implementation results (parallel SDD, three reviewed lanes)
+
+Ledger: `.superpowers/sdd/2026-11-24-catalog-and-source-discovery/progress.md`.
+All changes **uncommitted**; no checkpoint passed by an agent.
+
+**Built:**
+- `discovery.rs` (host): Torznab search with operator endpoint/key from the DPAPI secret store, deterministic ranking, and opt-in TMDB browse/search. Injected fetch seams; no live HTTP in tests. Three host-only commands `source_search` / `catalog_browse` / `catalog_search` return `{items, setup_required}`; absent config makes zero requests. Sanitisation rejects hostile data, Unicode format chars and protocol-relative posters; one MiB / 20 / 40 caps.
+- `secret.rs`: `store_string` / `load_string` DPAPI helpers for operator-supplied keys.
+- Core signed route `POST /host/catalog_wanted_add` creates a stable-id `media_items` row (`availability_state='unavailable'`, no files) so a catalog title gets a `mediaId` for the unchanged `source_set` chain.
+- Frontend: Details "Find sources" shortlist with per-row Confirm → existing `sourceSet`; `/discover` page + Nav tab with Movies/TV browse, search, attribution and click→wanted→Details flow. Manual Source field retained.
+
+**Gates (observed):**
+`cargo fmt --all -- --check` exit 0; `cargo clippy --workspace --all-targets -- -D warnings` exit 0; `cargo test --workspace` clean re-run EXIT=0 with every suite `ok` (desktop lib 57/57, persistence 41, core 21; `COMMANDS` parity 24 intact); frontend typecheck, lint, Vitest 60/60 across 16 files, check:tokens 82 files/0 violations, build 99 modules, check:bundle clean; `git diff --check` exit 0.
+
+**Reviews:** three task-scoped reviews; Lane A found one Important (protocol-relative `posterPath` bypass) plus five hardening items — all fixed and confirmed by scoped re-review (all six ADDRESSED, no new breakage). Lanes B and C approved with deferred minors only. Final whole-change review dispatched.
+
+**NOT RUN:** live Torznab/TMDB calls (no operator credentials), browser visual QA, and real-end-to-end magnet→download→play. No indexer/tracker lists or acquisition instructions bundled. `reqwest 0.13.5` is a direct host dependency under the human override: it uses feature `"rustls"` (renamed from `"rustls-tls"`), compile-verified; live HTTP **NOT RUN**.
+
+**Review outcome:** three task reviews (one Important poster-sanitisation defect fixed and re-reviewed), then a final whole-change review returning **CHANGES REQUESTED** for a missing `catalog_wanted_add` host command and a colon ban on legitimate titles. Both fixed in one wave and confirmed by scoped re-review (all findings ADDRESSED, no new breakage). Final observed gates after the fix: `cargo test --workspace` EXIT=0 (desktop lib 58/58, core 10/10), contract parity 24 intact, Vitest 61/61 across 16 files, tokens 82/0, build 99 modules, bundle clean, `git diff --check` exit 0. Deferred minors are non-blocking (ledger in `.superpowers/sdd/2026-11-24-catalog-and-source-discovery/progress.md`). No commit; no checkpoint passed. Residual risk: a catalog pick against a running signed backend is NOT RUN — JS tests pass on mocks, so the host command is verified structurally, not at runtime.
+
+**Follow-ups completed after that entry:** Prowlarr key alias + runtime indexer discovery; Prowlarr v3 JSON search (per-indexer Torznab URLs 404 on this operator's build) with 4 MiB bound and origin restriction; fuzzy "did you mean" search for library and catalog (typos, articles, capitalisation). Final whole-change review **APPROVED**; two polish fixes (allow `..` in titles, disable HTTP redirects) applied and re-reviewed. Final gates: FMT=0, CLIPPY=0, `cargo test --workspace` EXIT=0 (43 suites), parity 24, frontend six gates 0, Vitest 73/73, tokens 84/0, build 100 modules, bundle clean, `git diff --check` 0. `brag-output/` added to `.gitignore`. Still NOT RUN: live Prowlarr/TMDB HTTP, end-to-end magnet→qB→gates→playback, real-app WebView2 z-order, browser visual QA. No commit; no checkpoint passed.
+
+## 2026-11-24 — desktop rebuild and install (human requested E2E testing)
+
+- `build.ps1` run with `CARGO_TARGET_DIR` cleared: **PASS** (unsigned per-user NSIS, no admin, no publish). Frontend 100 modules; release binary built; installer 4.86 MiB.
+- Installer SHA-256 `3fda773fc3f52180008ce4433fc34811b3ff44d940a6f06b026c7bc3f0c57434` matched `SHA256SUMS.txt` exactly. SBOM NOT RUN (no `sbom/bom.json`) — pre-existing warning.
+- Silent per-user install (`/S`) **exit 0**; installed to `%LOCALAPPDATA%\MEDIA_HAVEN\mediahaven-desktop.exe` + `uninstall.exe`, both refreshed 2026-11-24 08:46.
+- Installed exe hash differs from the just-built exe hash despite identical size and identical embedded frontend asset names (`index-BiWWl76w.js`, `index-B9Af0ZL1.css`) and the new `catalog_wanted_add` symbol — PE bundle-patching artifact, not stale code. Verified by content markers, not by hash equality.
+- Runtime prerequisites are **user-level** env vars: `MEDIAHAVEN_MPV` (portable mpv under `%LOCALAPPDATA%\Programs\MediaHaven\mpv\mpv.exe`), `MEDIAHAVEN_TMDB_OPTIN=1`, TMDB key, Prowlarr key. They are not present in shell sessions created before `setx`; the launched app was given them explicitly.
+- Installed app launched with those variables **PID 21628, window title `MEDIA_HAVEN`**, left running for human end-to-end testing. No commit; no checkpoint passed.
+
+## 2026-11-24 — E2E bug fixes, second rebuild and reinstall
+
+User reported empty catalog / no sources / broken playback. Root causes found by temporary live diagnostics (diagnostics subsequently removed):
+1. Prowlarr JSON search sent the API key as `apikey=` query — Prowlarr v3 needs `X-Api-Key` header; query auth times out (10 s).
+2. Magnet sanitiser capped at 2048 chars; real magnets are ~2227–2231, so every source was dropped.
+3. Catalog UI rendered no posters, had no Home shelf, and no Play action.
+
+Fixes (both reviewed Approved): header-based `http_fetch_with_api_key` with key never in URL/logs; magnet cap 8192; `https://image.tmdb.org` added to CSP `img-src`; shared `CatalogCard` with remote poster + fallback and Play → `catalogWantedAdd` → Details; Home "Trending Movies"/"Trending TV" shelves using `catalogBrowse`; Discover uses the poster cards. Per-lane gates: Rust desktop lib 77/77, frontend Vitest 78/78, tokens 86/0, build 101 modules, bundle clean, `git diff --check` 0.
+
+- Rebuilt with `build.ps1`: **PASS**, installer 4.87 MiB, SHA-256 `e3e7fdc7cd7d92632c7938df91bed6def124238a18c77c4ff2f28cd6a7d435d9` matched `SHA256SUMS.txt`. New frontend assets `index-Bfme8spE.js`/`index-3UIqt5um.css` verified embedded in the installed binary.
+- Silent per-user reinstall **exit 0**; installed exe refreshed 2026-11-24 10:13:46. Relaunched with user-level credentials (mpv, TMDB opt-in/key, Prowlarr key) as **PID 26424**, window title `MEDIA_HAVEN`, confirmed still running after 8 s. No commit; no checkpoint passed. SBOM still NOT RUN.
+
+## 2026-11-24 — "library service not answering" root cause + TEMPORARY workaround
+
+Symptom: app showed the ServiceDown gate even though `mediahaven-core` container was healthy and `healthz` returned 200.
+
+Investigation (temporary diagnostics, all removed afterwards):
+- Host/core token fingerprints matched (`24f6da5c…`) — auth was not the problem.
+- Signed `POST /settings_get`, `/library_roots`, `/library_search`, `GET /readyz` all responded; only `POST /library_home` hung (>45 s).
+- `home()` from current source against a copy of the live DB completed in 0.02 s; a freshly built `mediahaven-core` on scratch ports 18081/18082 served `/library_home` 200 with container-like env.
+- Conclusion: the 14-hour-old `mediahaven-core` **container image binary** hangs on `library_home`; data and code are fine.
+
+Docker image rebuild was attempted and FAILED (no outbound access to deb.debian.org / index.crates.io from Docker). Offline Linux build also failed (missing `errno v0.3.15` in host cache).
+
+**TEMPORARY WORKAROUND (not the intended architecture):** the broken container `mediahaven-core` is **stopped** (kept for rollback); a freshly built Windows `target/debug/mediahaven-core.exe` is running on `127.0.0.1:8080` as **PID 16672**, with the same API token and a copy of the DB at `%TEMP%\mhdiag\live-data`. `/library_home` now returns 200. App relaunched as **PID 26640**; UI Automation confirms it reached "Who's watching?" (profiles loaded from backend), so the ServiceDown gate is gone.
+
+**Disclosures:** Docker pulls of `alpine:3`, `rust:1.99-bookworm` and `debian:bookworm-slim` occurred during diagnostics. Two tool outputs accidentally printed API keys (Prowlarr/TMDB via `docker inspect`); no key is stored in the repo. The volume's `library.db-shm`/`-wal` were renamed to `.bak` inside `mediahaven_core-data` (SQLite recreates them; original DB untouched). Dev cores on 18081/18082 were stopped.
+
+**Proper fix still needed:** rebuild the core Docker image when network access is available, restore the container-managed backend, then remove the host-core workaround. No commit; no checkpoint passed.
+
+## 2026-11-23 — in-window mpv playback verified + Miauwatch cross-reference
+
+By explicit human instruction, subagent-driven development with parallel lanes
+and ponytail discipline was used. Ledger: `.superpowers/sdd/2026-11-23-streaming-adoptions/progress.md`.
+All changes are **uncommitted**; no commit was authorised.
+
+**Built:**
+- Completed in-window mpv playback (user-supplied binary, `--wid` child HWND of
+  the single `main` window, fail-closed with no surface). Added a host-only
+  `"stop"` action to the existing `player_control` command, moved it into an
+  unmount-only effect after review caught a Critical stop-on-session-load bug,
+  and replaced `window.resize` with `ResizeObserver`.
+- Search genre chips derived from the local library, wired to the existing
+  `api.search(text, genres)`; no new route or command.
+- Pure, offline "Because you watched" recommender (genre overlap with the
+  highest-progress watched title) and one extra Home shelf.
+- Full capability/button/implementation checklist and cross-reference with the
+  Miauwatch reference at `docs/reference/mauflix-cross-reference.md`. The
+  reference's magnet/indexer/WebTorrent/VPN pipeline was **analysed and
+  deliberately not ported** — AGENTS.md forbids content-source bundling.
+
+**Blocking live gate (throwaway probe `spikes/mpv-embed/`):** mpv v0.42.0 with
+`--wid` on an authorised local fixture. No visible top-level mpv window
+(only hidden `mpv smtc` / IME helpers), resize followed `SetWindowPos`, no
+orphan mpv or window after kill. WebView2 z-order/click-through in the real
+PlayerPage remains **NOT RUN** — the probe used a plain STATIC parent.
+
+**Verified gates (observed):** `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
+(all suites ok; desktop lib 43/43; a sandbox `wsl.exe` block appeared as
+environment noise, not a test failure); frontend typecheck, lint, Vitest 48/48
+across 14 files, `check:tokens` 78 files/0 violations, `build` 97 modules,
+`check:bundle` clean, `git diff --check` exit 0. No checkpoint passed by an agent.
+
+**Disclosed risks:** real-app live playback/z-order NOT RUN; local library browse
+still caps a single fetch at 200 titles with no offset paging; ratings,
+next-episode prompts and a subtitle UI were deferred (would need frozen DTO/route
+changes); reference app itself was read as source, not run.
 
 ## 2026-11-22 — GitHub beta pre-release `v0.1.0-beta` published
 

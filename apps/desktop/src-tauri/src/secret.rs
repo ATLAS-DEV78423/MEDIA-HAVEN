@@ -144,6 +144,30 @@ pub fn install_token() -> Result<SecretToken, SecretError> {
     load_or_create_token(TOKEN_SERVICE, TOKEN_ACCOUNT)
 }
 
+/// Store an operator-supplied string (e.g. an endpoint or API key) as a DPAPI
+/// blob, using the same path and `valid_identity` gate as the install token.
+/// Never writes plaintext to `%APPDATA%` or the repository.
+pub fn store_string(service: &str, account: &str, value: &str) -> Result<(), SecretError> {
+    let path = blob_path(service, account)?;
+    let protected = protect(value.as_bytes())?;
+    write_blob(&path, &protected)
+}
+
+/// Load a string previously stored with [`store_string`]. `Ok(None)` means no
+/// blob exists (the caller falls back to env); a corrupt blob fails closed as
+/// [`SecretError::CredentialMismatch`] rather than being silently ignored.
+pub fn load_string(service: &str, account: &str) -> Result<Option<String>, SecretError> {
+    let path = blob_path(service, account)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let protected = fs::read(&path)?;
+    let bytes = unprotect(&protected).map_err(|_| SecretError::CredentialMismatch)?;
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| SecretError::CredentialMismatch)
+}
+
 /// Absolute path of the DPAPI blob for `(service, account)`.
 ///
 /// Fails closed when the Windows profile is unavailable: it must never fall
@@ -324,6 +348,32 @@ mod tests {
             "a corrupt blob must fail closed, got {:?}",
             result.err()
         );
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn string_round_trips_and_missing_blob_is_none() {
+        let service = "mediahaven-test-d";
+        let account = "string-roundtrip";
+        let path = scratch(service, account);
+
+        assert_eq!(load_string(service, account).unwrap(), None);
+        store_string(service, account, "s3cr3t-key/with=symbols").expect("store");
+        assert_eq!(
+            load_string(service, account).unwrap().as_deref(),
+            Some("s3cr3t-key/with=symbols")
+        );
+
+        // A bad identity is rejected before any path is computed.
+        assert!(matches!(
+            store_string("a/b", "x", "v"),
+            Err(SecretError::InvalidIdentity)
+        ));
+        assert!(matches!(
+            load_string("a/b", "x"),
+            Err(SecretError::InvalidIdentity)
+        ));
 
         let _ = fs::remove_file(&path);
     }

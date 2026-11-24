@@ -10,7 +10,12 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { Icon } from "@/components/ui/Icon";
 import { artFor } from "@/data/catalog";
 import { api, describeError } from "@/services/api";
-import { listenPlayerState, playerControl } from "@/services/player";
+import {
+  attachPlayerSurface,
+  isTauriHost,
+  listenPlayerState,
+  playerControl,
+} from "@/services/player";
 import type { PlaybackSession } from "@/services/types";
 import { useAppState } from "@/state/AppState";
 import styles from "./player.module.css";
@@ -48,14 +53,36 @@ export function PlayerPage() {
     elapsedRef.current = elapsed;
   }, [elapsed]);
 
+  const rootRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+
   const totalSeconds = Math.max(
     60,
     session && session.durationSeconds > 0 ? session.durationSeconds : 5400,
   );
 
+  const reportSurface = useCallback(async () => {
+    if (!isTauriHost()) return;
+    const top = topRef.current?.getBoundingClientRect();
+    const controls = controlsRef.current?.getBoundingClientRect();
+    if (!top || !controls) {
+      // shortcut: 1x1 placeholder creates the HWND before mpv spawns; the session effect sets the real rect.
+      await attachPlayerSurface({ x: 0, y: 0, width: 1, height: 1 });
+      return;
+    }
+    await attachPlayerSurface({
+      x: 0,
+      y: top.bottom,
+      width: window.innerWidth,
+      height: Math.max(1, controls.top - top.bottom),
+    });
+  }, []);
+
   const start = useCallback(async () => {
     if (!mediaId) return;
     setLoadError(null);
+    await reportSurface().catch(() => {});
     try {
       const opened = await api.playbackStart(mediaId);
       setSession(opened);
@@ -64,7 +91,7 @@ export function PlayerPage() {
     } catch (error) {
       setLoadError(describeError(error));
     }
-  }, [mediaId]);
+  }, [mediaId, reportSurface]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -82,6 +109,19 @@ export function PlayerPage() {
       }),
     [],
   );
+
+  useEffect(() => {
+    if (!session || !isTauriHost()) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const onChange = () => {
+      void reportSurface().catch(() => {});
+    };
+    const observer = new ResizeObserver(onChange);
+    observer.observe(root);
+    onChange();
+    return () => observer.disconnect();
+  }, [session, reportSurface]);
 
   const save = useCallback(async () => {
     if (!mediaId || !session) return;
@@ -106,6 +146,14 @@ export function PlayerPage() {
     }, SAVE_EVERY_MS);
     return () => window.clearInterval(timer);
   }, [active, save, session]);
+
+  // Stop only on real unmount: `save` changes identity when the session
+  // arrives, so a `save`-dependent cleanup would kill mpv right after start.
+  useEffect(() => {
+    return () => {
+      void playerControl("stop").catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -261,7 +309,7 @@ export function PlayerPage() {
   }
 
   return (
-    <div className={styles.player}>
+    <div ref={rootRef} className={styles.player}>
       <div className={styles.stage}>
         {art ? (
           <img
@@ -274,7 +322,10 @@ export function PlayerPage() {
         <div className={styles.vignette} aria-hidden="true" />
       </div>
 
-      <div className={`${styles.top} ${chromeShown ? styles.shown : styles.hidden}`}>
+      <div
+        ref={topRef}
+        className={`${styles.top} ${chromeShown ? styles.shown : styles.hidden}`}
+      >
         <button
           type="button"
           className={styles.round}
@@ -305,7 +356,10 @@ export function PlayerPage() {
         ) : null}
       </div>
 
-      <div className={`${styles.controls} ${chromeShown ? styles.shown : styles.hidden}`}>
+      <div
+        ref={controlsRef}
+        className={`${styles.controls} ${chromeShown ? styles.shown : styles.hidden}`}
+      >
         <div className={styles.progressRow}>
           <span className={styles.time}>{clock(elapsed)}</span>
           <input

@@ -1,12 +1,16 @@
 # ADR-0024: Host-side search with operator confirmation (minimal-change variant)
 
-- **Status:** **Proposed** — not approved. No code written, no network call made,
-  no host or container setting changed. Code must not depend on this ADR until
-  the human accepts it. If accepted, it **supersedes ADR-0021's "no discovery"
-  clause** (per-item manual source remains the fallback) and **amends ADR-0018 §5**
-  to allow an operator-configured search endpoint.
-- **Date:** 2026-11-21
-- **Deciders:** human partner (direction requested 2026-11-21), contributing agent
+- **Status:** **Accepted** — the human partner explicitly overrode the project
+  documents on 2026-11-24 ("implement the features ... even if it's against the
+  .md file") and approved building both the operator-configured source search
+  and the catalog. This supersedes ADR-0021's "no discovery" clause (per-item
+  manual source remains the fallback) and amends ADR-0018 §5 and AGENTS.md's
+  "No bundled content sources" clause to allow an operator-configured search
+  endpoint. No indexer definitions, tracker lists or illegal-acquisition
+  instructions are bundled.
+- **Date:** 2026-11-21 (accepted 2026-11-24)
+- **Deciders:** human partner (direction 2026-11-21, explicit acceptance
+  2026-11-24), contributing agent
 - **Related:** ADR-0005 (host/container boundary, named commands), ADR-0007/0014
   (secrets in Windows Credential Manager), ADR-0018 (qBittorrent sandbox, no
   bundled sources), ADR-0019 (app-managed cleanup), ADR-0021 (R-01 mechanism),

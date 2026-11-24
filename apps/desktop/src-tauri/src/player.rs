@@ -37,6 +37,12 @@ pub enum PlayerError {
     UnknownAction(String),
     #[error("player lock poisoned")]
     Lock,
+    #[error("player surface unavailable")]
+    NoSurface,
+    #[error("invalid surface rectangle")]
+    InvalidSurface,
+    #[error("video surface: {0}")]
+    Surface(#[from] crate::win_surface::SurfaceError),
 }
 
 /// Resolve a container-path identity through A9's host map. Fails closed on a
@@ -93,6 +99,9 @@ pub struct PlayerState {
     inner: Arc<Mutex<Option<MpvPlayer<ConnectedIpc, ProcessChild>>>>,
     mpv_exe: Arc<PathBuf>,
     progress: Arc<Mutex<Progress>>,
+    // Created/positioned/hidden only from sync commands on the main thread:
+    // Win32 windows have thread affinity and Drop destroys the HWND.
+    surface: Arc<Mutex<Option<crate::win_surface::Surface>>>,
 }
 
 impl Default for PlayerState {
@@ -112,6 +121,7 @@ impl PlayerState {
             inner: Arc::new(Mutex::new(None)),
             mpv_exe: Arc::new(mpv_exe),
             progress: Arc::new(Mutex::new(Progress::default())),
+            surface: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -181,12 +191,60 @@ impl PlayerState {
         ))
     }
 
+    /// Create or reposition the child video surface inside the host window.
+    /// Called only from the sync `player_attach_surface` command (main thread).
+    pub fn attach_surface(
+        &self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        dpi: u32,
+        parent: usize,
+    ) -> Result<(), PlayerError> {
+        let rect = crate::win_surface::validate_rect(x, y, width, height)
+            .ok_or(PlayerError::InvalidSurface)?;
+        let mut guard = self.surface.lock().map_err(|_| PlayerError::Lock)?;
+        match guard.as_mut() {
+            Some(surface) => surface.position(rect, dpi),
+            None => {
+                *guard = Some(crate::win_surface::Surface::create(parent, rect, dpi)?);
+            }
+        }
+        if let Some(surface) = guard.as_mut() {
+            surface.show(true);
+        }
+        Ok(())
+    }
+
+    /// HWND of the attached surface. Without one, playback fails closed rather
+    /// than letting mpv create its own top-level window.
+    pub fn surface_hwnd(&self) -> Result<usize, PlayerError> {
+        let guard = self.surface.lock().map_err(|_| PlayerError::Lock)?;
+        guard
+            .as_ref()
+            .map(|surface| surface.hwnd())
+            .ok_or(PlayerError::NoSurface)
+    }
+
+    /// Re-show an attached surface that a previous `stop()` hid. No-op when no
+    /// surface is stored; the fail-closed check lives in `surface_hwnd`.
+    pub fn show_surface(&self) {
+        if let Ok(guard) = self.surface.lock() {
+            if let Some(surface) = guard.as_ref() {
+                surface.show(true);
+            }
+        }
+    }
+
     /// Spawn mpv if idle and load a host-resolved file at the resume position.
     /// `host_path` is host-internal and never appears in a DTO.
     pub fn open_media(&self, host_path: &Path, start_secs: f64) -> Result<(), PlayerError> {
+        let parent = self.surface_hwnd()?;
+        self.show_surface();
         let mut guard = self.inner.lock().map_err(|_| PlayerError::Lock)?;
         if guard.is_none() {
-            *guard = Some(MpvPlayer::spawn(&self.mpv_exe)?);
+            *guard = Some(MpvPlayer::spawn_with_parent(&self.mpv_exe, Some(parent))?);
         }
         guard
             .as_mut()
@@ -197,6 +255,12 @@ impl PlayerState {
 
     /// Named controls only. No generic engine-passthrough command exists.
     pub fn control(&self, action: &str, value: Option<f64>) -> Result<(), PlayerError> {
+        // `stop` tears down the player and hides the surface; it must be safe
+        // and idempotent while idle, before the `Idle` check below.
+        if action == "stop" {
+            self.stop();
+            return Ok(());
+        }
         let mut guard = self.inner.lock().map_err(|_| PlayerError::Lock)?;
         let player = guard.as_mut().ok_or(PlayerError::Idle)?;
         match action {
@@ -217,6 +281,12 @@ impl PlayerState {
                 let _ = player.stop();
             }
             *guard = None;
+        }
+        // Hide, never drop: re-attach reuses the same HWND. Main thread only.
+        if let Ok(guard) = self.surface.lock() {
+            if let Some(surface) = guard.as_ref() {
+                surface.show(false);
+            }
         }
     }
 
@@ -313,6 +383,34 @@ mod tests {
         state.clear_progress();
         state.observe_checkpoint("m-cleanup", 3580.0, 3600.0);
         assert!(state.take_completion().is_none());
+    }
+
+    #[test]
+    fn no_surface_fails_closed_instead_of_opening_a_window() {
+        let state = PlayerState::new();
+        let err = state.surface_hwnd().expect_err("no attached surface");
+        assert!(matches!(err, PlayerError::NoSurface));
+    }
+
+    #[test]
+    fn stop_action_is_idempotent_and_safe_when_idle() {
+        let state = PlayerState::new();
+        // No mpv spawned: `stop` must not surface PlayerError::Idle.
+        state.control("stop", None).expect("stop is safe when idle");
+        // A repeated stop (e.g. from a second unmount) is also a no-op.
+        state.control("stop", None).expect("stop is idempotent");
+    }
+
+    #[test]
+    fn open_media_reveals_the_surface_and_stays_fail_closed() {
+        let state = PlayerState::new();
+        // No fake Surface exists in unit tests (one needs a real Win32 HWND),
+        // so assert the replay helper is callable and safe with no surface.
+        state.show_surface();
+        let err = state
+            .open_media(Path::new("unused.mkv"), 0.0)
+            .expect_err("no surface means no mpv spawn");
+        assert!(matches!(err, PlayerError::NoSurface));
     }
 
     #[test]

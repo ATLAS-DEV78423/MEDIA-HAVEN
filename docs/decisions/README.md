@@ -30,7 +30,7 @@ Never rewrite an accepted ADR's decision.
 | [0021](0021-r01-source-mapping.md) | R-01 per-item operator-supplied source mapping | **Accepted** (2026-11-21, reversible; human delegated "solve whatever you can", agent chose option A) | Task 0 |
 | [0022](0022-imdb-metadata.md) | IMDb ratings, age ratings and listings (additive, opt-in) | **Proposed** (2026-11-21) | IMDb plan Task 0 |
 | [0023](0023-tmdb-artwork-transport.md) | TMDB artwork transport and loopback image serving | **Proposed** (2026-11-21) — from an unexecuted plan; no code, no live call | P6-07; plan Task 1 |
-| [0024](0024-catalog-discovery-and-source-selection.md) | Host-side search with operator confirmation (minimal-change variant) | **Proposed** (2026-11-21) — would supersede ADR-0021's no-discovery clause and amend ADR-0018 §5; legal + dependency gate | O-10; human acceptance |
+| [0024](0024-catalog-discovery-and-source-selection.md) | Host-side search with operator confirmation (minimal-change variant) | **Accepted 2026-11-24** by explicit human override — supersedes ADR-0021's no-discovery clause, amends ADR-0018 §5 and AGENTS.md; operator endpoint only, no bundled sources | O-10; implementation 2026-11-24 |
 
 **Two decisions are already binding and are not reopened by Phase 0:**
 

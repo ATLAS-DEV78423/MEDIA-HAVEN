@@ -46,6 +46,38 @@ export interface ImdbLookup {
   ageRating?: string | null | undefined;
 }
 
+/* Display-only discovery DTOs (ADR-0024). No endpoint, key, credential or path
+ * crosses the bridge. A magnet appears only in a shortlist returned by a search. */
+export interface ShortlistItem {
+  title: string;
+  sizeBytes: number;
+  seeders: number;
+  resolution: string;
+  source: string;
+  magnet: string;
+}
+
+export interface SourceSearchResult {
+  items: ShortlistItem[];
+  setup_required?: boolean;
+}
+
+export interface CatalogItem {
+  id: string;
+  title: string;
+  year: number | null;
+  kind: "movie" | "series";
+  overview: string;
+  posterPath: string | null;
+  posterUrl?: string | null;
+  provider?: "tmdb" | "anilist";
+}
+
+export interface CatalogResult {
+  items: CatalogItem[];
+  setup_required?: boolean;
+}
+
 const NO_QUERY: BrowseQuery = { sort: "recent", genre: null, limit: 200, offset: 0 };
 
 export const api = {
@@ -128,4 +160,20 @@ export const api = {
   /** Attach an operator-supplied source to one item (R-01 / ADR-0021). */
   sourceSet: (mediaId: string, source: string) =>
     call<null>("source_set", { media_id: mediaId, source }),
+
+  /** Ranked candidates from the operator's search endpoint (ADR-0024). */
+  sourceSearch: (title: string, year: number | null) =>
+    call<SourceSearchResult>("source_search", { title, year }),
+
+  catalogBrowse: (kind: "movie" | "tv") =>
+    call<CatalogResult>("catalog_browse", { kind }),
+
+  catalogSearch: (query: string) =>
+    call<CatalogResult>("catalog_search", { query }),
+
+  catalogAnime: (query: string | null = null) =>
+    call<CatalogResult>("catalog_anime", { query }),
+
+  catalogWantedAdd: (title: string, year: number | null, kind: "movie" | "series") =>
+    call<{ mediaId: string }>("catalog_wanted_add", { title, year, kind }),
 };

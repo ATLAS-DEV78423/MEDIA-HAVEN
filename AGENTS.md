@@ -80,8 +80,12 @@ A narrow approval never implies broad permission.
   without explicit consent.
 - **No AI runtime dependency.** The app must work fully after setup without any
   AI service.
-- **No content-source bundling.** No trackers, indexers, catalogues or
-  instructions for unlawful acquisition. Ever.
+- **No bundled content sources.** No tracker lists, indexer definitions, content
+  catalogues or instructions for unlawful acquisition are shipped. An
+  operator-configured, lawful-use-only source-search endpoint is permitted by
+  explicit human decision 2026-11-24 (ADR-0024 Accepted); the operator supplies
+  the endpoint and credentials, and a human confirms each chosen source before
+  download.
 - **Local-first.** Loopback-only binding. No telemetry by default. No library
   data leaves the machine without opt-in.
 - **Honest reporting.** Never claim PASS for a test you did not run. Distinguish

@@ -57,6 +57,7 @@ secrets/
 # --- Agent tooling (large, environment-specific, reinstalled per README) ---
 .agents/skills/
 .claude/skills/
+.opencode/skills/
 .claude/agents/
 .claude/settings.local.json
 .codex/hooks.json
@@ -96,4 +97,7 @@ diagnostics/
 
 # Agent working artifacts (typo'd path variant) 
 .superpowers/sd/
+
+# Throwaway media probe fixture (real video/audio; must never be staged)
+brag-output/
 

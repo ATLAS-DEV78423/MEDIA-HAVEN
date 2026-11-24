@@ -8,6 +8,7 @@ import { Icon } from "@/components/ui/Icon";
 import { EmptyState } from "@/components/ui/Surfaces";
 import { api, describeError } from "@/services/api";
 import { toMedia } from "@/services/adapt";
+import { normalizeTitle, suggestTitles } from "@/services/fuzzy";
 import type { MediaSummary } from "@/services/types";
 import { useAppState } from "@/state/AppState";
 import styles from "./search.module.css";
@@ -22,6 +23,7 @@ const totalLabel = (summary: MediaSummary): string => {
 export function SearchPage() {
   const { data, recentSearches, rememberSearch } = useAppState();
   const [query, setQuery] = useState("");
+  const [selectedGenres, setSelectedGenres] = useState<string[]>([]);
   const [results, setResults] = useState<MediaSummary[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export function SearchPage() {
       setSearching(true);
       setError(null);
       api
-        .search(trimmed)
+        .search(trimmed, selectedGenres)
         .then((response) => {
           if (!cancelled) setResults(response.items);
         })
@@ -71,9 +73,15 @@ export function SearchPage() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [trimmed]);
+  }, [trimmed, selectedGenres]);
 
   if (!data) return null;
+
+  const genres = Array.from(
+    new Set([...data.movies, ...data.shows].flatMap((item) => item.genres)),
+  )
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, 12);
 
   const recentlyAdded = (
     data.home.shelves.find((shelf) => shelf.id === "recently-added-movies")?.items ??
@@ -88,6 +96,28 @@ export function SearchPage() {
       setSearching(false);
     }
   };
+
+  // Suggestions come only from the already-loaded library — no second query.
+  const candidates = [...data.movies, ...data.shows].map((item) => ({
+    id: item.id,
+    title: item.title,
+    kind: item.kind,
+  }));
+  const showSuggestions =
+    Boolean(trimmed) &&
+    !error &&
+    !searching &&
+    (results === null || results.length < 3) &&
+    normalizeTitle(trimmed).length >= 2;
+  const suggestions = showSuggestions
+    ? suggestTitles(
+        trimmed,
+        candidates.filter(
+          (candidate) => normalizeTitle(candidate.title) !== normalizeTitle(trimmed),
+        ),
+        5,
+      )
+    : [];
 
   const submit = () => {
     if (trimmed) rememberSearch(trimmed);
@@ -142,6 +172,35 @@ export function SearchPage() {
             {recentSearches.map((term) => (
               <Chip key={term} onClick={() => onChange(term)}>
                 {term}
+              </Chip>
+            ))}
+          </div>
+        ) : null}
+
+        {genres.length > 0 ? (
+          <div className={styles.genres} role="group" aria-label="Filter by genre">
+            <span className={styles.genreLabel}>Genre</span>
+            <Chip active={selectedGenres.length === 0} onClick={() => setSelectedGenres([])}>
+              All
+            </Chip>
+            {genres.map((genre) => (
+              <Chip
+                key={genre}
+                active={selectedGenres.length === 1 && selectedGenres[0] === genre}
+                onClick={() => setSelectedGenres([genre])}
+              >
+                {genre}
+              </Chip>
+            ))}
+          </div>
+        ) : null}
+
+        {suggestions.length > 0 ? (
+          <div className={styles.recent} role="group" aria-label="Did you mean?">
+            <span className={styles.recentLabel}>Did you mean?</span>
+            {suggestions.map((suggestion) => (
+              <Chip key={suggestion.id} onClick={() => onChange(suggestion.title)}>
+                {suggestion.title}
               </Chip>
             ))}
           </div>

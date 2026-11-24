@@ -5,16 +5,20 @@
 //! (ADR-0005); there is no generic passthrough command.
 
 mod commands;
+mod discovery;
 mod mounts;
 mod player;
 mod secret;
 mod supervisor;
+mod win_surface;
 mod wsl;
 
 use serde::Serialize;
 
 pub use mounts::{render_mounts, write_atomic, MountError, RenderOutput, RenderedMount, RootSpec};
-pub use secret::{blob_path, load_or_create_token, SecretError, SecretToken};
+pub use secret::{
+    blob_path, load_or_create_token, load_string, store_string, SecretError, SecretToken,
+};
 pub use supervisor::{Supervisor, SupervisorStatus};
 pub use wsl::Wsl;
 
@@ -74,6 +78,12 @@ pub fn run() {
             commands::playback_stop,
             commands::playback_checkpoint,
             commands::player_control,
+            commands::player_attach_surface,
+            commands::source_search,
+            commands::catalog_browse,
+            commands::catalog_search,
+            commands::catalog_anime,
+            commands::catalog_wanted_add,
         ])
         .run(tauri::generate_context!())
         .expect("the MEDIA_HAVEN window failed to start");

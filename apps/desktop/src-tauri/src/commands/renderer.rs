@@ -16,6 +16,7 @@ use app_core::domain::AppErrorCode;
 use mediahaven_contract::{sign as sign_request, COMMANDS};
 use serde::Serialize;
 use serde_json::{json, Value};
+use tauri::Manager;
 
 use crate::player::{resolve_for_media, spawn_status_poller, PlayerState};
 use crate::secret::{load_or_create_token, TOKEN_ACCOUNT, TOKEN_SERVICE};
@@ -73,6 +74,15 @@ impl CommandError {
         Self {
             code: AppErrorCode::RuntimeUnavailable,
             message: "The playback engine could not be started.",
+            retryable: true,
+        }
+    }
+
+    /// No child video surface was attached: mpv must not open its own window.
+    pub fn surface_unavailable() -> Self {
+        Self {
+            code: AppErrorCode::RuntimeUnavailable,
+            message: "player surface unavailable",
             retryable: true,
         }
     }
@@ -452,12 +462,234 @@ pub fn source_set(media_id: String, source: String) -> Result<Value, CommandErro
     )
 }
 
+/// Add an operator-picked catalog title as a local wanted item. Forwarded to
+/// the host-internal core route; no path or token reaches the renderer.
+#[tauri::command]
+pub fn catalog_wanted_add(
+    title: String,
+    year: Option<i64>,
+    kind: String,
+) -> Result<Value, CommandError> {
+    post_internal(
+        "host/catalog_wanted_add",
+        json!({ "title": title, "year": year, "kind": kind }),
+    )
+}
+
 /// Display-only IMDb/OMDb fields for a media id, from the opt-in offline TSV
 /// datasets on the backend. A host-internal route, not a renderer POST command,
 /// so the 24-command parity surface is unchanged (ADR-0018).
 #[tauri::command]
 pub fn imdb_lookup(media_id: String) -> Result<Value, CommandError> {
     post_internal("host/imdb_lookup", json!({ "mediaId": media_id }))
+}
+
+// --- Discovery (host-only, opt-in; never in COMMANDS) -----------------------
+
+// DPAPI identities for operator-supplied config. Valid identities only.
+const DISCOVERY_SERVICE: &str = "mediahaven";
+const TORZNAB_URL_ACCOUNT: &str = "torznab-url";
+const TORZNAB_KEY_ACCOUNT: &str = "torznab-key";
+const PROWLARR_URL_ACCOUNT: &str = "prowlarr-url";
+const PROWLARR_KEY_ACCOUNT: &str = "prowlarr-key";
+const TMDB_KEY_ACCOUNT: &str = "tmdb-key";
+/// Only used when a Prowlarr key exists but no URL was configured.
+const PROWLARR_DEFAULT_URL: &str = "http://127.0.0.1:9117";
+
+/// Read operator config from the secret store when present, else env. A stored
+/// or env value that is blank is treated as absent. Read failures fail closed
+/// to env/None rather than leaking an error to the renderer.
+fn config_value(env_name: &str, service: &str, account: &str) -> Option<String> {
+    if let Ok(Some(value)) = crate::secret::load_string(service, account) {
+        let trimmed = value.trim().to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    std::env::var(env_name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn tmdb_enabled() -> bool {
+    std::env::var("MEDIAHAVEN_TMDB_OPTIN").is_ok_and(|value| value == "1")
+}
+
+fn setup_required() -> Value {
+    json!({ "items": [], "setup_required": true })
+}
+
+/// The resolved operator config for one source search. `direct` means the URL
+/// is already a Torznab endpoint; otherwise it is a Prowlarr base URL whose
+/// enabled indexers must be discovered first.
+struct SourceConfig {
+    endpoint: String,
+    key: String,
+    direct: bool,
+}
+
+type ConfigLookup<'a> = dyn Fn(&str, &str, &str) -> Option<String> + 'a;
+
+/// Resolve the endpoint first, then pick the key that belongs to that mode:
+/// explicit Torznab URL uses the Torznab key (Prowlarr key as fallback), while
+/// Prowlarr discovery requires the Prowlarr key. A Torznab key without its URL
+/// must not be sent to Prowlarr. No key means no request.
+fn resolve_source_config(get: &ConfigLookup) -> Option<SourceConfig> {
+    let direct_endpoint = get(
+        "MEDIAHAVEN_TORZNAB_URL",
+        DISCOVERY_SERVICE,
+        TORZNAB_URL_ACCOUNT,
+    );
+    let prowlarr_key = get(
+        "MEDIAHAVEN_PROWLARR_API_KEY",
+        DISCOVERY_SERVICE,
+        PROWLARR_KEY_ACCOUNT,
+    );
+    if let Some(endpoint) = direct_endpoint {
+        let key = get(
+            "MEDIAHAVEN_TORZNAB_KEY",
+            DISCOVERY_SERVICE,
+            TORZNAB_KEY_ACCOUNT,
+        )
+        .or(prowlarr_key)?;
+        return Some(SourceConfig {
+            endpoint,
+            key,
+            direct: true,
+        });
+    }
+    let key = prowlarr_key?;
+    let endpoint = get(
+        "MEDIAHAVEN_PROWLARR_URL",
+        DISCOVERY_SERVICE,
+        PROWLARR_URL_ACCOUNT,
+    )
+    .unwrap_or_else(|| PROWLARR_DEFAULT_URL.to_string());
+    Some(SourceConfig {
+        endpoint,
+        key,
+        direct: false,
+    })
+}
+
+/// Config and transport are injected so the alias/default rules are testable
+/// without touching the process environment or making a network call.
+fn source_search_with(
+    config: Option<SourceConfig>,
+    title: &str,
+    year: Option<i64>,
+    fetch: &crate::discovery::FetchFn,
+) -> Value {
+    let Some(config) = config else {
+        return setup_required();
+    };
+    let items = if config.direct {
+        crate::discovery::torznab_search(&config.endpoint, &config.key, title, year, fetch)
+    } else {
+        // Prowlarr v3 JSON API first: some installs return 404 on per-indexer
+        // Torznab URLs. Any failure or empty result falls back to the existing
+        // discovery + multi-Torznab path, so no error text reaches the renderer.
+        match crate::discovery::prowlarr_search(&config.endpoint, &config.key, title, year, fetch) {
+            Ok(items) if !items.is_empty() => Ok(items),
+            _ => crate::discovery::prowlarr_torznab_endpoints(&config.endpoint, &config.key, fetch)
+                .and_then(|endpoints| {
+                    crate::discovery::torznab_search_multi(
+                        &endpoints,
+                        &config.key,
+                        title,
+                        year,
+                        fetch,
+                    )
+                }),
+        }
+    }
+    .unwrap_or_default();
+    json!({ "items": items, "setup_required": false })
+}
+
+/// Ranked source shortlist for a library title. No config => empty list plus
+/// a display-only `setup_required` flag, zero requests and zero error leakage.
+/// A Prowlarr key works without a URL; the magnet flows to `source_set` only
+/// after a human confirms the choice. The Prowlarr JSON path passes the
+/// resolved key as an `X-Api-Key` header; URL-only Torznab/TMDB paths keep the
+/// existing 1 MiB fetch. All paths share the 4 MiB response bound here.
+#[tauri::command]
+pub fn source_search(title: String, year: Option<i64>) -> Result<Value, CommandError> {
+    let config =
+        resolve_source_config(&|name, service, account| config_value(name, service, account));
+    let bounded: Box<crate::discovery::FetchFn> = Box::new(|url, api_key| match api_key {
+        // Prowlarr's resolved key arrives through the seam; never in the URL.
+        Some(key) => crate::discovery::http_fetch_with_api_key(url, key),
+        None => crate::discovery::http_fetch_bounded(url, crate::discovery::MAX_PROWLARR_BYTES),
+    });
+    Ok(source_search_with(config, &title, year, &bounded))
+}
+
+/// URL-only adapter for the widened fetch seam, used by the TMDB clients.
+fn url_only_fetch(url: &str, _key: Option<&str>) -> Result<Vec<u8>, String> {
+    crate::discovery::http_fetch(url)
+}
+
+/// Opt-in TMDB catalog browse. `kind` is `"movie"` or `"tv"`; anything else is
+/// a no-op. Requires both the opt-in flag and an operator API key.
+#[tauri::command]
+pub fn catalog_browse(kind: String) -> Result<Value, CommandError> {
+    if !tmdb_enabled() {
+        return Ok(setup_required());
+    }
+    let key = match config_value(
+        "MEDIAHAVEN_TMDB_API_KEY",
+        DISCOVERY_SERVICE,
+        TMDB_KEY_ACCOUNT,
+    ) {
+        Some(key) => key,
+        None => return Ok(setup_required()),
+    };
+    let path = match kind.as_str() {
+        "movie" => "movie/popular",
+        "tv" => "tv/popular",
+        _ => return Ok(json!({ "items": [], "setup_required": false })),
+    };
+    let items = crate::discovery::tmdb_list(path, "", &key, &url_only_fetch);
+    Ok(json!({ "items": items, "setup_required": false }))
+}
+
+/// Opt-in TMDB multi-search. Same gate as browse; only the query and key leave.
+#[tauri::command]
+pub fn catalog_search(query: String) -> Result<Value, CommandError> {
+    if !tmdb_enabled() {
+        return Ok(setup_required());
+    }
+    let key = match config_value(
+        "MEDIAHAVEN_TMDB_API_KEY",
+        DISCOVERY_SERVICE,
+        TMDB_KEY_ACCOUNT,
+    ) {
+        Some(key) => key,
+        None => return Ok(setup_required()),
+    };
+    let items = crate::discovery::tmdb_list("search/multi", &query, &key, &url_only_fetch);
+    Ok(json!({ "items": items, "setup_required": false }))
+}
+
+/// Read-only public AniList browse/search. Results are fetched on demand and
+/// returned transiently; the request contains no local library or watch data.
+#[tauri::command]
+pub fn catalog_anime(query: Option<String>) -> Result<Value, CommandError> {
+    let query = query.unwrap_or_default();
+    if query.chars().count() > 200 {
+        return Ok(json!({ "items": [], "setup_required": false }));
+    }
+    let fetch: Box<crate::discovery::AniListFetchFn> =
+        Box::new(crate::discovery::anilist_http_fetch);
+    let query = if query.trim().is_empty() {
+        None
+    } else {
+        Some(query)
+    };
+    let items = crate::discovery::anilist_list(query.as_deref(), &fetch);
+    Ok(json!({ "items": items, "setup_required": false }))
 }
 
 /// Current acquisition rows (path-free identities) from the host-internal route.
@@ -538,6 +770,7 @@ pub fn playback_start(
             .open_media(&host_path, start)
             .map_err(|error| match error {
                 crate::player::PlayerError::Mpv(_) => CommandError::engine_unavailable(),
+                crate::player::PlayerError::NoSurface => CommandError::surface_unavailable(),
                 _ => CommandError::source_unavailable(),
             })?;
         state.begin(&media_id);
@@ -601,7 +834,7 @@ pub fn playback_checkpoint(
     post("playback_checkpoint", json!({ "request": request }))
 }
 
-/// A named host→engine control command (play/pause/seek/volume). Not a
+/// A named host→engine control command (play/pause/seek/volume/stop). Not a
 /// passthrough and not a backend capability: it only drives the local mpv
 /// instance and accepts no path, token or arbitrary command name.
 #[tauri::command]
@@ -612,6 +845,34 @@ pub fn player_control(
 ) -> Result<Value, CommandError> {
     (*state)
         .control(&action, value)
+        .map_err(|_| CommandError::new(AppErrorCode::InvalidRequest))?;
+    Ok(Value::Null)
+}
+
+/// Host-only: attach the native video surface inside our single window.
+/// Accepts four finite numbers; never a path, token, HWND value or URL.
+#[tauri::command]
+pub fn player_attach_surface(
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    state: tauri::State<'_, PlayerState>,
+    app: tauri::AppHandle,
+) -> Result<Value, CommandError> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| CommandError::new(AppErrorCode::InvalidRequest))?;
+    let parent = window
+        .hwnd()
+        .map(|hwnd| hwnd.0 as usize)
+        .map_err(|_| CommandError::new(AppErrorCode::InvalidRequest))?;
+    let dpi = window
+        .scale_factor()
+        .map(|factor| (factor * 96.0).round() as u32)
+        .unwrap_or(96);
+    (*state)
+        .attach_surface(x, y, width, height, dpi, parent)
         .map_err(|_| CommandError::new(AppErrorCode::InvalidRequest))?;
     Ok(Value::Null)
 }
@@ -721,6 +982,14 @@ mod tests {
     }
 
     #[test]
+    fn surface_unavailable_is_legible_and_retryable() {
+        let error = CommandError::surface_unavailable();
+        assert_eq!(error.code, AppErrorCode::RuntimeUnavailable);
+        assert_eq!(error.message, "player surface unavailable");
+        assert!(error.retryable);
+    }
+
+    #[test]
     fn acquisition_root_is_rendered_and_added_to_the_host_map() {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -787,5 +1056,217 @@ mod tests {
         let validated =
             validate_download_root(&absolute.to_string_lossy()).expect("absolute path accepted");
         assert_eq!(validated, absolute);
+    }
+
+    #[test]
+    fn catalog_wanted_add_is_wired_to_the_handler_surface() {
+        // The renderer invokes this name; lib.rs must register it in
+        // generate_handler! or the call dies with "command not found" (ADR-0024).
+        let host = include_str!("../lib.rs");
+        assert!(
+            host.contains("commands::catalog_wanted_add,"),
+            "catalog_wanted_add must be registered in generate_handler!"
+        );
+        // Host-internal only: the 24-command POST surface stays unchanged.
+        assert!(!COMMANDS.contains(&"catalog_wanted_add"));
+    }
+
+    // --- Source config alias/default resolution (host-side, injected) ------
+
+    const INDEXERS: &str =
+        r#"[{"id":3,"enable":true,"torznabUrl":"http://127.0.0.1:9117/idx/api?apikey=hidden"}]"#;
+    const RSS: &str = "<rss><channel><item><title>Movie 1080p</title><size>10</size>\
+        <seeders>2</seeders><link>magnet:?xt=urn:btih:a</link></item></channel></rss>";
+
+    fn source_fetch() -> (
+        Box<crate::discovery::FetchFn>,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = seen.clone();
+        (
+            Box::new(move |url: &str, _key: Option<&str>| {
+                record.lock().unwrap().push(url.to_string());
+                if url.contains("/api/v1/indexer?apikey=") {
+                    Ok(INDEXERS.as_bytes().to_vec())
+                } else {
+                    Ok(RSS.as_bytes().to_vec())
+                }
+            }),
+            seen,
+        )
+    }
+
+    #[test]
+    fn source_search_uses_prowlarr_alias_and_local_default() {
+        let (fetch, seen) = source_fetch();
+        let get = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_PROWLARR_API_KEY" => Some("prowl-key".to_string()),
+            _ => None,
+        };
+        let value = source_search_with(resolve_source_config(&get), "Movie", Some(2020), &fetch);
+        assert_eq!(value["setup_required"], false);
+        assert_eq!(value["items"][0]["title"], "Movie 1080p");
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[
+                "http://127.0.0.1:9117/api/v1/search?query=Movie%202020".to_string(),
+                "http://127.0.0.1:9117/api/v1/indexer?apikey=prowl-key".to_string(),
+                "http://127.0.0.1:9117/idx/api?t=search&q=Movie%202020&apikey=prowl-key"
+                    .to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_search_prefers_prowlarr_json_with_header_auth() {
+        const JSON: &str = r#"[{"title":"Movie 720p","magnetUrl":"magnet:?xt=urn:btih:j","size":5,"seeders":1,"indexer":"idx"}]"#;
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let fetch: Box<crate::discovery::FetchFn> =
+            Box::new(move |url: &str, key: Option<&str>| {
+                record
+                    .lock()
+                    .unwrap()
+                    .push((url.to_string(), key.map(str::to_string)));
+                if url.contains("/api/v1/search") {
+                    Ok(JSON.as_bytes().to_vec())
+                } else {
+                    Ok(INDEXERS.as_bytes().to_vec())
+                }
+            });
+        let get = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_PROWLARR_API_KEY" => Some("prowl-key".to_string()),
+            _ => None,
+        };
+        let value = source_search_with(resolve_source_config(&get), "Movie", None, &fetch);
+        assert_eq!(value["setup_required"], false);
+        assert_eq!(value["items"][0]["title"], "Movie 720p");
+        assert_eq!(value["items"][0]["resolution"], "720p");
+        // No fallback call, no key in the URL, and the key reached the fetch
+        // seam so the production transport can send it as X-Api-Key.
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &[(
+                "http://127.0.0.1:9117/api/v1/search?query=Movie".to_string(),
+                Some("prowl-key".to_string())
+            )]
+        );
+    }
+
+    #[test]
+    fn source_search_falls_back_when_prowlarr_json_fails() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let record = seen.clone();
+        let fetch: Box<crate::discovery::FetchFn> =
+            Box::new(move |url: &str, _key: Option<&str>| {
+                record.lock().unwrap().push(url.to_string());
+                if url.contains("/api/v1/search") {
+                    Err("http 500".to_string())
+                } else if url.contains("/api/v1/indexer?apikey=") {
+                    Ok(INDEXERS.as_bytes().to_vec())
+                } else {
+                    Ok(RSS.as_bytes().to_vec())
+                }
+            });
+        let get = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_PROWLARR_API_KEY" => Some("prowl-key".to_string()),
+            _ => None,
+        };
+        let value = source_search_with(resolve_source_config(&get), "Movie", None, &fetch);
+        assert_eq!(value["setup_required"], false);
+        assert_eq!(value["items"][0]["title"], "Movie 1080p");
+        assert_eq!(seen.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn source_search_prefers_torznab_key_url_and_prowlarr_url_override() {
+        let (fetch, seen) = source_fetch();
+
+        // An explicit Torznab URL/key goes straight to search: no discovery.
+        let direct = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_TORZNAB_URL" => Some("http://explicit/api".to_string()),
+            "MEDIAHAVEN_TORZNAB_KEY" => Some("tz-key".to_string()),
+            "MEDIAHAVEN_PROWLARR_API_KEY" => Some("prowl-key".to_string()),
+            _ => None,
+        };
+        let value = source_search_with(resolve_source_config(&direct), "Movie", None, &fetch);
+        assert_eq!(value["setup_required"], false);
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            &["http://explicit/api?t=search&q=Movie&apikey=tz-key".to_string()]
+        );
+
+        // Prowlarr key without a Torznab key prefers the Prowlarr URL.
+        seen.lock().unwrap().clear();
+        let override_url = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_PROWLARR_API_KEY" => Some("prowl-key".to_string()),
+            "MEDIAHAVEN_PROWLARR_URL" => Some("http://custom:9117/".to_string()),
+            _ => None,
+        };
+        let value = source_search_with(resolve_source_config(&override_url), "Movie", None, &fetch);
+        assert_eq!(value["setup_required"], false);
+        assert_eq!(
+            seen.lock().unwrap()[0],
+            "http://custom:9117/api/v1/search?query=Movie"
+        );
+        assert_eq!(
+            seen.lock().unwrap()[1],
+            "http://custom:9117/api/v1/indexer?apikey=prowl-key"
+        );
+    }
+
+    #[test]
+    fn source_search_discovery_mode_uses_the_prowlarr_key() {
+        let (fetch, seen) = source_fetch();
+        let both_keys = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_TORZNAB_KEY" => Some("tz-key".to_string()),
+            "MEDIAHAVEN_PROWLARR_API_KEY" => Some("prowl-key".to_string()),
+            "MEDIAHAVEN_PROWLARR_URL" => Some("http://127.0.0.1:9117".to_string()),
+            _ => None,
+        };
+        let value = source_search_with(resolve_source_config(&both_keys), "Movie", None, &fetch);
+        assert_eq!(value["setup_required"], false);
+        let seen = seen.lock().unwrap();
+        assert!(seen.iter().all(|url| !url.contains("tz-key")));
+        // The JSON search carries the key via header; discovery/Torznab keep
+        // the existing query auth, so only those URLs end with apikey=.
+        assert!(seen.iter().any(|url| url.ends_with("apikey=prowl-key")));
+        assert!(seen
+            .iter()
+            .any(|url| url.contains("/api/v1/search?") && !url.contains("apikey=")));
+
+        // A Torznab key with no Torznab URL cannot stand in for a Prowlarr key.
+        let (fetch, seen) = source_fetch();
+        let torznab_only = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_TORZNAB_KEY" => Some("tz-key".to_string()),
+            "MEDIAHAVEN_PROWLARR_URL" => Some("http://127.0.0.1:9117".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            source_search_with(resolve_source_config(&torznab_only), "Movie", None, &fetch),
+            setup_required()
+        );
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn source_search_without_a_key_makes_zero_calls() {
+        let (fetch, seen) = source_fetch();
+        let none = |_: &str, _: &str, _: &str| None;
+        assert_eq!(
+            source_search_with(resolve_source_config(&none), "Movie", None, &fetch),
+            setup_required()
+        );
+        // A Torznab key alone with no URL is still incomplete config.
+        let partial = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_TORZNAB_KEY" => Some("tz-key".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            source_search_with(resolve_source_config(&partial), "Movie", None, &fetch),
+            setup_required()
+        );
+        assert!(seen.lock().unwrap().is_empty());
     }
 }

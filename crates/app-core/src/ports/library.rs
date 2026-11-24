@@ -74,4 +74,14 @@ pub trait LibraryRepository: Send + Sync {
     // renderer DTO and no source is discovered or invented.
     async fn source_for_media(&self, media_id: &str) -> Result<Option<String>, AppError>;
     async fn set_item_source(&self, media_id: &str, source: &str) -> Result<(), AppError>;
+
+    // Catalog "wanted" item (ADR-0024). Stable id supplied by the caller; no
+    // media_files row is created and the row starts unavailable.
+    async fn wanted_add(
+        &self,
+        title: &str,
+        year: Option<i64>,
+        kind: &str,
+        id: &str,
+    ) -> Result<(), AppError>;
 }

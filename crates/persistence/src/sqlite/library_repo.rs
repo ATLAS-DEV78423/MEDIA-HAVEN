@@ -1214,6 +1214,34 @@ impl LibraryRepository for SqliteLibraryRepository {
         tx.commit().await.map_err(Self::internal)?;
         Ok(())
     }
+
+    async fn wanted_add(
+        &self,
+        title: &str,
+        year: Option<i64>,
+        kind: &str,
+        id: &str,
+    ) -> Result<(), AppError> {
+        // A catalog pick starts unavailable with no genres and no file. The id
+        // is caller-supplied and stable; ON CONFLICT keeps repeat picks a no-op.
+        let now = now_iso();
+        sqlx::query(
+            "INSERT INTO media_items \
+             (id, kind, title, year, genres, availability_state, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, '[]', 'unavailable', ?, ?) \
+             ON CONFLICT(id) DO NOTHING",
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(title)
+        .bind(year)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(())
+    }
 }
 
 impl SqliteLibraryRepository {
@@ -1897,5 +1925,67 @@ mod verification_tests {
             service(&repo).detail("m-life").await.unwrap_err().code,
             AppErrorCode::MediaUnsupported
         );
+    }
+}
+
+#[cfg(test)]
+mod wanted_tests {
+    use super::*;
+    use crate::sqlite::connect_path;
+
+    #[tokio::test]
+    async fn wanted_add_is_idempotent_and_creates_no_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "mh-wanted-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let pool = connect_path(&dir.join("library.db"))
+            .await
+            .expect("connect and migrate");
+        let repo = SqliteLibraryRepository::new(pool.clone());
+
+        let id = "catalog-movie-0123456789abcdef0123456789abcdef";
+        repo.wanted_add("A Wanted Film", Some(2024), "movie", id)
+            .await
+            .expect("first insert");
+        // A repeat pick with the same stable id must be a no-op.
+        repo.wanted_add("A Wanted Film", Some(2024), "movie", id)
+            .await
+            .expect("repeat insert");
+
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_items WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("count media");
+        assert_eq!(rows, 1, "idempotent: exactly one media row");
+
+        let row = sqlx::query(
+            "SELECT kind, title, year, genres, availability_state, created_at, updated_at \
+             FROM media_items WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("read media row");
+        assert_eq!(row.get::<String, _>("kind"), "movie");
+        assert_eq!(row.get::<String, _>("title"), "A Wanted Film");
+        assert_eq!(row.get::<Option<i64>, _>("year"), Some(2024));
+        assert_eq!(row.get::<String, _>("genres"), "[]");
+        assert_eq!(row.get::<String, _>("availability_state"), "unavailable");
+        assert!(!row.get::<String, _>("created_at").is_empty());
+        assert!(!row.get::<String, _>("updated_at").is_empty());
+
+        let files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE media_id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("count files");
+        assert_eq!(files, 0, "a wanted item has no media file");
+
+        pool.close().await;
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
