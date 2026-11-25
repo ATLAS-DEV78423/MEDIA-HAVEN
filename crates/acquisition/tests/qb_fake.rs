@@ -3,6 +3,7 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use media_acquisition::{QbClient, QbError, TorrentApi};
 
@@ -27,9 +28,21 @@ fn loopback() -> (TcpListener, String) {
 
 /// Record each request and answer with the next scripted response.
 fn serve(listener: TcpListener, scripts: Vec<Scripted>) -> JoinHandle<Vec<Recorded>> {
+    serve_with_close_delay(listener, scripts, Duration::ZERO)
+}
+
+/// Same scripted server, but deliberately keeps the accepted sockets open
+/// after writing a Content-Length response. qB behaves this way with
+/// `Connection: keep-alive`; the client must not wait for the close.
+fn serve_with_close_delay(
+    listener: TcpListener,
+    scripts: Vec<Scripted>,
+    close_delay: Duration,
+) -> JoinHandle<Vec<Recorded>> {
     thread::spawn(move || {
-        let mut recorded = Vec::with_capacity(scripts.len());
-        for script in scripts {
+        let total = scripts.len();
+        let mut recorded = Vec::with_capacity(total);
+        for (index, script) in scripts.into_iter().enumerate() {
             let (mut socket, _) = listener.accept().expect("client must connect");
             let mut raw = Vec::new();
             let mut buffer = [0u8; 2048];
@@ -76,13 +89,24 @@ fn serve(listener: TcpListener, scripts: Vec<Scripted>) -> JoinHandle<Vec<Record
                 .set_cookie
                 .map(|value| format!("Set-Cookie: {value}\r\n"))
                 .unwrap_or_default();
+            let connection = if close_delay.is_zero() {
+                "close"
+            } else {
+                "keep-alive"
+            };
             let response = format!(
-                "HTTP/1.1 {}\r\nContent-Length: {}\r\n{set_cookie}Connection: close\r\n\r\n{}",
+                "HTTP/1.1 {}\r\nContent-Length: {}\r\n{set_cookie}Connection: {}\r\n\r\n{}",
                 script.status,
                 script.body.len(),
+                connection,
                 script.body
             );
             socket.write_all(response.as_bytes()).unwrap();
+            if !close_delay.is_zero() && index + 1 == total {
+                // Only the final response holds the socket open; earlier
+                // connections must be accepted promptly for the next call.
+                thread::sleep(close_delay);
+            }
         }
         recorded
     })
@@ -140,6 +164,41 @@ fn add_sends_magnet_and_save_path_and_returns_hash() {
     assert_eq!(requests[2].cookie.as_deref(), Some("QBT_SID_8080=testsid"));
     assert_eq!(requests[3].path, "/api/v2/torrents/info");
     assert_eq!(hash, "abc123");
+}
+
+#[test]
+fn add_treats_a_duplicate_torrent_as_an_idempotent_add() {
+    let (listener, base) = loopback();
+    let source = "magnet:?xt=urn:btih:ABC&dn=ep";
+    let info = r#"[{"hash":"abc123","magnet_uri":"magnet:?xt=urn:btih:ABC&dn=ep","state":"downloading","progress":0.1}]"#;
+    let handle = serve(
+        listener,
+        vec![
+            LOGIN,
+            Scripted {
+                status: "200 OK",
+                body: "[]",
+                set_cookie: None,
+            },
+            Scripted {
+                status: "409 Conflict",
+                body: "Conflict",
+                set_cookie: None,
+            },
+            Scripted {
+                status: "200 OK",
+                body: info,
+                set_cookie: None,
+            },
+        ],
+    );
+
+    let client = QbClient::new(&base, "admin", "secret").unwrap();
+    assert_eq!(client.add(source, "/downloads").unwrap(), "abc123");
+    let requests = handle.join().unwrap();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[2].path, "/api/v2/torrents/add");
+    assert_eq!(requests[3].path, "/api/v2/torrents/info");
 }
 
 #[test]
@@ -228,5 +287,35 @@ fn authentication_failure_is_a_legible_api_error() {
     );
     let client = QbClient::new(&base2, "admin", "secret").unwrap();
     assert_eq!(client.status("hash").unwrap_err(), QbError::Api(401));
+    handle.join().unwrap();
+}
+
+#[test]
+fn content_length_response_does_not_wait_for_keepalive_close() {
+    // Real qB replies with `Connection: keep-alive` and a Content-Length.
+    // Reading to EOF costs ~9 s per call; reading the declared length returns
+    // as soon as the JSON body is complete.
+    let (listener, base) = loopback();
+    let handle = serve_with_close_delay(
+        listener,
+        vec![
+            LOGIN,
+            Scripted {
+                status: "200 OK",
+                body: "[]",
+                set_cookie: None,
+            },
+        ],
+        Duration::from_millis(1200),
+    );
+
+    let started = Instant::now();
+    let client = QbClient::new(&base, "admin", "secret").expect("login");
+    assert_eq!(client.status("hash").unwrap_err(), QbError::NotFound);
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_millis(600),
+        "the client waited {elapsed:?} for a keep-alive socket to close"
+    );
     handle.join().unwrap();
 }

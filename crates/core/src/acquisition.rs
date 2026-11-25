@@ -21,9 +21,9 @@ use axum::routing::post;
 use axum::{Json, Router};
 use media_acquisition::{
     inspect_with_runner, missing_episodes, next_two_in_season, reconcile, AcquireError,
-    CleanupCandidate, CleanupDecision, CleanupError, CleanupState, CleanupWorker,
-    DockerProbeRunner, EpisodeRef, InspectionState, ManagedFile, PrefetchScheduler, ProbeRunner,
-    QbClient, TorrentApi, DEFAULT_BUFFER_LIMIT_BYTES, REPLAY_GRACE, SAVE_PATH,
+    CleanupCandidate, CleanupDecision, CleanupError, CleanupState, CleanupWorker, EpisodeRef,
+    InspectionState, ManagedFile, PrefetchScheduler, ProbeRunner, QbClient, TorrentApi,
+    DEFAULT_BUFFER_LIMIT_BYTES, REPLAY_GRACE, SAVE_PATH,
 };
 use media_persistence::sqlite::{
     connect_path, CleanupRepository, ManagedFileRow, SqliteLibraryRepository,
@@ -47,6 +47,8 @@ const INSPECT_PATH: &str = "/host/acquisition_inspect";
 const SOURCE_SET_PATH: &str = "/host/acquisition_source_set";
 const IMDB_LOOKUP_PATH: &str = "/host/imdb_lookup";
 const CATALOG_WANTED_ADD_PATH: &str = "/host/catalog_wanted_add";
+const DEFENDER_STATE_PATH: &str = "/host/defender_state";
+const DEFENDER_RESULT_PATH: &str = "/host/defender_result";
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -67,6 +69,22 @@ struct SourceSetArgs {
     source: String,
 }
 
+/// Host-only Defender gate input. No filesystem path is accepted: the Windows
+/// host resolves the media id to a host path itself and sends back only a
+/// closed state spelling.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DefenderQueryArgs {
+    media_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DefenderResultArgs {
+    media_id: String,
+    state: String,
+}
+
 /// A catalog pick promoted to a "wanted" library item (ADR-0024). Display-only
 /// fields; no path or credential ever enters this shape.
 #[derive(Debug, Deserialize)]
@@ -77,14 +95,14 @@ struct CatalogWantedAddArgs {
     kind: String,
 }
 
-/// Host-internal inspection trigger for a completed download. `containerPath`
-/// is a host-internal container path (never a renderer DTO field); it is
-/// constrained to `/downloads/...` before any command is built.
+/// Host-internal probe result for a completed download. The Windows host runs
+/// `ffprobe` (it owns the Docker CLI); `core` only records the closed state
+/// spelling. No path or probe output crosses this boundary.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct InspectArgs {
-    id: String,
-    container_path: String,
+    media_id: String,
+    state: String,
 }
 
 /// Host-internal completion signal (NOT a renderer DTO). Carries the B5 inputs
@@ -114,11 +132,20 @@ pub fn host_router() -> Router<AppState> {
         .route(SOURCE_SET_PATH, post(source_set))
         .route(IMDB_LOOKUP_PATH, post(imdb_lookup))
         .route(CATALOG_WANTED_ADD_PATH, post(catalog_wanted_add))
+        .route(DEFENDER_STATE_PATH, post(defender_state))
+        .route(DEFENDER_RESULT_PATH, post(defender_result))
 }
 
 /// Attach an operator-supplied source to a library item (R-01 / ADR-0021).
 /// Host-internal: the renderer reaches it through a named command only. The
 /// source is validated again here (trust boundary) and never returned to a DTO.
+///
+/// Attaching a source is not a passive record: the operator confirmed this
+/// source *for this item*, so the acquisition must actually start. The source
+/// is recorded (so the rolling buffer and cleanup can see it) **and** handed to
+/// the downloader, with the download row persisted against this media id.
+/// Without the acquisition, a confirmed magnet was inert — the item could
+/// never become playable.
 async fn source_set(
     State(state): State<AppState>,
     ApiJson(args): ApiJson<SourceSetArgs>,
@@ -134,7 +161,85 @@ async fn source_set(
         .set_item_source(&args.media_id, &args.source)
         .await
         .map_err(ApiError)?;
-    Ok(Json(Value::Null))
+    // Start the acquisition for the item the source was confirmed for. The
+    // source is bound to the item here, so the persisted download row carries
+    // the media id and the playability gates can see the association.
+    let item = acquire_for_media(&state, &args.media_id, &args.source).await?;
+    Ok(Json(serde_json::json!({ "downloadId": item.id })))
+}
+
+/// Acquire a source on behalf of a media item and persist the download rows
+/// against that item.
+///
+/// The qB client is synchronous with 10 s socket timeouts, so the blocking
+/// call runs on the blocking pool: it must never stall a tokio worker (the
+/// same reasoning as the prefetch scheduler).
+///
+/// The persisted rows are the ones the rest of the app reads: `download_items`
+/// carries the media id, the container path and the verification state, so the
+/// probe/Defender gates and the cleanup worker can both see the association.
+async fn acquire_for_media(
+    state: &AppState,
+    media_id: &str,
+    source: &str,
+) -> Result<app_core::domain::DownloadItem, ApiError> {
+    let acquisition = state.acquisition.clone();
+    let media_id = media_id.to_string();
+    let source = source.to_string();
+    let source_for_api = source.clone();
+    let item = tokio::task::spawn_blocking(move || {
+        acquisition.acquire_for(&source_for_api, Some(&media_id))
+    })
+    .await
+    .map_err(|_| {
+        ApiError(AppError::new(
+            AppErrorCode::BackendUnreachable,
+            "The acquisition task did not complete.",
+            true,
+        ))
+    })?
+    .map_err(map_error)?;
+
+    // All paths built here are host-internal container paths; no path enters a
+    // renderer DTO (the returned DownloadItem is path-free).
+    let files = state
+        .acquisition
+        .files(&item.torrent_hash)
+        .unwrap_or_default();
+    let paths: Vec<String> = if files.is_empty() {
+        vec![format!("{SAVE_PATH}/{}", item.torrent_hash)]
+    } else {
+        files
+            .iter()
+            .map(|name| format!("{}/{}", SAVE_PATH, name.trim_start_matches('/')))
+            .collect()
+    };
+    for path in &paths {
+        state
+            .service
+            .download_add(&item, path, &source, SAVE_PATH)
+            .await?;
+    }
+    // Bridge the orchestrator's inspection result into SQLite so the
+    // playability gate can read it. Persist by download id (= torrent hash);
+    // the gate reads it back through the media id bound above.
+    persist_inspection(state, &item.id).await?;
+    Ok(item)
+}
+
+/// Bridge the orchestrator's in-memory inspection result into SQLite. Called
+/// after add/source-set and after every refresh so a torrent that becomes
+/// ready during polling is gated by the same stored probe state.
+async fn persist_inspection(state: &AppState, download_id: &str) -> Result<(), ApiError> {
+    if let Some(inspection) = state.acquisition.inspection_state(download_id) {
+        let detail = (inspection != InspectionState::Clean)
+            .then(|| format!("probe: {}", inspection.as_str()));
+        verify_repo()
+            .await?
+            .set_verification_state(download_id, inspection.as_str(), detail.as_deref())
+            .await?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -259,6 +364,53 @@ async fn imdb_lookup(
     encode(lookup_display(&state, &args.media_id).await)
 }
 
+/// The host resolves media ids to host paths; this boundary accepts only a
+/// short, path-free identifier. It never accepts a path or a scanner detail.
+fn validate_defender_media_id(media_id: &str) -> Result<(), ApiError> {
+    if media_id.trim().is_empty()
+        || media_id.len() > 256
+        || media_id.chars().any(char::is_control)
+        || media_id.chars().any(|c| matches!(c, '/' | '\\' | ':'))
+    {
+        return Err(cleanup_invalid("A valid mediaId is required."));
+    }
+    Ok(())
+}
+
+/// Read the stored Defender gate for the Windows host. `state: null` means a
+/// library import with no download row, which needs no scan.
+async fn defender_state(
+    State(_state): State<AppState>,
+    ApiJson(args): ApiJson<DefenderQueryArgs>,
+) -> Result<Json<Value>, ApiError> {
+    validate_defender_media_id(&args.media_id)?;
+    let state = verify_repo()
+        .await?
+        .defender_state_for_media(&args.media_id)
+        .await?;
+    encode(serde_json::json!({ "state": state }))
+}
+
+/// Record the result of a host-side Windows Defender scan. The state is a
+/// closed enum spelling; no path, output text or arbitrary state is accepted.
+async fn defender_result(
+    State(_state): State<AppState>,
+    ApiJson(args): ApiJson<DefenderResultArgs>,
+) -> Result<Json<Value>, ApiError> {
+    validate_defender_media_id(&args.media_id)?;
+    if !matches!(
+        args.state.as_str(),
+        "clean" | "threat" | "unavailable" | "not_scanned"
+    ) {
+        return Err(cleanup_invalid("An unknown Defender state was rejected."));
+    }
+    verify_repo()
+        .await?
+        .set_defender_verification_for_media(&args.media_id, &args.state, None)
+        .await?;
+    Ok(Json(Value::Null))
+}
+
 fn map_error(error: AcquireError) -> ApiError {
     let code = match error {
         AcquireError::NotFound => AppErrorCode::NotFound,
@@ -318,19 +470,59 @@ async fn add(
     // download id (= torrent hash); the gate looks up by media_id, which stays
     // NULL until the per-episode source mapping (spec R-01 gate) is supplied.
     // Writing it now means no re-scan is needed when that mapping lands.
-    if let Some(inspection) = state.acquisition.inspection_state(&item.id) {
-        let detail = (inspection != InspectionState::Clean)
-            .then(|| format!("probe: {}", inspection.as_str()));
-        verify_repo()
-            .await?
-            .set_verification_state(&item.id, inspection.as_str(), detail.as_deref())
-            .await?;
-    }
+    persist_inspection(&state, &item.id).await?;
     encode(item)
 }
 
 async fn status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
-    encode(state.acquisition.status())
+    // qB's client is synchronous and bounded; keep it off the tokio workers.
+    // Without refresh the status route replayed the state captured at add
+    // time forever, so a completed torrent was never Ready or inspected.
+    let acquisition = state.acquisition.clone();
+    let names_acquisition = state.acquisition.clone();
+    let (items, file_names) = tokio::task::spawn_blocking(move || {
+        let items = acquisition.refresh();
+        // qB may not know member names at add time. Once ready, replace the
+        // placeholder path with the real container paths so the playback
+        // source lookup can resolve the file through the host mount map.
+        let file_names = items
+            .iter()
+            .filter(|item| item.state == DownloadState::Ready)
+            .filter_map(|item| {
+                names_acquisition
+                    .files(&item.torrent_hash)
+                    .ok()
+                    .filter(|files| !files.is_empty())
+                    .map(|files| (item.id.clone(), files))
+            })
+            .collect::<Vec<_>>();
+        (items, file_names)
+    })
+    .await
+    .map_err(|_| {
+        ApiError(AppError::new(
+            AppErrorCode::BackendUnreachable,
+            "The acquisition status task did not complete.",
+            true,
+        ))
+    })?;
+    for item in &items {
+        state.service.download_update(item).await?;
+        persist_inspection(&state, &item.id).await?;
+        if item.state == DownloadState::Ready {
+            if let Some(media_id) = &item.media_id {
+                verify_repo().await?.set_media_available(media_id).await?;
+            }
+        }
+    }
+    for (id, files) in file_names {
+        let paths = files
+            .iter()
+            .map(|name| format!("{SAVE_PATH}/{}", name.trim_start_matches('/')))
+            .collect::<Vec<_>>();
+        state.service.download_set_paths(&id, &paths).await?;
+    }
+    encode(items)
 }
 
 async fn remove(
@@ -338,6 +530,14 @@ async fn remove(
     ApiJson(args): ApiJson<RemoveArgs>,
 ) -> Result<Json<Value>, ApiError> {
     state.acquisition.remove(&args.id).map_err(map_error)?;
+    // Removing only from the in-memory qB tracker makes the task disappear
+    // until the next restart, when the persisted row is restored again.
+    // Delete the persisted acquisition row in the same operation.
+    state
+        .service
+        .download_remove(&args.id)
+        .await
+        .map_err(ApiError)?;
     Ok(Json(Value::Null))
 }
 
@@ -400,16 +600,30 @@ pub async fn inspect_and_record_with<R: ProbeRunner + Send + 'static>(
 
 /// Called by the host when a download is complete, before the item may play.
 async fn inspect(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     ApiJson(args): ApiJson<InspectArgs>,
 ) -> Result<Json<Value>, ApiError> {
-    if args.id.trim().is_empty() {
-        return Err(cleanup_invalid("id is required."));
+    let media_id = args.media_id.trim();
+    if media_id.is_empty() || media_id.contains('/') || media_id.contains('\\') {
+        return Err(cleanup_invalid("mediaId is required."));
     }
-    let repo = verify_repo().await?;
-    let result =
-        inspect_and_record_with(repo, DockerProbeRunner, &args.id, &args.container_path).await?;
-    Ok(Json(serde_json::json!({ "state": result.as_str() })))
+    let state_text = match args.state.as_str() {
+        "clean" | "suspicious" | "unavailable" => args.state.as_str(),
+        _ => return Err(cleanup_invalid("state is not recognised.")),
+    };
+    let item = state
+        .acquisition
+        .status()
+        .into_iter()
+        .find(|item| item.media_id.as_deref() == Some(media_id))
+        .ok_or_else(|| cleanup_invalid("No download is bound to this item."))?;
+    let detail = (state_text != "clean").then(|| format!("probe: {state_text}"));
+    verify_repo()
+        .await?
+        .set_verification_state(&item.id, state_text, detail.as_deref())
+        .await
+        .map_err(ApiError)?;
+    Ok(Json(serde_json::json!({ "state": state_text })))
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,8 +1376,8 @@ tt0111161\tR\n",
             "stable id uses the exact contract formula"
         );
 
-        // Repeating the pick returns the same id and leaves one, unavailable,
-        // file-less row.
+        // Repeating the pick returns the same id and leaves one, file-less row
+        // that is honestly reported as missing rather than available.
         let (status2, wire2) =
             post_signed(&router, "test-token", CATALOG_WANTED_ADD_PATH, body).await;
         assert_eq!(status2, axum::http::StatusCode::OK);
@@ -1180,7 +1394,7 @@ tt0111161\tR\n",
                 .fetch_one(&pool)
                 .await
                 .expect("read state");
-        assert_eq!(avail, "unavailable");
+        assert_eq!(avail, "missing-file");
         let files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE media_id = ?")
             .bind(&expected)
             .fetch_one(&pool)
@@ -1225,6 +1439,70 @@ tt0111161\tR\n",
             dots_wire["mediaId"],
             serde_json::json!(catalog_wanted_id(dots, Some(2024), "movie"))
         );
+
+        // The Defender gate travels through the same signed host boundary.
+        // No path is accepted: the host resolves the id locally and stores a
+        // closed state spelling that playback_start can enforce.
+        sqlx::query(
+            "INSERT INTO torrent_tasks \
+             (hash, magnet_or_source, state, progress, save_path, created_at, updated_at) \
+             VALUES ('h-def-gate', 'magnet:?xt=urn:btih:defgate', 'downloading', 0.5, \
+             '/downloads', '', '')",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert defender torrent task");
+        sqlx::query(
+            "INSERT INTO download_items \
+             (id, torrent_hash, media_id, file_path, state, created_at) \
+             VALUES ('d-def-gate', 'h-def-gate', ?, '/downloads/movie.mkv', 'downloading', '')",
+        )
+        .bind(&expected)
+        .execute(&pool)
+        .await
+        .expect("insert defender download row");
+
+        let (result_status, _) = post_signed(
+            &router,
+            "test-token",
+            DEFENDER_RESULT_PATH,
+            serde_json::json!({ "mediaId": expected, "state": "clean" }),
+        )
+        .await;
+        assert_eq!(result_status, axum::http::StatusCode::OK);
+        let (state_status, state_wire) = post_signed(
+            &router,
+            "test-token",
+            DEFENDER_STATE_PATH,
+            serde_json::json!({ "mediaId": expected }),
+        )
+        .await;
+        assert_eq!(state_status, axum::http::StatusCode::OK);
+        assert_eq!(state_wire["state"], serde_json::json!("clean"));
+
+        let (bad_state_status, _) = post_signed(
+            &router,
+            "test-token",
+            DEFENDER_RESULT_PATH,
+            serde_json::json!({ "mediaId": expected, "state": "definitely-clean" }),
+        )
+        .await;
+        assert_eq!(
+            bad_state_status,
+            axum::http::StatusCode::BAD_REQUEST,
+            "only the closed Defender state set may be stored"
+        );
+
+        // The probe result travels through the same closed boundary: only the
+        // three known states, and never a path-like media id, may be stored.
+        for bad in [
+            serde_json::json!({ "mediaId": expected, "state": "definitely-clean" }),
+            serde_json::json!({ "mediaId": "../etc/passwd", "state": "clean" }),
+            serde_json::json!({ "mediaId": "C:\\movies\\film", "state": "clean" }),
+        ] {
+            let (status, _) = post_signed(&router, "test-token", INSPECT_PATH, bad).await;
+            assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+        }
 
         // Bad kind and hostile/path-like titles are refused at the boundary.
         for bad in [

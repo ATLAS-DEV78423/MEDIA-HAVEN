@@ -1120,3 +1120,76 @@ async fn media_source_path_returns_stored_path_and_fails_closed() {
         None
     );
 }
+
+/// An acquired download has no `media_files` row — the scanner only writes
+/// library roots — but the item still has a container path on its download
+/// row (`/downloads/<name>`, ADR-0018). Playback must resolve it through the
+/// same fallback, or a confirmed, downloaded source can never play.
+#[tokio::test]
+async fn media_source_path_resolves_an_acquired_download() {
+    let fixture = Fixture::new().await;
+    fixture
+        .repo
+        .wanted_add("Iron Man", Some(2008), "movie", "w1")
+        .await
+        .expect("wanted");
+    let item = app_core::domain::DownloadItem {
+        id: "hash-1".to_string(),
+        torrent_hash: "HASH1".to_string(),
+        media_id: Some("w1".to_string()),
+        state: DownloadState::Ready,
+        progress: 1.0,
+    };
+    fixture
+        .repo
+        .download_add(
+            &item,
+            "/downloads/Iron.Man.2008.mkv",
+            "magnet:?xt=urn:btih:HASH1",
+            "/downloads",
+        )
+        .await
+        .expect("download row");
+
+    assert_eq!(
+        fixture.repo.media_source_path("w1").await.expect("source"),
+        Some("/downloads/Iron.Man.2008.mkv".to_string())
+    );
+
+    // A library-scan row still wins when both exist: it is the scanned,
+    // verified copy the user imported themselves.
+    let root = fixture
+        .repo
+        .root_add("Movies", "/tmp/r")
+        .await
+        .expect("root");
+    let scanned = MediaUpsert {
+        metadata: None,
+        id: "w1".to_string(),
+        kind: MediaKind::Movie,
+        title: "Iron Man".to_string(),
+        root_id: None,
+        path: Some("/media/root-0/movies/iron.man.mkv".to_string()),
+        size_bytes: Some(10),
+        hash: Some("h".to_string()),
+    };
+    fixture
+        .repo
+        .media_replace_for_root(&root.id, &[scanned])
+        .await
+        .expect("scan");
+    assert_eq!(
+        fixture.repo.media_source_path("w1").await.expect("source"),
+        Some("/media/root-0/movies/iron.man.mkv".to_string())
+    );
+
+    // An unknown id still fails closed.
+    assert_eq!(
+        fixture
+            .repo
+            .media_source_path("unknown")
+            .await
+            .expect("unknown"),
+        None
+    );
+}

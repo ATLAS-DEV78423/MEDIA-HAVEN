@@ -19,9 +19,10 @@ use crate::qbittorrent::{QbClient, TorrentApi};
 /// The host directory behind it is resolved by the A9 mount map, never here.
 pub const SAVE_PATH: &str = "/downloads";
 
-/// Closed cap on a source string. Magnets with several trackers fit comfortably;
-/// anything larger is rejected rather than buffered.
-const MAX_SOURCE_LEN: usize = 2048;
+/// Closed cap on a source string. Real magnets with several trackers are
+/// ~2.2k characters, so 2048 rejected valid operator sources; anything larger
+/// than 8192 is still rejected rather than buffered.
+const MAX_SOURCE_LEN: usize = 8192;
 const MAGNET_PREFIX: &str = "magnet:?xt=urn:btih:";
 const TORRENT_SUFFIX: &str = ".torrent";
 
@@ -87,6 +88,10 @@ pub trait DownloadStore {
     fn download_insert(&self, item: &DownloadItem, source: &str);
     fn download_status(&self, id: &str) -> Option<DownloadItem>;
     fn download_list(&self) -> Vec<DownloadItem>;
+    /// Replace one tracked item's state/progress. Default no-op keeps other
+    /// stores compiling; the in-memory store implements it so a status poll
+    /// can reflect the engine's real progress.
+    fn download_update(&self, _item: &DownloadItem) {}
     fn download_remove(&self, id: &str);
     /// Completion-path inspection result. Default no-op keeps other stores
     /// compiling; the in-memory store records it so the gate can read it.
@@ -147,6 +152,15 @@ impl DownloadStore for InMemoryDownloadStore {
             .iter()
             .map(|entry| entry.item.clone())
             .collect()
+    }
+
+    fn download_update(&self, item: &DownloadItem) {
+        let mut stored = self.stored.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(entry) = stored.iter_mut().find(|entry| entry.item.id == item.id) {
+            entry.item.state = item.state;
+            entry.item.progress = item.progress;
+            entry.item.media_id = item.media_id.clone();
+        }
     }
 
     fn download_remove(&self, id: &str) {
@@ -244,9 +258,27 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
     /// Add a user-supplied source once. A repeat of the same source returns the
     /// stored item without calling `TorrentApi::add` again (spec R-11).
     pub fn acquire(&self, raw: &str) -> Result<DownloadItem, AcquireError> {
+        self.acquire_for(raw, None)
+    }
+
+    /// Add a source and bind it to a library item.
+    ///
+    /// The media id is attached to the returned item so the caller can persist
+    /// the download row against the item it was confirmed for (R-01). The
+    /// in-memory store keeps the *unbound* item: the same source may later be
+    /// confirmed for a second item, and the store's source→item map must stay
+    /// one-to-one (spec R-11).
+    pub fn acquire_for(
+        &self,
+        raw: &str,
+        media_id: Option<&str>,
+    ) -> Result<DownloadItem, AcquireError> {
         let source = validate_source(raw)?;
         if let Some(existing) = self.store.download_exists(&source) {
-            return Ok(existing);
+            return Ok(DownloadItem {
+                media_id: media_id.map(str::to_string).or(existing.media_id),
+                ..existing
+            });
         }
         let hash = self
             .api
@@ -256,13 +288,19 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
         let item = DownloadItem {
             id: hash.clone(),
             torrent_hash: hash,
-            media_id: None,
+            media_id: media_id.map(str::to_string),
             state: map_state(&status.state),
             progress: status.progress,
         };
         self.store.download_insert(&item, &source);
         self.inspect_if_ready(&item);
         Ok(item)
+    }
+
+    /// Rebuild the in-memory tracker from a persisted row after a core restart.
+    /// No qB call is made: the next status poll reconciles live state.
+    pub fn restore(&self, item: DownloadItem, source: &str) {
+        self.store.download_insert(&item, source);
     }
 
     /// Host-internal container file names for a torrent. Used by `core` to
@@ -273,6 +311,32 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
 
     /// All tracked downloads (path-free identities only).
     pub fn status(&self) -> Vec<DownloadItem> {
+        self.store.download_list()
+    }
+
+    /// Re-read every tracked download's state from the engine and update the
+    /// store. Without this a download's state and progress are frozen at the
+    /// values captured when it was added — the UI shows "Downloading 0%" for
+    /// ever and a completed torrent is never seen as ready.
+    ///
+    /// Returns the refreshed list. A per-item status failure leaves that item
+    /// as stored: one unreachable torrent must not wipe the tracker's state.
+    pub fn refresh(&self) -> Vec<DownloadItem> {
+        for item in self.store.download_list() {
+            if let Ok(status) = self.api.status(&item.torrent_hash) {
+                let mut updated = item.clone();
+                updated.state = map_state(&status.state);
+                updated.progress = status.progress;
+                if updated.state != item.state
+                    || (updated.progress - item.progress).abs() > f64::EPSILON
+                {
+                    self.store.download_update(&updated);
+                    if updated.state == DownloadState::Ready && item.state != DownloadState::Ready {
+                        self.inspect_if_ready(&updated);
+                    }
+                }
+            }
+        }
         self.store.download_list()
     }
 
@@ -333,6 +397,26 @@ impl AcquisitionState {
         self.with(|orchestrator| orchestrator.acquire(raw))
     }
 
+    /// Acquire a source bound to a library item (R-01). The item id lets the
+    /// caller persist the download row against the item the operator confirmed
+    /// it for, which is what makes the file playable for that item.
+    pub fn acquire_for(
+        &self,
+        raw: &str,
+        media_id: Option<&str>,
+    ) -> Result<DownloadItem, AcquireError> {
+        self.with(|orchestrator| orchestrator.acquire_for(raw, media_id))
+    }
+
+    /// Restore one persisted acquisition row. A restart must not make tracked
+    /// downloads disappear from status/refresh until they are re-added.
+    pub fn restore(&self, item: DownloadItem, source: &str) {
+        let _ = self.with(|orchestrator| {
+            orchestrator.restore(item.clone(), source);
+            Ok(())
+        });
+    }
+
     /// Inspection result computed for `id` on the completion path. Used by core
     /// to persist it into SQLite so the playability gate can read it.
     pub fn inspection_state(&self, id: &str) -> Option<InspectionState> {
@@ -355,6 +439,17 @@ impl AcquisitionState {
             .unwrap_or_default()
     }
 
+    /// Re-read every tracked download's state from the engine. Returns the
+    /// refreshed list. Errors are swallowed by the orchestrator's per-item
+    /// handling: one unreachable torrent must not wipe the tracker's state.
+    pub fn refresh(&self) -> Vec<DownloadItem> {
+        self.orchestrator
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|orchestrator| orchestrator.refresh()))
+            .unwrap_or_default()
+    }
+
     pub fn remove(&self, id: &str) -> Result<(), AcquireError> {
         let guard = self
             .orchestrator
@@ -372,8 +467,9 @@ impl Default for AcquisitionState {
 
 /// Map qBittorrent's own state strings to the closed renderer-facing state.
 fn map_state(state: &str) -> DownloadState {
-    match state.to_ascii_lowercase().as_str() {
-        "completed" | "uploading" | "seeding" | "forced up" | "stalled up" => DownloadState::Ready,
+    // qB emits both "stalled up" in docs and "stalledUP" on the wire.
+    match state.to_ascii_lowercase().replace(' ', "").as_str() {
+        "completed" | "uploading" | "seeding" | "forcedup" | "stalledup" => DownloadState::Ready,
         "error" | "missingfiles" => DownloadState::Error,
         _ => DownloadState::Downloading,
     }
@@ -381,7 +477,8 @@ fn map_state(state: &str) -> DownloadState {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use crate::qbittorrent::{QbError, TorrentStatus};
 
@@ -481,6 +578,16 @@ mod tests {
     #[test]
     fn validation_accepts_magnets_and_bare_torrent_names() {
         assert_eq!(validate_source(MAGNET), Ok(MAGNET.to_string()));
+        let long_magnet = format!("{}&tr={}", MAGNET, "x".repeat(2200));
+        assert!(
+            long_magnet.len() > 2048 && long_magnet.len() <= MAX_SOURCE_LEN,
+            "the fixture must reproduce a real multi-tracker magnet"
+        );
+        assert_eq!(
+            validate_source(&long_magnet),
+            Ok(long_magnet.clone()),
+            "a real-world magnet must not be rejected at the trust boundary"
+        );
         assert_eq!(
             validate_source("  episode.torrent  "),
             Ok("episode.torrent".to_string())
@@ -489,6 +596,24 @@ mod tests {
             validate_source("S01E02.TORRENT"),
             Ok("S01E02.TORRENT".to_string())
         );
+    }
+
+    #[test]
+    fn restored_persisted_rows_are_visible_without_a_backend_call() {
+        let orchestrator = Orchestrator::new(FakeApi::default(), InMemoryDownloadStore::default());
+        let item = DownloadItem {
+            id: "restored".to_string(),
+            torrent_hash: "restored".to_string(),
+            media_id: Some("m1".to_string()),
+            state: DownloadState::Ready,
+            progress: 1.0,
+        };
+        orchestrator.restore(item.clone(), MAGNET);
+        let restored = orchestrator.status();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, item.id);
+        assert_eq!(restored[0].media_id, item.media_id);
+        assert_eq!(restored[0].state, item.state);
     }
 
     #[test]
@@ -501,6 +626,95 @@ mod tests {
             AcquireError::InvalidSource
         );
         assert!(orchestrator.status().is_empty());
+    }
+
+    /// A torrent that finishes *after* it was added: the engine reports
+    /// "downloading" at acquire time and "completed" on the next poll.
+    struct CompletingApi {
+        complete: Arc<AtomicBool>,
+    }
+
+    impl TorrentApi for CompletingApi {
+        fn add(&self, _source: &str, _save_path: &str) -> Result<String, QbError> {
+            Ok("hash-0".to_string())
+        }
+        fn status(&self, _hash: &str) -> Result<TorrentStatus, QbError> {
+            let done = self.complete.load(Ordering::SeqCst);
+            Ok(TorrentStatus {
+                hash: "hash-0".to_string(),
+                state: if done { "completed" } else { "downloading" }.to_string(),
+                progress: if done { 1.0 } else { 0.25 },
+            })
+        }
+        fn files(&self, _hash: &str) -> Result<Vec<String>, QbError> {
+            Ok(vec![])
+        }
+        fn remove(&self, _hash: &str, _delete_files: bool) -> Result<(), QbError> {
+            Ok(())
+        }
+    }
+
+    /// A download that completes after acquire must be *seen*: without a
+    /// refresh its state and progress are frozen at the acquire-time values
+    /// forever, so a finished torrent stays "Downloading 25%" and is never
+    /// inspected (never playable).
+    #[test]
+    fn refresh_follows_the_engine_state_and_inspects_a_newly_ready_download() {
+        let complete = Arc::new(AtomicBool::new(false));
+        let api = CompletingApi {
+            complete: complete.clone(),
+        };
+        let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default());
+
+        let item = orchestrator.acquire(MAGNET).unwrap();
+        assert_eq!(item.state, DownloadState::Downloading);
+        assert!(orchestrator.inspection_state(&item.id).is_none());
+
+        // No completion yet: the refresh must keep the stored state.
+        let refreshed = orchestrator.refresh();
+        assert_eq!(refreshed[0].state, DownloadState::Downloading);
+        assert!((refreshed[0].progress - 0.25).abs() < f64::EPSILON);
+        assert!(orchestrator.inspection_state(&item.id).is_none());
+
+        // The engine now reports the torrent complete. Refresh only polls
+        // `status()`, so the fake must be toggled rather than adding again.
+        complete.store(true, Ordering::SeqCst);
+        let refreshed = orchestrator.refresh();
+        assert_eq!(refreshed[0].state, DownloadState::Ready);
+        assert!((refreshed[0].progress - 1.0).abs() < f64::EPSILON);
+        // Ready ⇒ the completion-path inspection has run and was recorded.
+        assert_eq!(
+            orchestrator.inspection_state(&item.id),
+            Some(InspectionState::Unavailable),
+            "an empty file list fails closed (never a false Clean)"
+        );
+    }
+
+    #[test]
+    fn map_state_accepts_qb_camel_case_completion_states() {
+        for state in ["completed", "uploading", "seeding", "forcedUP", "stalledUP"] {
+            assert_eq!(map_state(state), DownloadState::Ready, "{state}");
+        }
+        for state in ["stalledDL", "downloading", "metaDL"] {
+            assert_eq!(map_state(state), DownloadState::Downloading, "{state}");
+        }
+    }
+
+    /// A source confirmed *for* an item must carry that item's id, so the
+    /// persisted download row ties the file to the item (R-01). The store's
+    /// source→item map stays one-to-one: the same source confirmed for a
+    /// second item re-binds, it does not fork the tracked download.
+    #[test]
+    fn acquire_for_binds_the_media_id_and_survives_a_second_bind() {
+        let api = FakeApi::default();
+        let orchestrator = Orchestrator::new(api, InMemoryDownloadStore::default());
+
+        let bound = orchestrator.acquire_for(MAGNET, Some("w1")).unwrap();
+        assert_eq!(bound.media_id.as_deref(), Some("w1"));
+
+        let rebound = orchestrator.acquire_for(MAGNET, Some("w2")).unwrap();
+        assert_eq!(rebound.id, bound.id, "the same source is one download");
+        assert_eq!(rebound.media_id.as_deref(), Some("w2"));
     }
 
     #[test]

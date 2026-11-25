@@ -62,6 +62,11 @@ export interface SourceSearchResult {
   setup_required?: boolean;
 }
 
+/** Confirming a source now starts acquisition; the id is path-free. */
+export interface SourceSetResult {
+  downloadId: string;
+}
+
 export interface CatalogItem {
   id: string;
   title: string;
@@ -157,9 +162,9 @@ export const api = {
       request: { mediaId, positionSeconds, durationSeconds },
     }),
 
-  /** Attach an operator-supplied source to one item (R-01 / ADR-0021). */
+  /** Attach an operator-supplied source to one item and start acquisition (R-01 / ADR-0021). */
   sourceSet: (mediaId: string, source: string) =>
-    call<null>("source_set", { media_id: mediaId, source }),
+    call<SourceSetResult>("source_set", { media_id: mediaId, source }),
 
   /** Ranked candidates from the operator's search endpoint (ADR-0024). */
   sourceSearch: (title: string, year: number | null) =>

@@ -105,6 +105,8 @@ pub fn probe_args(container_path: &str, host_root: &str) -> Vec<String> {
         "-v".to_string(),
         "error".to_string(),
         "-show_format".to_string(),
+        "-of".to_string(),
+        "json".to_string(),
         container_path.to_string(),
     ]
 }

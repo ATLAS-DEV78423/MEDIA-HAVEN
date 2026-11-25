@@ -66,6 +66,15 @@ pub trait LibraryRepository: Send + Sync {
         save_path: &str,
     ) -> Result<(), AppError>;
     async fn download_status(&self, id: &str) -> Result<Option<DownloadItem>, AppError>;
+    /// All persisted acquisition rows with their original operator source.
+    /// Used to rehydrate the in-memory tracker after a core restart.
+    async fn acquisition_rows(&self) -> Result<Vec<(DownloadItem, String)>, AppError>;
+    /// Persist engine-reported progress/state. Playback lifecycle states are
+    /// owned by the cleanup worker, never by this transport-level refresh.
+    async fn download_update(&self, item: &DownloadItem) -> Result<(), AppError>;
+    /// Replace placeholder/auto-created file paths once the engine reports the
+    /// real names. Manual episode mappings are never removed.
+    async fn download_set_paths(&self, id: &str, paths: &[String]) -> Result<(), AppError>;
     async fn download_remove(&self, id: &str) -> Result<(), AppError>;
     async fn prefetch_upsert(&self, entry: &PrefetchEntry) -> Result<(), AppError>;
     async fn cleanup_eligible(&self) -> Result<Vec<CleanupEntry>, AppError>;

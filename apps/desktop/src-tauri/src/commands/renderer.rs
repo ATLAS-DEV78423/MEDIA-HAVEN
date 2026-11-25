@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use app_core::domain::AppErrorCode;
+use media_acquisition::{defender_scan, inspect_with_probe};
 use mediahaven_contract::{sign as sign_request, COMMANDS};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -253,6 +254,44 @@ fn get_source(media_id: &str) -> Result<Option<String>, CommandError> {
     let body: Value = serde_json::from_slice(&raw[split + 4..])
         .map_err(|_| CommandError::new(AppErrorCode::Internal))?;
     Ok(body.get("path").and_then(Value::as_str).map(str::to_string))
+}
+
+/// Read the stored Defender gate for a media id. `None` means a library
+/// import (no download row), which does not need a host scan.
+fn defender_state_for(media_id: &str) -> Result<Option<String>, CommandError> {
+    let value = post_internal("host/defender_state", json!({ "mediaId": media_id }))?;
+    parse_defender_state(&value)
+}
+
+/// Keep the wire shape at the host/backend boundary closed. An unknown shape
+/// fails to Internal; it is never treated as a clean scan.
+fn parse_defender_state(value: &Value) -> Result<Option<String>, CommandError> {
+    match value.get("state") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(state)) => Ok(Some(state.clone())),
+        _ => Err(CommandError::new(AppErrorCode::Internal)),
+    }
+}
+
+/// Store only a closed Defender state spelling. No path or scanner output is
+/// sent back to the backend: the host keeps both strictly local.
+fn record_defender_state(media_id: &str, state: &str) -> Result<(), CommandError> {
+    post_internal(
+        "host/defender_result",
+        json!({ "mediaId": media_id, "state": state }),
+    )?;
+    Ok(())
+}
+
+/// The probe needs the host's Docker CLI, so it runs here, not in `core`.
+/// Only the closed state spelling goes back; no path or ffprobe output does.
+fn probe_and_record(media_id: &str, container_path: &str) -> Result<(), CommandError> {
+    let state = inspect_with_probe(container_path).as_str().to_string();
+    post_internal(
+        "host/acquisition_inspect",
+        json!({ "mediaId": media_id, "state": state }),
+    )?;
+    Ok(())
 }
 
 /// Persisted host directory behind the container's `/downloads` (ADR-0018,
@@ -744,9 +783,6 @@ pub fn playback_start(
     state: tauri::State<'_, PlayerState>,
     app: tauri::AppHandle,
 ) -> Result<Value, CommandError> {
-    // 1. The backend stays the authority on what to play. `PlaybackSession`
-    //    is display-only: no path and no token (ADR-0015).
-    let session = post("playback_start", json!({ "request": request }))?;
     let media_id = request
         .get("mediaId")
         .and_then(Value::as_str)
@@ -757,15 +793,40 @@ pub fn playback_start(
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
 
-    // 2. Host-only: container path -> A9 mount map -> host file -> mpv. The
-    //    backend already marked this media as the live session; if any host
-    //    step fails below, release that gate or cleanup stays blocked until
-    //    restart (finding 6). The original error is preserved.
+    // 1. Host-only resolution: container path -> A9 mount map -> host file.
+    //    This must happen before the backend play gate, because Windows
+    //    Defender can only scan the real host path on this machine.
+    let container_path = get_source(&media_id)?.ok_or_else(CommandError::source_unavailable)?;
+    let host_map = load_host_path_map()?;
+    let host_path = resolve_for_media(&host_map, &container_path)
+        .map_err(|_| CommandError::source_unavailable())?;
+
+    // 2. A download row with a non-clean Defender state needs one host-side
+    //    scan. `None` means a library import, which has no Defender row and no
+    //    acquisition gate. The result is stored by closed state spelling; no
+    //    path or scanner output returns to the backend. The backend remains
+    //    the authority: it re-checks the stored gate below.
+    if let Some(stored) = defender_state_for(&media_id)? {
+        // The probe is a download-only gate. `defender_state_for` returning
+        // Some means a download row exists, so a library import is skipped.
+        probe_and_record(&media_id, &container_path)?;
+        if stored != "clean" {
+            let host_path_text = host_path
+                .to_str()
+                .ok_or_else(|| CommandError::new(AppErrorCode::InvalidRequest))?;
+            let scanned = defender_scan(host_path_text);
+            record_defender_state(&media_id, scanned.as_str())?;
+        }
+    }
+
+    // 3. The backend stays the authority on what to play. `PlaybackSession`
+    //    is display-only: no path and no token (ADR-0015).
+    let session = post("playback_start", json!({ "request": request }))?;
+
+    // 4. The backend already marked this media as the live session; if any
+    //    host step fails below, release that gate or cleanup stays blocked
+    //    until restart (finding 6). The original error is preserved.
     let started = (|| -> Result<(), CommandError> {
-        let container_path = get_source(&media_id)?.ok_or_else(CommandError::source_unavailable)?;
-        let host_map = load_host_path_map()?;
-        let host_path = resolve_for_media(&host_map, &container_path)
-            .map_err(|_| CommandError::source_unavailable())?;
         (*state)
             .open_media(&host_path, start)
             .map_err(|error| match error {
@@ -882,6 +943,24 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::thread;
+
+    #[test]
+    fn defender_state_wire_shape_is_closed() {
+        assert_eq!(
+            parse_defender_state(&serde_json::json!({ "state": "clean" })).unwrap(),
+            Some("clean".to_string())
+        );
+        assert_eq!(
+            parse_defender_state(&serde_json::json!({ "state": null })).unwrap(),
+            None,
+            "a library import has no Defender row"
+        );
+        assert_eq!(parse_defender_state(&serde_json::json!({})).unwrap(), None);
+        assert!(
+            parse_defender_state(&serde_json::json!({ "state": 1 })).is_err(),
+            "an unexpected wire shape must never be read as a clean scan"
+        );
+    }
 
     /// A loopback stub verifies the signed request and answers twice: a real
     /// JSON body, then an error whose body must not leak to the renderer.

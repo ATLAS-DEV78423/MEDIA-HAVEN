@@ -40,6 +40,12 @@ impl AppState {
         }
     }
 
+    /// Replace the empty tracker with rows restored from SQLite at startup.
+    pub fn with_acquisition(mut self, acquisition: Arc<AcquisitionState>) -> Self {
+        self.acquisition = acquisition;
+        self
+    }
+
     /// Attach a configured provider. Test seam: proves the host route works
     /// with real TSV files without touching the process environment.
     pub fn with_imdb(mut self, provider: ImdbProvider) -> Self {

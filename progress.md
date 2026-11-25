@@ -2,10 +2,194 @@
 
 ## Last updated
 
-2026-11-24 (human override accepted: ADR-0024 source discovery + opt-in TMDB
-catalog now in progress). The newest dated entry is first; earlier sections are
-retained as history and are explicitly superseded where they disagree with it.
-See `roadmap.md` for sequencing and `CHANGELOG.md` for a feature summary.
+2026-11-24 (full catalog→acquisition→playback QA pass; ADR-0024 source
+discovery + opt-in TMDB catalog still in progress). The newest dated entry is
+first; earlier sections are retained as history and are explicitly superseded
+where they disagree with it. See `roadmap.md` for sequencing and `CHANGELOG.md`
+for a feature summary.
+
+## 2026-11-24 — live magnet → playback chain closed; five more defects fixed
+
+By explicit human choice ("Supply a lawful magnet", then "Approve both"), a
+real operator-supplied magnet was run through the full chain on the live host.
+This entry supersedes the previous entry's "real E2E NOT RUN" statement.
+
+**Observed live (not inferred):**
+
+- `catalog_wanted_add` created `catalog-series-de6e8643ef7d341629b11966ee109825`;
+  `source_set` accepted the magnet and returned a `downloadId`. qB downloaded
+  the real 1 467 914 957-byte MKV; signed `acquisition_status` showed 0% → 100%.
+- qB's own `torrents/info` reported `"state":"stalledUP"`. The state mapper only
+  knew `"stalled up"`, so `core` kept the item at `downloading` with a
+  `/downloads/<hash>` placeholder path forever (D19). Fixed by normalising
+  qB's camelCase spellings; after redeploy the item reported `ready` and
+  `playback_source` returned the real `/downloads/<filename>` path.
+- `MpCmdRun.exe` rejected the production `-ScanFile` flag with a usage dump;
+  the documented `-Scan -ScanType 3 -File` form returned exit 0 and
+  *"found no threats"* on the real file (D21). Fixed with an argv regression
+  test.
+- ffprobe was invoked without `-of json`, so clean media produced `[FORMAT]…`
+  text and always failed closed; with `-of json` it produced a parseable
+  `"format"` object (D22). Fixed and the existing docker-args test updated.
+- `/host/acquisition_inspect` ran `DockerProbeRunner` (which shells out to
+  `docker`) **inside `core`**, which has no Docker CLI/socket; it also recorded
+  by download id while the play gate reads by media id (D20). Reworked to
+  accept a closed `{mediaId, state}` spelling, with the probe moved to the
+  Windows host in `renderer.rs::playback_start` beside the Defender scan. The
+  backend gate stays authoritative; unknown states and path-like ids are
+  rejected. Tests added.
+- A wanted catalog item stayed `availability_state='missing-file'` after its
+  download became ready, so `playback_start` returned `media_missing` even
+  with both gates clean (D23). Fixed: the ready path now marks the bound media
+  id available without fabricating a `media_files` row; persistence test added.
+- Final live result: with probe and Defender states clean,
+  `POST /playback_start` returned HTTP 200 with a session for "Firefly Wedding".
+  A direct mpv launch of the resolved host file stayed alive for 6 s with
+  window title `Firefly Wedding - S01E05 - Hurt - mpv`, proving real decode.
+  The mpv process was stopped afterwards; no source media was touched.
+
+**Deployment:** `mediahaven-core:local` was rebuilt twice from
+`infrastructure/containers/Dockerfile.core` and the container recreated twice,
+preserving the three networks, loopback port, user, read-only rootfs, tmpfs,
+env keys and all five mounts. Rollback images `:pre-d20` / `:pre-d23` and
+containers `mediahaven-core-pre-d20` / `mediahaven-core-pre-d23` were kept.
+
+**Gates (observed):** `cargo fmt --all -- --check` exit 0; `git diff --check`
+exit 0 (CRLF warning on `progress.md` only); `cargo clippy --workspace
+--all-targets -- -D warnings` exit 0; `cargo test --workspace` exit 0 with every
+suite `ok` (2 pre-existing ignored tests). Each fix has a regression test.
+
+**NOT RUN / honest limits:** the renderer's new host step was compiled and
+unit-tested, but the Tauri app UI was not relaunched, so the in-app WebView
+click path and z-order were not re-exercised; the probe, Defender scan and mpv
+launch were performed manually on the host and their closed results recorded
+through the signed routes. No second-machine LAN check, no large-library
+benchmark and no live Prowlarr/TMDB call were repeated. The downloaded file
+(1.47 GB) remains in the acquisition root; it was not deleted.
+
+**Uncommitted:** the earlier QA files plus `crates/acquisition/src/orchestrator.rs`,
+`crates/acquisition/src/defender.rs`, `crates/acquisition/src/inspection.rs`,
+`crates/acquisition/tests/inspection.rs`, `crates/core/src/acquisition.rs`,
+`crates/persistence/src/sqlite/library_repo.rs`. No commit; no checkpoint
+passed. **Safest next action:** relaunch the installed desktop app against the
+new core and click through Details → Find sources → Confirm → Play to verify
+the UI path, then obtain human CP review.
+
+## 2026-11-24 — full QA pass: catalog → acquisition → playback chain
+
+The user reported that posters/Play buttons did not load a movie, anime or TV
+episode, that a confirmed magnet was never acted on, and asked for every
+feature to be tested individually and as one chain. Full evidence is in
+`docs/testing/qa-2026-11-24.md`; this is the handover summary.
+
+**What was observed, not assumed:**
+
+- The running `mediahaven-core:local` image was 23 h old and predated
+  `catalog_wanted_add`; every poster click 404'd (D1). The image was rebuilt and
+  the container recreated on `mediahaven_edge`, `mediahaven_internal` and
+  `mediahaven_acquire`. `catalog_wanted_add` then returned a real `mediaId`.
+- qB auth was **not** the blocker: `core → qbittorrent:8080` authenticates with
+  204. The earlier 401 came from calling the published host port with that
+  port in the `Host` header (D5). No password change was made.
+- `library_home` measured 4200–5936 ms on the stale image and 754–1019 ms
+  after the rebuild. The N+1 season query is still present and is **not**
+  claimed fixed (D6).
+- Fourteen defects were recorded (D1–D14). The critical ones were: `source_set`
+  never started a download (D2); acquired files could never resolve through
+  `media_source_path` (D3); status was frozen at add time (D11); the Defender
+  gate had no production caller (D12); placeholder paths were never reconciled
+  (D13); and three validators still capped real 2.2k-character magnets at
+  2048 despite an earlier fix being recorded (D14).
+- A signed live harness was added at `scripts/mh-live.sh`; it reads the DPAPI
+  token via PowerShell, signs HMAC-SHA256 requests and never prints the token.
+
+**Fixes applied, with a regression test for each code fix:**
+
+- `source_set` now persists the operator source and starts acquisition bound
+  to the `mediaId`, returning `{downloadId}`; a repeat source rebinds instead
+  of creating a second download (`crates/core/src/acquisition.rs`,
+  `crates/acquisition/src/orchestrator.rs`).
+- `media_source_path()` prefers scanned `media_files.path` but falls back to
+  `download_items.file_path`; wanted rows fail closed as `missing-file`;
+  `downloads()` uses the operator setting and real persisted rows
+  (`crates/persistence/src/sqlite/library_repo.rs`).
+- New repository port methods `download_update()` and `download_set_paths()`
+  let a qB status poll persist real progress and replace placeholder paths
+  without clobbering cleanup-owned lifecycle states or manual episode mappings
+  (`crates/app-core/...`, `crates/persistence/...`).
+- Signed host-only `/host/defender_state` and `/host/defender_result` routes
+  plus a pre-play host scan in `playback_start` close D12. Unknown state
+  spellings and path-like ids are rejected; library imports skip the scan.
+- The 8192 source cap is now consistent in the acquisition orchestrator,
+  app-core domain validator and Details UI. The unrelated 2048 AniList poster
+  URL cap was deliberately left alone.
+- Details now says "Download started — see Downloads" on the confirmed
+  shortlist row and links to Downloads after a manual save. It does not claim
+  a live percentage; Downloads remains the authoritative progress view.
+- Discover's in-tree Retry action and tests were retained.
+
+**Gates (observed after the final D10–D18 edits):**
+
+- `cargo fmt --all -- --check`: exit 0; `git diff --check`: exit 0.
+- `cargo clippy --workspace --all-targets -- -D warnings`: exit 0 when run
+  alone.
+- `CARGO_TARGET_DIR=target/qa-full cargo test --workspace`: every Rust suite
+  reported `ok`; 2 pre-existing ignored tests. The wrapper then printed a
+  sandbox block for `wsl.exe` after all suites finished, so this is recorded
+  as "all suites `ok`", **not** an unqualified wrapper PASS. The block was not
+  retried or bypassed.
+- Frontend: typecheck, ESLint, Vitest **89/89 across 18 files**, token check
+  (86 files, 0 violations), production build (101 modules), bundle check: all
+  passed.
+- Targeted re-runs: Details 7/7; `qb_fake.rs` 6/6; acquisition persistence 8/8;
+  core lib 10/10; targeted acquisition/app-core suites all `ok`.
+
+**NOT RUN / open:**
+
+- No lawful source was available, so real magnet → qB → probe → Defender →
+  mpv playback, a real Defender scan, live probe inspection, live Torznab/TMDB
+  calls, browser visual QA and second-machine LAN checks remain **NOT RUN**.
+- The latest code is **not redeployed**. Rebuilding/recreating
+  `mediahaven-core` needs explicit consent under `AGENTS.md`, so D11–D14 are
+  proven by tests only until that approval is given.
+- Desktop installer/reinstall for the latest D10/D14 edits was not run; only
+  the frontend production build was checked.
+- `library_home` N+1 is a documented large-library risk; no 10k benchmark was
+  run.
+
+**Live redeploy follow-up (D15–D18):** the user explicitly said "proceed
+please", so `mediahaven-core:local` was rebuilt and `mediahaven-core`
+recreated four times, preserving volumes, binds, networks, loopback port,
+user, read-only rootfs, tmpfs and env. Rollback images/containers were kept.
+Live signed checks found and closed four more defects: qB keep-alive responses
+made every client call wait ~9 s (D15); qB's 409 duplicate add was reported as
+503 (D16); acquisition rows disappeared from status after a restart (D17); and
+removal did not delete the persisted row (D18). After the fixes, a 2235-char
+synthetic magnet added in **545 ms**, a repeat add took **415 ms**, restored
+rows appeared after restart, and removal left status `[]` even after another
+restart. `healthz` stayed 200. No real payload was downloaded or played.
+
+**Uncommitted files:** `apps/desktop/src-tauri/src/commands/renderer.rs`,
+`apps/desktop/src/pages/Details/MediaDetailsPage.tsx`,
+`apps/desktop/src/pages/Details/MediaDetailsPage.test.tsx`,
+`apps/desktop/src/pages/Discover/DiscoverPage.tsx`,
+`apps/desktop/src/pages/Discover/DiscoverPage.test.tsx`,
+`apps/desktop/src/services/api.ts`,
+`crates/acquisition/src/orchestrator.rs`,
+`crates/app-core/src/application/library.rs`,
+`crates/app-core/src/domain/media.rs`,
+`crates/app-core/src/ports/library.rs`,
+`crates/core/src/acquisition.rs`,
+`crates/persistence/src/sqlite/library_repo.rs`,
+`crates/persistence/tests/acquisition.rs`,
+`crates/persistence/tests/repository.rs`,
+`docs/testing/e2e-2026-11-24.md`, `roadmap.md`, `progress.md`, plus new
+`docs/testing/qa-2026-11-24.md` and `scripts/mh-live.sh`. No commit was created.
+
+**Safest next action:** ask for explicit consent to rebuild/recreate
+`mediahaven-core` with the current code, then re-run the signed live checks
+(`catalog_wanted_add`, `source_set` → qB, `acquisition_status` refresh, Defender
+routes, `playback_source` path). Do not commit without separate permission.
 
 ## 2026-11-24 — human overrides project docs; source discovery + catalog approved
 

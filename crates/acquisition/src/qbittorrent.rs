@@ -142,29 +142,55 @@ fn exchange(
         .write_all(request.as_bytes())
         .map_err(|_| QbError::Transport)?;
 
-    let mut raw = Vec::new();
-    stream
-        .read_to_end(&mut raw)
-        .map_err(|_| QbError::Transport)?;
-    let split = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .ok_or(QbError::MalformedResponse)?;
-    let head = String::from_utf8_lossy(&raw[..split]);
+    // Read only the response head first. qB answers with `Connection:
+    // keep-alive` and a Content-Length; `read_to_end` would wait for qB to
+    // close the idle socket (~9 s here). Honour Content-Length and return as
+    // soon as the declared body is complete.
+    let mut head_bytes = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head_bytes.ends_with(b"\r\n\r\n") {
+        let read = stream.read(&mut byte).map_err(|_| QbError::Transport)?;
+        if read == 0 {
+            break;
+        }
+        head_bytes.push(byte[0]);
+    }
+    if !head_bytes.ends_with(b"\r\n\r\n") {
+        return Err(QbError::MalformedResponse);
+    }
+    let split = head_bytes.len() - 4;
+    let head = String::from_utf8_lossy(&head_bytes[..split]);
     let mut lines = head.lines();
     let status = lines
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|value| value.parse().ok())
         .ok_or(QbError::MalformedResponse)?;
-    let headers = lines
+    let headers: Vec<(String, String)> = lines
         .filter_map(|line| line.split_once(':'))
         .map(|(key, value)| (key.trim().to_string(), value.trim().to_string()))
         .collect();
+    let content_length = headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse::<usize>().ok());
+    let body = if let Some(length) = content_length {
+        let mut body = vec![0u8; length];
+        stream
+            .read_exact(&mut body)
+            .map_err(|_| QbError::Transport)?;
+        body
+    } else {
+        let mut body = Vec::new();
+        stream
+            .read_to_end(&mut body)
+            .map_err(|_| QbError::Transport)?;
+        body
+    };
     Ok(HttpResponse {
         status,
         headers,
-        body: raw[split + 4..].to_vec(),
+        body,
     })
 }
 
@@ -249,7 +275,14 @@ impl TorrentApi for QbClient {
         // hash, instead of relying on fragile exact magnet-URI equality.
         let before = self.hashes()?;
         let body = form(&[("urls", source), ("savepath", save_path)]);
-        self.api("POST", "/api/v2/torrents/add", Some(&body))?;
+        match self.api("POST", "/api/v2/torrents/add", Some(&body)) {
+            Ok(_) => {}
+            // qB returns 409 for a torrent it already holds. That is a
+            // successful idempotent add for our purposes: resolve the row
+            // from the info list below instead of reporting a backend failure.
+            Err(QbError::Api(409)) => {}
+            Err(error) => return Err(error),
+        }
         let after = self.hashes()?;
         let added: Vec<String> = after.difference(&before).cloned().collect();
         if added.len() == 1 {

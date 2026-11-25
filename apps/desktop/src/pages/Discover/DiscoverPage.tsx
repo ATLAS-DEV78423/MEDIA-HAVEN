@@ -46,6 +46,8 @@ export function DiscoverPage() {
   const [error, setError] = useState<string | null>(null);
   const [setupRequired, setSetupRequired] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [retrying, setRetrying] = useState(false);
   const searchSeq = useRef(0);
 
   useEffect(() => {
@@ -78,13 +80,16 @@ export function DiscoverPage() {
           if (!cancelled) setBrowseError(describeError(failure));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setRetrying(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [kind]);
+  }, [kind, retryNonce]);
 
   const search = useCallback(
     async (text: string) => {
@@ -181,6 +186,11 @@ export function DiscoverPage() {
         ? "Popular TV"
         : "Popular anime";
 
+  const retryBrowse = () => {
+    setRetrying(true);
+    setRetryNonce((nonce) => nonce + 1);
+  };
+
   const selectKind = (next: "movie" | "tv" | "anime") => {
     setKind(next);
     setQuery("");
@@ -252,7 +262,21 @@ export function DiscoverPage() {
           body="An operator must enable the TMDB opt-in and add an API key. No request was made."
         />
       ) : shownError ? (
-        <EmptyState title="The catalog is unavailable" body={shownError} />
+        <EmptyState
+          title="The catalog is unavailable"
+          body={shownError}
+          action={
+            <button
+              type="button"
+              className={buttonClass("solid")}
+              data-focusable="true"
+              disabled={retrying}
+              onClick={retryBrowse}
+            >
+              Retry
+            </button>
+          }
+        />
       ) : loading ? (
         <EmptyState
           title={results ? "Searching the catalog…" : "Loading the catalog…"}

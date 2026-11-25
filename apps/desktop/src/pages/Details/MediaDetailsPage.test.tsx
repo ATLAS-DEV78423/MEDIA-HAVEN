@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,7 +86,7 @@ beforeEach(() => {
       case "source_search":
         return searchResult;
       case "source_set":
-        return null;
+        return { downloadId: "d-started" };
       default:
         throw new Error(`unexpected command: ${command}`);
     }
@@ -138,8 +138,32 @@ describe("Details source field", () => {
         source: magnet,
       });
     });
-    expect(await screen.findByRole("status")).toHaveTextContent(/source saved/i);
+    expect(await screen.findByRole("status")).toHaveTextContent(/download started/i);
+    expect(
+      screen.getByRole("link", { name: /track progress in downloads/i }),
+    ).toHaveAttribute("href", "/downloads");
     expect(document.body.textContent).not.toContain("/downloads/");
+  });
+
+  it("accepts a real multi-tracker magnet longer than 2048 characters", async () => {
+    const user = userEvent.setup();
+    await mount();
+
+    const magnet = `magnet:?xt=urn:btih:ABC123&dn=ep&tr=${"x".repeat(2200)}`;
+    expect(magnet.length).toBeGreaterThan(2048);
+    fireEvent.change(screen.getByLabelText(/^source$/i), {
+      target: { value: magnet },
+    });
+    await user.click(screen.getByRole("button", { name: /save source/i }));
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("source_set", {
+        media_id: "m1",
+        source: magnet,
+      });
+    });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(await screen.findByRole("status")).toHaveTextContent(/download started/i);
   });
 });
 
@@ -171,7 +195,9 @@ describe("Details shortlist", () => {
         source: MAGNET,
       });
     });
-    expect(await screen.findByRole("status")).toHaveTextContent(/source saved/i);
+    expect(await screen.findByRole("status")).toHaveTextContent(/download started/i);
+    expect(within(row).getByText(/download started/i)).toBeTruthy();
+    expect(within(row).getByRole("button", { name: /confirmed/i })).toBeDisabled();
 
     // The chosen magnet carries a tracker credential; it goes to source_set
     // verbatim but is never painted into the renderer's DOM.

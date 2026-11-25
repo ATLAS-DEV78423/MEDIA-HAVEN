@@ -118,15 +118,16 @@ fn locate_mpcmdrun() -> Option<PathBuf> {
     None
 }
 
+/// This host's MpCmdRun accepts `-Scan`, not the older `-ScanFile` spelling.
+fn scan_args(host_path: &str) -> [&str; 5] {
+    ["-Scan", "-ScanType", "3", "-File", host_path]
+}
+
 fn run_scan(exe: &Path, host_path: &str, timeout: Duration) -> DefenderState {
     // Argument vector only — no shell, no concatenation, no execution of the
     // scanned file. `-ScanType 3` is Microsoft's "scan a specific file" mode.
     let mut child = match Command::new(exe)
-        .arg("-ScanFile")
-        .arg("-ScanType")
-        .arg("3")
-        .arg("-File")
-        .arg(host_path)
+        .args(scan_args(host_path))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -222,6 +223,15 @@ fn interpret(exit_code: Option<i32>, output: &[u8]) -> DefenderState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scan_args_use_the_supported_scan_flag() {
+        let args = scan_args("C:\\media\\file.mkv");
+        assert_eq!(
+            args,
+            ["-Scan", "-ScanType", "3", "-File", "C:\\media\\file.mkv"]
+        );
+    }
 
     #[test]
     fn interpret_only_clean_on_zero_exit_with_no_threat_signal() {

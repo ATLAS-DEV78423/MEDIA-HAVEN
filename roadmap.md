@@ -90,6 +90,12 @@ blocked, not passed. See ADR-0009.
   one requires a measurement or a human sign-off, not a document.
 - **Note:** a `[~]` marker means code or partial evidence exists, NOT that the
   acceptance criteria are met. `[x]` is reserved for checkpoint-verified tasks.
+- **QA 2026-11-24:** two passes found 23 defects (D1–D23), each code fix with a
+  regression test. Automated gates are green. The final pass ran a real
+  operator-supplied magnet through qB → ready → probe → Defender →
+  `playback_start` 200 → mpv decode; all stages observed live. The core image
+  was rebuilt and redeployed (rollback images/containers kept). No checkpoint
+  passed; the in-app UI click path was not re-exercised after the last rebuild.
 - **Evidence:** `progress.md` records the latest gates at HEAD `342addf`
   (documents only). The last code-verification wave was `9b706fb` — see the
   2026-11-21 entry in `progress.md`. Live engine, hardware, IMDb/OMDb, TMDB and
@@ -912,7 +918,7 @@ Purpose: video actually plays, and the app remembers where the user was.
 - **Tests:** Codec matrix replay as an automated or scripted suite; kill-file
   test; exit-leak test.
 - **Risks:** Engine update changing codec support; orphaned player processes.
-- **Status:** In progress — engine adapter wired into host + renderer with headless evidence (2026-11-20, ADR-0015). 2026-11-23: user-supplied mpv present; video embedded as a Win32 child HWND of the single `main` window via `--wid`, fail-closed when no surface, stopped on PlayerPage unmount. Throwaway `spikes/mpv-embed/` probe observed no visible second video window, resize following the surface rect, and no orphan on kill. Real-app WebView2 z-order/click-through, codec matrix and hardware-decode remain NOT RUN; no checkpoint passed by an agent. See `progress.md` and `docs/reference/mauflix-cross-reference.md`.
+- **Status:** In progress — engine adapter wired into host + renderer with headless evidence (2026-11-20, ADR-0015). 2026-11-23: user-supplied mpv present; video embedded as a Win32 child HWND of the single `main` window via `--wid`, fail-closed when no surface, stopped on PlayerPage unmount. Throwaway `spikes/mpv-embed/` probe observed no visible second video window, resize following the surface rect, and no orphan on kill. Real-app WebView2 z-order/click-through, codec matrix and hardware-decode remain NOT RUN; no checkpoint passed by an agent. 2026-11-24 QA also fixed acquired-file path resolution and the production Defender pre-play gate with regression tests; live real-file playback is still NOT RUN. See `progress.md` and `docs/reference/mauflix-cross-reference.md`.
 
 ### [ ] P3-02 — Implement playback controls and overlay
 
@@ -1288,9 +1294,10 @@ Purpose: the product becomes pleasant to use from a couch.
 - **Risks:** Provider terms or availability changes; direct artwork loads
   require the provider image host in CSP. AniList commercial use eligibility
   must be confirmed before a commercial release.
-- **Status:** In progress — implementation and fake-response tests exist;
-  focused gates pass. Full workspace checks and visual/runtime verification
-  remain open.
+- **Status:** In progress — implementation and fake-response tests exist. The
+  2026-11-24 QA pass ran the full Rust workspace and frontend gates green and
+  verified the local catalog→wanted→Details route live, but live TMDB/AniList
+  calls, browser visual QA and a 10k-item benchmark remain **NOT RUN**.
 
 ### [~] P4-05 — Validate readability and performance at TV distance
 
@@ -1574,7 +1581,7 @@ these is unresolved, stop before implementation.
 - **Risks:** Legal exposure; a leaked control API; a misconfiguration turning
   the app into a piracy front-end. This task requires human legal sign-off
   before implementation begins.
-- **Status:** [~] Reopened and implemented under ADR-0017/0018/0019 (human-accepted 2026-11-20) via the torrent-acquisition conversion plan, Tasks 1–7. Built: qBittorrent Docker sandbox on an egress `acquire` network with no published port, loopback-only WebUI client with secret-store credentials, named + signed host-internal acquisition routes, user-supplied magnet/`.torrent` Downloads UI, rolling two-episode buffer with 20 GiB cap, and coordinated cleanup of app-managed downloads only. Full gate green (fmt/clippy clean; 84 Rust passed/1 ignored, parity 24; 18 Vitest; frontend checks clean). Acceptance evidence: `docs/testing/acquisition-matrix.md`. **NOT RUN:** live authorized-torrent acquisition, real-media appearance/playback, live prefetch, live qB deletion, real retained-byte cap, and second-machine LAN non-reachability (no lawful source / human evidence gate). No checkpoint passed.
+- **Status:** [~] Reopened and implemented under ADR-0017/0018/0019 (human-accepted 2026-11-20) via the torrent-acquisition conversion plan, Tasks 1–7. Built: qBittorrent Docker sandbox on an egress `acquire` network with no published port, loopback-only WebUI client with secret-store credentials, named + signed host-internal acquisition routes, user-supplied magnet/`.torrent` Downloads UI, rolling two-episode buffer with 20 GiB cap, and coordinated cleanup of app-managed downloads only. Full gate green (fmt/clippy clean; 84 Rust passed/1 ignored, parity 24; 18 Vitest; frontend checks clean). Acceptance evidence: `docs/testing/acquisition-matrix.md`. **NOT RUN:** live authorized-torrent acquisition, real-media appearance/playback, live prefetch, live qB deletion, real retained-byte cap, and second-machine LAN non-reachability (no lawful source / human evidence gate). No checkpoint passed. **2026-11-24 QA:** closed the broken hand-off (D2/D3), frozen status, uncalled Defender gate, placeholder paths, false availability, disabled Downloads screen, 2048 magnet cap and missing Details confirmation with regression tests. Live redeploy then found and closed qB keep-alive latency, duplicate-add 503, restart state loss and non-persistent removal (D15–D18); synthetic live checks pass, but the real lawful-torrent chain remains **NOT RUN**.
 
 ### [ ] P6-03 — Verify workspace shutdown, limits, recovery and persistence
 
@@ -1841,7 +1848,7 @@ approved requirement and a spec update.
 | O-07 | Whether to reuse an existing Docker Desktop engine instead of a dedicated distro | **Decided 2026-11-18** — no reuse; the product ships its own dedicated distro | Isolation vs install friction | Detection still reported to the user, never silent | Before CP-0 |
 | O-08 | Installer signing certificate | **Decided 2026-11-20** — ship unsigned in v1, publish the SmartScreen caveat; a signed build needs a future human budget decision (ADR-0016) | Trust/SmartScreen | Document caveat at P7-03 | Before P7-01 |
 | O-09 | libmpv LGPL vs GPL build | **Decided 2026-11-18** — LGPL build (ADR-0002 acceptance record) | **Project licence compatibility** | Confirm the shipped artefact really is LGPL-configured | Before CP-0 |
-| O-10 | Source discovery with operator confirmation | **Accepted 2026-11-24 (ADR-0024)** by explicit human override of the project docs — host-side Torznab search → ranked top-N → user picks → existing `source_set`; no core/network/schema/gate change; supersedes ADR-0021's no-discovery clause and amends ADR-0018 §5 and AGENTS.md 'No bundled content sources' | One HTTP/Torznab client dependency approval; operator supplies endpoint/key; TMDB catalog via ADR-0023/P6-07 | Implementation 2026-11-24 (uncommitted; no checkpoint passed; final review APPROVED + polish fixes re-reviewed) | Done |
+| O-10 | Source discovery with operator confirmation | **Accepted 2026-11-24 (ADR-0024)** by explicit human override of the project docs — host-side Torznab search → ranked top-N → user picks → existing `source_set`; no core/network/schema/gate change; supersedes ADR-0021's no-discovery clause and amends ADR-0018 §5 and AGENTS.md 'No bundled content sources' | One HTTP/Torznab client dependency approval; operator supplies endpoint/key; TMDB catalog via ADR-0023/P6-07 | Implementation 2026-11-24 (uncommitted; no checkpoint passed; final review APPROVED + polish fixes re-reviewed). 2026-11-24 QA found the assumed existing `source_set`→qB→playback chain broken and repaired it in core/persistence/gates; the human decision scope is unchanged and live E2E remains NOT RUN. | Implementation done; live magnet→qB→probe→Defender→mpv E2E observed 2026-11-24 (in-app UI path not re-run) |
 
 **Rule:** an agent may propose options for any `O-*` item and must record the
 proposal in `docs/decisions/`. An agent may not mark one accepted. Only the

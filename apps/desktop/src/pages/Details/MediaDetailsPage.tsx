@@ -22,7 +22,9 @@ import styles from "./details.module.css";
 /* Mirrors the Rust trust boundary for R-01 (ADR-0021). The backend repeats
  * this validation; the UI only avoids sending a source it already knows is
  * invalid. Rejections never echo the input, so no path reaches the screen. */
-const MAX_SOURCE_LEN = 2048;
+// Real magnets with several tracker tiers are ~2.2k characters; the host and
+// domain validators use the same 8192 cap. Keep in step with those boundaries.
+const MAX_SOURCE_LEN = 8192;
 const MAGNET_PREFIX = "magnet:?xt=urn:btih:";
 
 function hasControl(value: string): boolean {
@@ -79,6 +81,7 @@ export function MediaDetailsPage() {
   >("idle");
   const [shortlistError, setShortlistError] = useState<string | null>(null);
   const [confirmingMagnet, setConfirmingMagnet] = useState<string | null>(null);
+  const [confirmedMagnet, setConfirmedMagnet] = useState<string | null>(null);
 
   const loadDetail = useCallback(async () => {
     if (!mediaId) return;
@@ -93,6 +96,7 @@ export function MediaDetailsPage() {
     setShortlistState("idle");
     setShortlistError(null);
     setConfirmingMagnet(null);
+    setConfirmedMagnet(null);
     try {
       setDetail(await api.detail(mediaId));
     } catch (error) {
@@ -119,10 +123,12 @@ export function MediaDetailsPage() {
     setSavingSource(true);
     try {
       await api.sourceSet(mediaId, source.trim());
+      setConfirmedMagnet(source.trim());
       setSourceSaved(true);
     } catch (error) {
       setSourceError(describeError(error));
       setSourceSaved(false);
+      setConfirmedMagnet(null);
     } finally {
       setSavingSource(false);
     }
@@ -154,11 +160,13 @@ export function MediaDetailsPage() {
       setConfirmingMagnet(magnet);
       try {
         await api.sourceSet(mediaId, magnet);
+        setConfirmedMagnet(magnet);
         setSourceSaved(true);
         setDetail(await api.detail(mediaId));
       } catch (error) {
         setSourceError(describeError(error));
         setSourceSaved(false);
+        setConfirmedMagnet(null);
       } finally {
         setConfirmingMagnet(null);
       }
@@ -423,13 +431,18 @@ export function MediaDetailsPage() {
                       {shortlistSize(candidate.sizeBytes)} · {candidate.seeders} seeders ·{" "}
                       {candidate.resolution} · {candidate.source}
                     </span>
+                    {confirmedMagnet === candidate.magnet ? (
+                      <span className={styles.sourceSaved}>
+                        Download started — see Downloads
+                      </span>
+                    ) : null}
                   </span>
                   <ActionButton
                     variant="glass"
                     onClick={() => void confirmSource(candidate.magnet)}
-                    disabled={confirmingMagnet !== null}
+                    disabled={confirmingMagnet !== null || confirmedMagnet === candidate.magnet}
                   >
-                    Confirm
+                    {confirmedMagnet === candidate.magnet ? "Confirmed" : "Confirm"}
                   </ActionButton>
                 </li>
               ))}
@@ -454,6 +467,7 @@ export function MediaDetailsPage() {
               onChange={(event) => {
                 setSource(event.target.value);
                 setSourceSaved(false);
+                setConfirmedMagnet(null);
               }}
               placeholder="magnet:?xt=urn:btih:… or episode.torrent"
               aria-invalid={sourceError !== null}
@@ -475,7 +489,7 @@ export function MediaDetailsPage() {
           ) : null}
           {sourceSaved ? (
             <p className={styles.sourceSaved} role="status">
-              Source saved for this item.
+              Download started. <Link to="/downloads">Track progress in Downloads</Link>.
             </p>
           ) : null}
         </section>

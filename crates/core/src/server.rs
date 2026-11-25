@@ -164,8 +164,15 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     if recovered > 0 {
         tracing::warn!(recovered, "marked interrupted library scans as errors");
     }
-    let state =
-        AppState::new(service, config.token).with_imdb(crate::state::imdb_provider_from_env());
+    // The qB tracker is in-memory; restore it from persisted rows so a core
+    // restart does not make existing downloads vanish from status/refresh.
+    let acquisition = media_acquisition::AcquisitionState::new();
+    for (item, source) in service.acquisition_rows().await? {
+        acquisition.restore(item, &source);
+    }
+    let state = AppState::new(service, config.token)
+        .with_acquisition(std::sync::Arc::new(acquisition))
+        .with_imdb(crate::state::imdb_provider_from_env());
 
     let app = build_router(state);
     let listener = tokio::net::TcpListener::bind(config.bind)

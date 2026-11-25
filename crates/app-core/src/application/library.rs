@@ -127,8 +127,19 @@ impl<R: LibraryRepository> LibraryService<R> {
             .download_add(item, file_path, source, save_path)
             .await
     }
+    /// Persisted acquisition rows plus their operator source, used to rebuild
+    /// the in-memory qB tracker after a core restart.
+    pub async fn acquisition_rows(&self) -> Result<Vec<(DownloadItem, String)>, AppError> {
+        self.repo.acquisition_rows().await
+    }
     pub async fn download_status(&self, id: &str) -> Result<Option<DownloadItem>, AppError> {
         self.repo.download_status(id).await
+    }
+    pub async fn download_update(&self, item: &DownloadItem) -> Result<(), AppError> {
+        self.repo.download_update(item).await
+    }
+    pub async fn download_set_paths(&self, id: &str, paths: &[String]) -> Result<(), AppError> {
+        self.repo.download_set_paths(id, paths).await
     }
     pub async fn download_remove(&self, id: &str) -> Result<(), AppError> {
         self.repo.download_remove(id).await

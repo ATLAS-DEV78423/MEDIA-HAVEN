@@ -391,4 +391,73 @@ describe("Discover catalog", () => {
     ).toBeInTheDocument();
     await waitFor(() => expect(tvAttempts).toBe(2), { timeout: 3000 });
   });
+
+  it("recovers from the unavailable state through the Retry action", async () => {
+    const user = userEvent.setup();
+    let browseAttempts = 0;
+    invoke = vi.fn(async (command: string) => {
+      if (command === "catalog_browse") {
+        browseAttempts += 1;
+        // The mount attempt and its single bounded retry both fail; the
+        // user-triggered attempt (third) succeeds.
+        if (browseAttempts <= 2) throw new Error("throttled");
+        return { items: MOVIES };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    window.__TAURI_INTERNALS__ = { invoke } as unknown as {
+      invoke: (cmd: string, args?: Record<string, unknown> | undefined) => Promise<unknown>;
+    };
+    mount();
+
+    expect(
+      await screen.findByRole("heading", { name: /catalog is unavailable/i }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry).toBeEnabled();
+
+    await user.click(retry);
+
+    expect(
+      await screen.findByRole("button", { name: /play arrival, 2016/i }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(browseAttempts).toBe(3);
+  });
+
+  it("does not stack retries while a retry is in flight", async () => {
+    const user = userEvent.setup();
+    let release: (() => void) | undefined;
+    let browseAttempts = 0;
+    invoke = vi.fn(async (command: string) => {
+      if (command === "catalog_browse") {
+        browseAttempts += 1;
+        if (browseAttempts <= 2) throw new Error("throttled");
+        if (browseAttempts === 3) {
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return { items: MOVIES };
+      }
+      throw new Error(`unexpected command: ${command}`);
+    });
+    window.__TAURI_INTERNALS__ = { invoke } as unknown as {
+      invoke: (cmd: string, args?: Record<string, unknown> | undefined) => Promise<unknown>;
+    };
+    mount();
+
+    const retry = await screen.findByRole("button", { name: "Retry" }, { timeout: 3000 });
+    await user.click(retry);
+
+    await waitFor(() => expect(release).toBeTypeOf("function"));
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(browseAttempts).toBe(3);
+
+    release?.();
+    expect(
+      await screen.findByRole("button", { name: /play arrival, 2016/i }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+  });
 });

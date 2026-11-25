@@ -588,8 +588,10 @@ pub struct PlaybackCheckpointRequest {
 
 // R-01 / ADR-0021. Mirrors `media_acquisition::validate_source`; app-core
 // cannot depend on that crate (it depends on app-core), so keep both in step.
-/// Closed length cap for an operator-supplied source.
-pub const MAX_ITEM_SOURCE_LEN: usize = 2048;
+/// Closed length cap for an operator-supplied source. Real magnets with
+/// several tracker tiers exceed 2048 characters; keep in step with
+/// `media_acquisition::MAX_SOURCE_LEN` (8192).
+pub const MAX_ITEM_SOURCE_LEN: usize = 8192;
 const ITEM_MAGNET_PREFIX: &str = "magnet:?xt=urn:btih:";
 const ITEM_TORRENT_SUFFIX: &str = ".torrent";
 
@@ -667,6 +669,15 @@ mod item_source_tests {
         assert!(validate_item_source("..\\ep.torrent").is_err());
         assert!(validate_item_source(".torrent").is_err());
         assert!(validate_item_source("magnet:?xt=urn:btih:ABC123&dn=ep").is_ok());
+        let long_magnet = format!("magnet:?xt=urn:btih:ABC123&dn=ep&tr={}", "x".repeat(2200));
+        assert!(
+            long_magnet.len() > 2048 && long_magnet.len() <= MAX_ITEM_SOURCE_LEN,
+            "the fixture must reproduce a real multi-tracker magnet"
+        );
+        assert_eq!(
+            validate_item_source(&long_magnet).expect("real magnet accepted"),
+            long_magnet
+        );
         assert_eq!(
             validate_item_source("  episode.torrent  ").expect("valid"),
             "episode.torrent"

@@ -134,6 +134,8 @@ fn docker_invocation_binds_the_host_root_read_only_and_has_no_shell() {
             "-v".to_string(),
             "error".to_string(),
             "-show_format".to_string(),
+            "-of".to_string(),
+            "json".to_string(),
             "/downloads/show/e01.mkv".to_string(),
         ]
     );

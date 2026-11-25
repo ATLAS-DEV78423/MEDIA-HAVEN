@@ -626,18 +626,47 @@ impl LibraryRepository for SqliteLibraryRepository {
     }
 
     async fn downloads(&self) -> Result<DownloadsScreen, AppError> {
-        // Downloads are an optional service and are disabled until the runtime
-        // and storage layers exist. The contract requires the shape, not the
-        // feature.
-        let storage_limit = self.settings_get().await?.storage.limit_bytes;
+        // The acquisition runtime now exists. The switch is an operator
+        // setting, not a hard-coded "off": reporting false here while the
+        // status route shows live tasks made the Downloads screen lie.
+        let settings = self.settings_get().await?;
+        let storage_limit = settings.storage.limit_bytes;
+        let rows = sqlx::query(
+            "SELECT d.id, COALESCE(m.title, d.torrent_hash) AS title, d.state, t.progress \
+             FROM download_items d \
+             LEFT JOIN media_items m ON m.id = d.media_id \
+             LEFT JOIN torrent_tasks t ON t.hash = d.torrent_hash \
+             ORDER BY d.created_at DESC LIMIT ?",
+        )
+        .bind(MAX_LIMIT)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        let tasks = rows
+            .iter()
+            .map(|row| {
+                let state = row.get::<String, _>("state");
+                DownloadTask {
+                    id: row.get("id"),
+                    title: row.get("title"),
+                    state: legacy_download_state(&state),
+                    progress: row.try_get("progress").unwrap_or(0.0),
+                    error_message: (state == "error").then(|| "The download failed.".to_string()),
+                }
+            })
+            .collect();
+        // No file-size column exists on download_items, so used bytes stay
+        // zero until the host reports the acquisition folder. The buffer
+        // notice uses the same honest zero rather than guessing a size.
+        let used = 0;
         Ok(DownloadsScreen {
-            enabled: false,
-            tasks: vec![],
-            storage_used_bytes: 0,
+            enabled: settings.optional_services.downloads_enabled,
+            tasks,
+            storage_used_bytes: used,
             storage_limit_bytes: storage_limit,
             // Same G-8 predicate the prefetch scheduler uses; a message string
             // only, never a path (renderer DTO boundary).
-            buffer_notice: buffer_pause_notice(0, storage_limit),
+            buffer_notice: buffer_pause_notice(used, storage_limit),
         })
     }
 
@@ -820,11 +849,26 @@ impl LibraryRepository for SqliteLibraryRepository {
         // Exact, bound match: LIKE metacharacters in an id are literal here.
         // A missing row (no file ever scanned, or the file was removed from
         // the library) is `None` — the caller fails closed (ADR-0015).
-        sqlx::query_scalar("SELECT path FROM media_files WHERE media_id = ? LIMIT 1")
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(Self::internal)
+        //
+        // An acquired download has no `media_files` row: the scanner only
+        // writes library roots. Its container path lives on the download row
+        // (`/downloads/<name>`, ADR-0018), which the host resolves through the
+        // `/downloads` mount entry exactly like a scanned `/media/root-N`
+        // path. Without this fallback a confirmed, downloaded source could
+        // never resolve for playback.
+        sqlx::query_scalar(
+            "SELECT path FROM (\
+                SELECT path AS path, 0 AS prio FROM media_files WHERE media_id = ? \
+                UNION ALL \
+                SELECT file_path AS path, 1 AS prio FROM download_items \
+                WHERE media_id = ? AND file_path IS NOT NULL AND file_path <> '' \
+            ) ORDER BY prio LIMIT 1",
+        )
+        .bind(id)
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Self::internal)
     }
 
     async fn watchlist_add(&self, media_id: &str) -> Result<(), AppError> {
@@ -1079,6 +1123,129 @@ impl LibraryRepository for SqliteLibraryRepository {
         }))
     }
 
+    async fn acquisition_rows(&self) -> Result<Vec<(DownloadItem, String)>, AppError> {
+        let rows = sqlx::query(
+            "SELECT d.id, d.torrent_hash, d.media_id, d.state, t.progress, \
+             t.magnet_or_source \
+             FROM download_items d JOIN torrent_tasks t ON t.hash = d.torrent_hash",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                (
+                    DownloadItem {
+                        id: row.get("id"),
+                        torrent_hash: row.get("torrent_hash"),
+                        media_id: row.get("media_id"),
+                        state: download_state_from_str(&row.get::<String, _>("state")),
+                        progress: row.get("progress"),
+                    },
+                    row.get("magnet_or_source"),
+                )
+            })
+            .collect())
+    }
+
+    async fn download_update(&self, item: &DownloadItem) -> Result<(), AppError> {
+        // A status poll reports the *engine's* transport state. It must not
+        // clobber the playback lifecycle state owned by the cleanup worker,
+        // or a file that is playing/watched/cleanup-pending becomes eligible
+        // for premature removal.
+        let now = now_iso();
+        let state = download_state_to_str(item.state);
+        let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+        let current: Option<String> =
+            sqlx::query_scalar("SELECT state FROM download_items WHERE id = ?")
+                .bind(&item.id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(Self::internal)?;
+        let Some(current) = current else {
+            // No persisted row: never create one from a status poll alone.
+            return Ok(());
+        };
+        if matches!(current.as_str(), "playing" | "watched" | "cleanup_pending") {
+            sqlx::query("UPDATE download_items SET media_id = COALESCE(?, media_id) WHERE id = ?")
+                .bind(&item.media_id)
+                .bind(&item.id)
+                .execute(&mut *tx)
+                .await
+                .map_err(Self::internal)?;
+        } else {
+            sqlx::query(
+                "UPDATE download_items SET state = ?, media_id = COALESCE(?, media_id) WHERE id = ?",
+            )
+            .bind(state)
+            .bind(&item.media_id)
+            .bind(&item.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::internal)?;
+        }
+        sqlx::query(
+            "UPDATE torrent_tasks SET state = ?, progress = ?, updated_at = ? WHERE hash = ?",
+        )
+        .bind(state)
+        .bind(item.progress)
+        .bind(&now)
+        .bind(&item.torrent_hash)
+        .execute(&mut *tx)
+        .await
+        .map_err(Self::internal)?;
+        tx.commit().await.map_err(Self::internal)
+    }
+
+    async fn download_set_paths(&self, id: &str, paths: &[String]) -> Result<(), AppError> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let row = sqlx::query("SELECT torrent_hash, media_id FROM download_items WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(Self::internal)?;
+        let Some(row) = row else {
+            // A stale poll must not recreate a removed acquisition.
+            return Ok(());
+        };
+        let hash: String = row.get("torrent_hash");
+        let media_id: Option<String> = row.get("media_id");
+        let mut tx = self.pool.begin().await.map_err(Self::internal)?;
+
+        // Replace only auto-created mappings. Episode mappings supplied by a
+        // library scan carry an episode_no and are left untouched.
+        sqlx::query("DELETE FROM file_mappings WHERE torrent_hash = ? AND episode_no IS NULL")
+            .bind(&hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::internal)?;
+        for path in paths {
+            sqlx::query(
+                "INSERT INTO file_mappings (file_path, torrent_hash, media_id, episode_no) \
+                 VALUES (?, ?, ?, NULL) \
+                 ON CONFLICT(file_path) DO UPDATE SET \
+                 torrent_hash = excluded.torrent_hash, \
+                 media_id = COALESCE(file_mappings.media_id, excluded.media_id)",
+            )
+            .bind(path)
+            .bind(&hash)
+            .bind(&media_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::internal)?;
+        }
+        sqlx::query("UPDATE download_items SET file_path = ? WHERE id = ?")
+            .bind(&paths[0])
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .map_err(Self::internal)?;
+        tx.commit().await.map_err(Self::internal)
+    }
+
     async fn download_remove(&self, id: &str) -> Result<(), AppError> {
         let hash: Option<String> =
             sqlx::query_scalar("SELECT torrent_hash FROM download_items WHERE id = ?")
@@ -1228,7 +1395,7 @@ impl LibraryRepository for SqliteLibraryRepository {
         sqlx::query(
             "INSERT INTO media_items \
              (id, kind, title, year, genres, availability_state, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, '[]', 'unavailable', ?, ?) \
+             VALUES (?, ?, ?, ?, '[]', 'missing-file', ?, ?) \
              ON CONFLICT(id) DO NOTHING",
         )
         .bind(id)
@@ -1339,11 +1506,14 @@ fn kind_from_str(value: &str) -> MediaKind {
 
 fn availability(state: &str, last_seen: &Option<String>) -> MediaAvailability {
     match state {
+        "available" => MediaAvailability::Available,
         "missing-file" => MediaAvailability::MissingFile {
             last_seen_at: last_seen.clone(),
         },
         "offline" => MediaAvailability::Offline,
-        _ => MediaAvailability::Available,
+        // Unknown/legacy values (including a catalog pick's former
+        // 'unavailable' state) must never be presented as playable.
+        _ => MediaAvailability::MissingFile { last_seen_at: None },
     }
 }
 
@@ -1429,6 +1599,20 @@ fn download_state_from_str(value: &str) -> DownloadState {
     }
 }
 
+/// Map the live acquisition state onto the older display-only task state used
+/// by `DownloadsScreen`. There is no distinct "playing" legacy state; an
+/// owned, ready file remains available to its owner.
+fn legacy_download_state(value: &str) -> LegacyDownloadState {
+    match download_state_from_str(value) {
+        DownloadState::Downloading => LegacyDownloadState::Downloading,
+        DownloadState::Error => LegacyDownloadState::Failed,
+        DownloadState::Ready
+        | DownloadState::Playing
+        | DownloadState::Watched
+        | DownloadState::CleanupPending => LegacyDownloadState::Available,
+    }
+}
+
 /// Escapes LIKE metacharacters so user text is matched literally.
 fn escape_like(value: &str) -> String {
     value
@@ -1496,6 +1680,27 @@ impl SqliteLibraryRepository {
         .execute(&self.pool)
         .await
         .map_err(Self::internal)?;
+        Ok(())
+    }
+
+    /// Persist a Defender result using the media id the host already owns.
+    /// A library import has no download row and needs no scan; that is a no-op
+    /// rather than an error, so the host can call one route for every play.
+    pub async fn set_defender_verification_for_media(
+        &self,
+        media_id: &str,
+        state: &str,
+        detail: Option<&str>,
+    ) -> Result<(), AppError> {
+        let id: Option<String> =
+            sqlx::query_scalar("SELECT id FROM download_items WHERE media_id = ? LIMIT 1")
+                .bind(media_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(Self::internal)?;
+        if let Some(id) = id {
+            self.set_defender_verification(&id, state, detail).await?;
+        }
         Ok(())
     }
 
@@ -1675,6 +1880,21 @@ impl SqliteLibraryRepository {
         .fetch_optional(&self.pool)
         .await
         .map_err(Self::internal)
+    }
+
+    /// A completed download makes its bound wanted item playable. Only the
+    /// ready path calls this; a missing-file item stays missing otherwise.
+    pub async fn set_media_available(&self, media_id: &str) -> Result<(), AppError> {
+        sqlx::query(
+            "UPDATE media_items SET availability_state = 'available', \
+             availability_last_seen = ? WHERE id = ?",
+        )
+        .bind(now_iso())
+        .bind(media_id)
+        .execute(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(())
     }
 
     /// Record a probe result for a download. `detail` is metadata only and must
@@ -1974,7 +2194,7 @@ mod wanted_tests {
         assert_eq!(row.get::<String, _>("title"), "A Wanted Film");
         assert_eq!(row.get::<Option<i64>, _>("year"), Some(2024));
         assert_eq!(row.get::<String, _>("genres"), "[]");
-        assert_eq!(row.get::<String, _>("availability_state"), "unavailable");
+        assert_eq!(row.get::<String, _>("availability_state"), "missing-file");
         assert!(!row.get::<String, _>("created_at").is_empty());
         assert!(!row.get::<String, _>("updated_at").is_empty());
 
@@ -1984,6 +2204,32 @@ mod wanted_tests {
             .await
             .expect("count files");
         assert_eq!(files, 0, "a wanted item has no media file");
+
+        let detail = repo.detail(id).await.expect("wanted detail");
+        match detail {
+            MediaDetail::Movie(movie) => assert!(
+                matches!(movie.availability, MediaAvailability::MissingFile { .. }),
+                "a file-less catalog pick must not be offered as available"
+            ),
+            other => panic!("wanted item kind changed: {other:?}"),
+        }
+
+        // A completed download flips the same wanted row to available so the
+        // backend playback gate can pass; no media_files row is fabricated.
+        repo.set_media_available(id).await.expect("mark available");
+        let state: String =
+            sqlx::query_scalar("SELECT availability_state FROM media_items WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("read availability");
+        assert_eq!(state, "available");
+        let files: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media_files WHERE media_id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("count files");
+        assert_eq!(files, 0, "availability does not invent a media file");
 
         pool.close().await;
         std::fs::remove_dir_all(&dir).ok();
