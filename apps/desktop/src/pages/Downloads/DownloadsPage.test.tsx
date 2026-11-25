@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -107,6 +107,26 @@ describe("downloads driven by named acquisition commands", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/request was rejected/i);
     expect(screen.queryByText("torrent-1")).not.toBeInTheDocument();
     expect(invoke).toHaveBeenCalledWith("download_add", { source: "not a source" });
+  });
+
+  it("polls download status while the page is mounted", async () => {
+    vi.useFakeTimers();
+    try {
+      mount();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      const count = () =>
+        invoke.mock.calls.filter(([command]) => command === "download_status").length;
+      const before = count();
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+        await Promise.resolve();
+      });
+      expect(count()).toBeGreaterThan(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("removes a row through download_remove", async () => {

@@ -195,6 +195,8 @@ pub struct Orchestrator<A: TorrentApi, S: DownloadStore> {
     api: A,
     store: S,
     probe: Box<dyn ProbeRunner + Send + Sync>,
+    /// Only test-injected probes may auto-inspect. The host owns the real gate.
+    auto_inspect: bool,
     /// Per-file probe results for completed downloads (host-internal only).
     inspection: Mutex<HashMap<String, Vec<(String, InspectionState)>>>,
 }
@@ -205,6 +207,7 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
             api,
             store,
             probe: Box::new(DockerProbeRunner),
+            auto_inspect: false,
             inspection: Mutex::new(HashMap::new()),
         }
     }
@@ -212,6 +215,7 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
     /// Inject a probe for tests. Production uses `DockerProbeRunner` by default.
     pub fn with_probe_runner(mut self, runner: impl ProbeRunner + Send + Sync + 'static) -> Self {
         self.probe = Box::new(runner);
+        self.auto_inspect = true;
         self
     }
 
@@ -235,7 +239,7 @@ impl<A: TorrentApi, S: DownloadStore> Orchestrator<A, S> {
     /// finished download is inspected immediately instead of staying pending
     /// forever. Any failure is unplayable — never a silent Clean.
     fn inspect_if_ready(&self, item: &DownloadItem) {
-        if item.state != DownloadState::Ready {
+        if !self.auto_inspect || item.state != DownloadState::Ready {
             return;
         }
         let paths: Vec<String> = self
@@ -659,7 +663,7 @@ mod tests {
     /// forever, so a finished torrent stays "Downloading 25%" and is never
     /// inspected (never playable).
     #[test]
-    fn refresh_follows_the_engine_state_and_inspects_a_newly_ready_download() {
+    fn refresh_follows_the_engine_state_without_writing_probe_state() {
         let complete = Arc::new(AtomicBool::new(false));
         let api = CompletingApi {
             complete: complete.clone(),
@@ -682,12 +686,8 @@ mod tests {
         let refreshed = orchestrator.refresh();
         assert_eq!(refreshed[0].state, DownloadState::Ready);
         assert!((refreshed[0].progress - 1.0).abs() < f64::EPSILON);
-        // Ready ⇒ the completion-path inspection has run and was recorded.
-        assert_eq!(
-            orchestrator.inspection_state(&item.id),
-            Some(InspectionState::Unavailable),
-            "an empty file list fails closed (never a false Clean)"
-        );
+        // Ready does not write probe state. The Windows host owns that gate.
+        assert!(orchestrator.inspection_state(&item.id).is_none());
     }
 
     #[test]
@@ -698,6 +698,23 @@ mod tests {
         for state in ["stalledDL", "downloading", "metaDL"] {
             assert_eq!(map_state(state), DownloadState::Downloading, "{state}");
         }
+    }
+
+    #[test]
+    fn production_orchestrator_never_auto_inspects_a_completed_download() {
+        let complete = Arc::new(AtomicBool::new(true));
+        let orchestrator = Orchestrator::new(
+            CompletingApi {
+                complete: complete.clone(),
+            },
+            InMemoryDownloadStore::default(),
+        );
+        let item = orchestrator.acquire(MAGNET).unwrap();
+        assert_eq!(item.state, DownloadState::Ready);
+        assert!(
+            orchestrator.inspection_state(&item.id).is_none(),
+            "the Windows host is the only writer of probe state"
+        );
     }
 
     /// A source confirmed *for* an item must carry that item's id, so the

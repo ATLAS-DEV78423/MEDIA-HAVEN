@@ -8,6 +8,34 @@ first; earlier sections are retained as history and are explicitly superseded
 where they disagree with it. See `roadmap.md` for sequencing and `CHANGELOG.md`
 for a feature summary.
 
+## 2026-11-25 — audit fixes 1, 2, 3, 6, 7, 8 applied
+
+Whole-repo audit produced 20 ranked findings. Six pure-code Must-fix items
+are now applied, each with a regression test:
+
+- **1** — the core orchestrator no longer auto-inspects a finished download;
+  the Windows host is the only writer of probe state. One `auto_inspect` flag,
+  enabled only by the test probe injector. A test proves production writes none.
+- **2** — both play gates now read the first *bad* download row, not an
+  arbitrary one, so a clean sibling cannot hide a flagged source. A two-row
+  regression test asserts `playback_start` is refused.
+- **3** — `set_media_available` runs only when every bound row passes both
+  gates (`gates_clean`). A wanted item no longer looks playable while blocked.
+- **6** — `source_set` uses the shared 8192-byte constant. Boundary test added.
+- **7** — Downloads polls `download_status` every 5 s while mounted; fake-timer
+  test added.
+- **8** — Rust CI runs on `windows-latest` (Tauri needs Windows); dependency
+  graph step uses `shell: bash`.
+
+Gates observed: `cargo fmt --all -- --check` 0; `cargo clippy --workspace
+--all-targets -- -D warnings` 0; `cargo test --workspace` 0 (all suites ok,
+2 pre-existing ignored); frontend typecheck 0, lint 0, Vitest 90/90 across
+18 files, tokens 86/0, build ok. No live redeploy, no commit.
+
+**Held:** audit findings 4 (second host credential / confirmation boundary)
+and 5 (wire the container supervisor and forward Compose variables). Both
+change host or container behaviour and need explicit consent.
+
 ## 2026-11-24 — live magnet → playback chain closed; five more defects fixed
 
 By explicit human choice ("Supply a lawful magnet", then "Approve both"), a

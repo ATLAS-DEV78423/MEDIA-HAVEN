@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use app_core::domain::{
     AppError, AppErrorCode, BrowseQuery, BrowseSort, CleanupEntry, DownloadState,
-    MediaAvailability, MediaDetail,
+    MediaAvailability, MediaDetail, MAX_ITEM_SOURCE_LEN,
 };
 use app_core::ports::LibraryRepository;
 use axum::extract::State;
@@ -146,6 +146,14 @@ pub fn host_router() -> Router<AppState> {
 /// the downloader, with the download row persisted against this media id.
 /// Without the acquisition, a confirmed magnet was inert — the item could
 /// never become playable.
+fn check_source_len(source: &str) -> Result<(), ApiError> {
+    if source.len() > MAX_ITEM_SOURCE_LEN {
+        Err(cleanup_invalid("source is too long."))
+    } else {
+        Ok(())
+    }
+}
+
 async fn source_set(
     State(state): State<AppState>,
     ApiJson(args): ApiJson<SourceSetArgs>,
@@ -153,9 +161,7 @@ async fn source_set(
     if args.media_id.trim().is_empty() || args.source.trim().is_empty() {
         return Err(cleanup_invalid("mediaId and source are required."));
     }
-    if args.source.len() > 4096 {
-        return Err(cleanup_invalid("source is too long."));
-    }
+    check_source_len(&args.source)?;
     state
         .service
         .set_item_source(&args.media_id, &args.source)
@@ -511,7 +517,10 @@ async fn status(State(state): State<AppState>) -> Result<Json<Value>, ApiError> 
         persist_inspection(&state, &item.id).await?;
         if item.state == DownloadState::Ready {
             if let Some(media_id) = &item.media_id {
-                verify_repo().await?.set_media_available(media_id).await?;
+                let repo = verify_repo().await?;
+                if repo.gates_clean(media_id).await? {
+                    repo.set_media_available(media_id).await?;
+                }
             }
         }
     }
@@ -1128,6 +1137,14 @@ mod tests {
         ] {
             assert!(path.starts_with(HOST_PREFIX), "host-only path: {path}");
         }
+    }
+
+    #[test]
+    fn source_len_follows_the_shared_boundary() {
+        let long = "magnet:?xt=".to_string() + &"a".repeat(6000);
+        assert!(check_source_len(&long).is_ok());
+        let too_long = "magnet:?xt=".to_string() + &"a".repeat(MAX_ITEM_SOURCE_LEN);
+        assert!(check_source_len(&too_long).is_err());
     }
 
     #[test]

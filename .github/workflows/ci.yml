@@ -42,7 +42,7 @@ on:
 jobs:
   rust:
     name: Rust — fmt, clippy, tests, contract drift, dependency graph
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -69,6 +69,7 @@ jobs:
         run: cargo test --workspace
 
       - name: H3 — dependency-graph layer assertions
+        shell: bash
         run: bash tests/dependency_graph.sh
 
   node:

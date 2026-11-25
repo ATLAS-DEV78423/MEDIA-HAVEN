@@ -1724,11 +1724,19 @@ impl SqliteLibraryRepository {
     /// (no download row) is unaffected; every other state fails closed. The
     /// reason is a fixed display string, never a path or a scanner detail.
     async fn refuse_unscanned_download(&self, media_id: &str) -> Result<(), AppError> {
-        let state = self.defender_state_for_media(media_id).await?;
+        // Read the first BAD row, not an arbitrary row: one flagged download
+        // must hide a clean sibling.
+        let state = sqlx::query_scalar::<_, String>(
+            "SELECT COALESCE(defender_state, 'not_scanned') FROM download_items \
+             WHERE media_id = ? AND (defender_state IS NULL OR defender_state <> 'clean') \
+             LIMIT 1",
+        )
+        .bind(media_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Self::internal)?;
         let reason = match state.as_deref() {
-            // NULL on an existing download row is NOT a library import.
-            None if self.has_download_row(media_id).await? => "This file has not been scanned yet.",
-            None | Some("clean") => return Ok(()),
+            None => return Ok(()),
             Some("threat") => "Windows Defender flagged this file.",
             Some("unavailable") => "Windows Defender could not scan this file.",
             Some(_) => "This file has not been scanned yet.",
@@ -1859,6 +1867,62 @@ mod defender_tests {
         assert!(error.message.contains("Defender"));
         assert!(!error.message.contains("/downloads"));
     }
+
+    #[tokio::test]
+    async fn one_flagged_row_hides_a_clean_sibling() {
+        let db = temp_db("siblings");
+        let pool = connect_path(&db).await.expect("connect and migrate");
+        let repo = SqliteLibraryRepository::new(pool);
+        let now = now_iso();
+        sqlx::query(
+            "INSERT INTO media_items (id, kind, title, created_at, updated_at) \
+             VALUES ('m-two', 'movie', 'title', ?, ?)",
+        )
+        .bind(&now)
+        .bind(&now)
+        .execute(repo.pool())
+        .await
+        .expect("insert media");
+        for (hash, id, defender) in [
+            ("h-clean", "d-clean", "clean"),
+            ("h-bad", "d-bad", "threat"),
+        ] {
+            sqlx::query(
+                "INSERT INTO torrent_tasks (hash, magnet_or_source, state, save_path, created_at, updated_at) \
+                 VALUES (?, 'magnet:?xt=urn:btih:test', 'ready', '/downloads', ?, ?)",
+            )
+            .bind(hash)
+            .bind(&now)
+            .bind(&now)
+            .execute(repo.pool())
+            .await
+            .expect("insert torrent task");
+            sqlx::query(
+                "INSERT INTO download_items \
+                 (id, torrent_hash, media_id, file_path, state, created_at, verification_state, defender_state) \
+                 VALUES (?, ?, 'm-two', '/downloads/x.mkv', 'ready', ?, 'clean', ?)",
+            )
+            .bind(id)
+            .bind(hash)
+            .bind(&now)
+            .bind(defender)
+            .execute(repo.pool())
+            .await
+            .expect("insert download item");
+        }
+
+        assert!(!repo.gates_clean("m-two").await.expect("gates"));
+        let service = LibraryService::new(SqliteLibraryRepository::new(repo.pool().clone()));
+        let error = service
+            .playback_start(&PlaybackStartRequest {
+                media_id: "m-two".to_string(),
+                start_position_seconds: None,
+            })
+            .await
+            .expect_err("a flagged sibling must hide a clean one");
+        assert_eq!(error.code, AppErrorCode::MediaUnsupported);
+        assert!(error.message.contains("Defender"));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1932,19 +1996,35 @@ impl SqliteLibraryRepository {
     /// Refuse a downloaded item until the probe has parsed it as media. The
     /// message is a fixed display string: no path reaches the renderer.
     async fn refuse_unverified(&self, media_id: &str) -> Result<(), AppError> {
-        let state = self.verification_state_for_media(media_id).await?;
-        let reason = match state.as_deref() {
-            // A NULL state on an existing download row is not a library import:
-            // it has no verification and must fail closed (R-01).
-            None if self.has_download_row(media_id).await? => {
-                Some("This download has not been verified yet.")
-            }
-            other => playback_block_reason(other),
-        };
-        if let Some(reason) = reason {
+        // Only bad rows are returned. A clean sibling cannot hide a flagged one.
+        let state = sqlx::query_scalar::<_, String>(
+            "SELECT COALESCE(verification_state, 'scanning') FROM download_items \
+             WHERE media_id = ? \
+             AND (verification_state IS NULL OR verification_state <> 'clean') LIMIT 1",
+        )
+        .bind(media_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        if let Some(reason) = playback_block_reason(state.as_deref()) {
             return Err(AppError::new(AppErrorCode::MediaUnsupported, reason, false));
         }
         Ok(())
+    }
+
+    /// Both gates are clean only when every download row bound to the item has
+    /// passed. Used before an item is shown as playable.
+    pub async fn gates_clean(&self, media_id: &str) -> Result<bool, AppError> {
+        let bad: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM download_items WHERE media_id = ? \
+             AND (verification_state IS NULL OR verification_state <> 'clean' \
+             OR defender_state IS NULL OR defender_state <> 'clean')",
+        )
+        .bind(media_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(Self::internal)?;
+        Ok(bad == 0)
     }
 }
 

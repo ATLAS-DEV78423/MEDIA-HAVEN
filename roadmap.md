@@ -96,6 +96,10 @@ blocked, not passed. See ADR-0009.
   `playback_start` 200 → mpv decode; all stages observed live. The core image
   was rebuilt and redeployed (rollback images/containers kept). No checkpoint
   passed; the in-app UI click path was not re-exercised after the last rebuild.
+- **Audit 2026-11-25:** 20 ranked findings. Six Must-fix code items applied and
+  gated (probe gate ownership, fail-closed multi-row gates, availability only
+  when clean, source cap, Downloads polling, Windows CI). Host-credential and
+  supervisor-wiring fixes are held for explicit consent. No checkpoint passed.
 - **Evidence:** `progress.md` records the latest gates at HEAD `342addf`
   (documents only). The last code-verification wave was `9b706fb` — see the
   2026-11-21 entry in `progress.md`. Live engine, hardware, IMDb/OMDb, TMDB and

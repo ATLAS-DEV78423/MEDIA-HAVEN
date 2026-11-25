@@ -47,17 +47,22 @@ export function DownloadsPage() {
 
   useEffect(() => {
     let active = true;
-    call<AcquisitionRow[]>("download_status", {})
-      .then((items) => {
-        if (!active) return;
-        setRows(items);
-        setLoadError(null);
-      })
-      .catch(() => {
-        if (active) setLoadError("Download status is unavailable.");
-      });
+    const load = () => {
+      call<AcquisitionRow[]>("download_status", {})
+        .then((items) => {
+          if (!active) return;
+          setRows(items);
+          setLoadError(null);
+        })
+        .catch(() => {
+          if (active) setLoadError("Download status is unavailable.");
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 5000);
     return () => {
       active = false;
+      window.clearInterval(timer);
     };
   }, []);
 
