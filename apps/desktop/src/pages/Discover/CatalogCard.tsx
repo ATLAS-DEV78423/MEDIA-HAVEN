@@ -7,6 +7,13 @@ import styles from "./discover.module.css";
  * DTO; no endpoint, key or operator credential is part of an image URL. */
 const TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 
+/** The same poster is used on the card and on the expanded Details view. */
+export function posterFor(item: CatalogItem): string {
+  if (item.posterUrl) return item.posterUrl;
+  if (item.posterPath) return `${TMDB_POSTER_BASE}${item.posterPath}`;
+  return artFor(item.id, item.title).still;
+}
+
 /** One catalog title as a poster card. Play adds a wanted item and opens its
  *  Details page; this card never renders a source, local path or credential. */
 export function CatalogCard({
@@ -18,11 +25,7 @@ export function CatalogCard({
   adding: boolean;
   onPlay: () => void;
 }) {
-  const poster = item.posterUrl
-    ? item.posterUrl
-    : item.posterPath
-      ? `${TMDB_POSTER_BASE}${item.posterPath}`
-      : artFor(item.id, item.title).still;
+  const poster = posterFor(item);
 
   return (
     <button

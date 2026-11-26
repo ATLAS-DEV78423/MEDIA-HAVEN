@@ -6,7 +6,7 @@ import { MediaCard } from "@/components/cards/MediaCard";
 import { Shelf } from "@/components/shelf/Shelf";
 import { buttonClass } from "@/components/ui/Controls";
 import { EmptyState } from "@/components/ui/Surfaces";
-import { CatalogCard } from "@/pages/Discover/CatalogCard";
+import { CatalogCard, posterFor } from "@/pages/Discover/CatalogCard";
 import { toMedia } from "@/services/adapt";
 import { api, type CatalogItem, type CatalogResult } from "@/services/api";
 import { recommendBecauseYouWatched } from "@/services/recommend";
@@ -66,7 +66,7 @@ export function HomePage() {
     setPlayingId(item.id);
     try {
       const { mediaId } = await api.catalogWantedAdd(item.title, item.year, item.kind);
-      navigate(`/details/${mediaId}`);
+      navigate(`/details/${mediaId}`, { state: { poster: posterFor(item) } });
     } catch {
       // No source is chosen here; Details remains the recovery surface.
     } finally {

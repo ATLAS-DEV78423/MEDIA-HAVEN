@@ -2,6 +2,7 @@
  * every method now routes through the named-command transport. */
 
 import type {
+  AcquisitionRow,
   AppSettings,
   BrowseQuery,
   DownloadsScreen,
@@ -145,6 +146,8 @@ export const api = {
     call<null>("queue_reorder", { ordered_ids: orderedIds }),
 
   downloads: () => call<DownloadsScreen>("downloads_list", {}),
+
+  downloadStatus: () => call<AcquisitionRow[]>("download_status", {}),
 
   settings: () => call<AppSettings>("settings_get", {}),
 

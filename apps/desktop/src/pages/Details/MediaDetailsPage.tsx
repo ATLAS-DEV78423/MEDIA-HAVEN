@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import { ImdbRating } from "@/components/cards/ImdbRating";
 import { MediaCard } from "@/components/cards/MediaCard";
@@ -26,6 +26,12 @@ import styles from "./details.module.css";
 // domain validators use the same 8192 cap. Keep in step with those boundaries.
 const MAX_SOURCE_LEN = 8192;
 const MAGNET_PREFIX = "magnet:?xt=urn:btih:";
+
+type AcquisitionStage =
+  | { stage: "searching" }
+  | { stage: "downloading"; progress: number }
+  | { stage: "ready" }
+  | { stage: "error"; message: string };
 
 function hasControl(value: string): boolean {
   return Array.from(value).some((ch) => {
@@ -63,7 +69,9 @@ function sourceProblem(raw: string): string | null {
 
 export function MediaDetailsPage() {
   const { mediaId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
+  const catalogPoster = (location.state as { poster?: string } | null)?.poster;
   const { data, isListed, toggleList } = useAppState();
 
   const [detail, setDetail] = useState<MediaDetail | null>(null);
@@ -82,9 +90,14 @@ export function MediaDetailsPage() {
   const [shortlistError, setShortlistError] = useState<string | null>(null);
   const [confirmingMagnet, setConfirmingMagnet] = useState<string | null>(null);
   const [confirmedMagnet, setConfirmedMagnet] = useState<string | null>(null);
+  const [acquisition, setAcquisition] = useState<AcquisitionStage | null>(null);
+  const pollTimer = useRef<number | null>(null);
+  const generationRef = useRef(0);
 
   const loadDetail = useCallback(async () => {
     if (!mediaId) return;
+    generationRef.current += 1;
+    const generation = generationRef.current;
     setDetail(null);
     setDetailError(null);
     setEpisodes([]);
@@ -97,9 +110,27 @@ export function MediaDetailsPage() {
     setShortlistError(null);
     setConfirmingMagnet(null);
     setConfirmedMagnet(null);
+    setAcquisition(null);
+    if (pollTimer.current !== null) {
+      window.clearInterval(pollTimer.current);
+      pollTimer.current = null;
+    }
     try {
-      setDetail(await api.detail(mediaId));
+      const loaded = await api.detail(mediaId);
+      if (generationRef.current !== generation) return;
+      setDetail(loaded);
+      // A download that finished while the player was open survives a remount.
+      try {
+        const rows = await api.downloadStatus();
+        if (generationRef.current !== generation) return;
+        if (rows.some((row) => row.mediaId === mediaId && row.state === "ready")) {
+          setAcquisition({ stage: "ready" });
+        }
+      } catch {
+        // No status source in this session; the manual flow still works.
+      }
     } catch (error) {
+      if (generationRef.current !== generation) return;
       setDetailError(describeError(error));
     }
   }, [mediaId]);
@@ -174,6 +205,71 @@ export function MediaDetailsPage() {
     [mediaId],
   );
 
+  const startPlayback = useCallback(async () => {
+    if (!mediaId || !detail) return;
+    const generation = generationRef.current;
+    setAcquisition({ stage: "searching" });
+    try {
+      const result = await api.sourceSearch(detail.title, detail.year);
+      if (generationRef.current !== generation) return;
+      const magnet = result.items?.[0]?.magnet;
+      if (result.setup_required === true || !magnet) {
+        setAcquisition({
+          stage: "error",
+          message:
+            result.setup_required === true
+              ? "Source search is not set up. Ask the operator to configure it."
+              : "No sources were found for this title.",
+        });
+        return;
+      }
+      await api.sourceSet(mediaId, magnet);
+      if (generationRef.current !== generation) return;
+      setAcquisition({ stage: "downloading", progress: 0 });
+      if (pollTimer.current !== null) window.clearInterval(pollTimer.current);
+      pollTimer.current = window.setInterval(() => {
+        void (async () => {
+          try {
+            const rows = await api.downloadStatus();
+            if (generationRef.current !== generation) return;
+            const row = rows.find((entry) => entry.mediaId === mediaId);
+            if (!row) return;
+            if (row.state === "ready" || row.progress >= 1) {
+              setAcquisition({ stage: "ready" });
+              if (pollTimer.current !== null) {
+                window.clearInterval(pollTimer.current);
+                pollTimer.current = null;
+              }
+            } else if (row.state === "error") {
+              setAcquisition({
+                stage: "error",
+                message: "The download failed. Try another source.",
+              });
+              if (pollTimer.current !== null) {
+                window.clearInterval(pollTimer.current);
+                pollTimer.current = null;
+              }
+            } else {
+              setAcquisition({ stage: "downloading", progress: row.progress });
+            }
+          } catch {
+            // Keep the last known stage; the next poll can recover.
+          }
+        })();
+      }, 2000);
+    } catch (error) {
+      if (generationRef.current !== generation) return;
+      setAcquisition({ stage: "error", message: describeError(error) });
+    }
+  }, [detail, mediaId]);
+
+  useEffect(
+    () => () => {
+      if (pollTimer.current !== null) window.clearInterval(pollTimer.current);
+    },
+    [],
+  );
+
   const activeSeason =
     detail?.kind === "series"
       ? seasonNumber ?? detail.seasons[0]?.number ?? null
@@ -224,11 +320,18 @@ export function MediaDetailsPage() {
 
   if (!media) {
     const art = mediaId ? artFor(mediaId, "") : null;
+    const openingArt = catalogPoster ?? art?.hero;
     return (
       <div className={`page ${styles.page}`}>
-        {art ? (
+        {openingArt ? (
           <div className={styles.backdrop}>
-            <img className={styles.backdropArt} src={art.hero} alt="" decoding="async" />
+            <img
+              className={styles.backdropArt}
+              data-testid="detail-backdrop"
+              src={openingArt}
+              alt=""
+              decoding="async"
+            />
             <div className={styles.backdropScrim} aria-hidden="true" />
             <button
               type="button"
@@ -293,13 +396,18 @@ export function MediaDetailsPage() {
   ].filter((fact): fact is { label: string; value: string } => Boolean(fact));
 
   const availability = detail?.kind === "movie" ? detail.availability : null;
+  const seriesWithoutEpisodes = isSeries && !playEpisode;
+  const needsDownload =
+    (availability !== null && availability.state !== "available") ||
+    seriesWithoutEpisodes;
 
   return (
     <div className={`page ${styles.page}`}>
       <div className={styles.backdrop}>
         <img
           className={styles.backdropArt}
-          src={media.art.hero}
+          data-testid="detail-backdrop"
+          src={catalogPoster ?? media.art.hero}
           alt=""
           decoding="async"
         />
@@ -335,7 +443,7 @@ export function MediaDetailsPage() {
           </div>
 
           <div className={styles.actions}>
-            {playHref ? (
+            {playHref && !needsDownload ? (
               <Link to={playHref} className={buttonClass("solid")} data-focusable="true">
                 <Icon name="play" />
                 <span>{resumeEpisode ? "Resume" : "Play"}</span>
@@ -345,6 +453,35 @@ export function MediaDetailsPage() {
                   </span>
                 ) : null}
               </Link>
+            ) : needsDownload ? (
+              acquisition?.stage === "ready" ? (
+                <Link
+                  to={`/player/${media.id}`}
+                  className={buttonClass("solid")}
+                  data-focusable="true"
+                >
+                  <Icon name="play" />
+                  <span>Play Now</span>
+                </Link>
+              ) : (
+                <ActionButton
+                  variant="solid"
+                  onClick={() => void startPlayback()}
+                  disabled={
+                    acquisition?.stage === "searching" ||
+                    acquisition?.stage === "downloading"
+                  }
+                >
+                  <Icon name="play" />
+                  <span>
+                    {acquisition?.stage === "searching"
+                      ? "Finding a source…"
+                      : acquisition?.stage === "downloading"
+                        ? "Downloading…"
+                        : "Play"}
+                  </span>
+                </ActionButton>
+              )
             ) : (
               <span className={buttonClass("glass")} aria-disabled="true">
                 <Icon name="play" />
@@ -361,6 +498,26 @@ export function MediaDetailsPage() {
             </ActionButton>
           </div>
         </div>
+
+        {acquisition ? (
+          <div className={styles.acquisition} role="status" aria-live="polite">
+            {acquisition.stage === "searching" ? (
+              <span>Finding a magnet link…</span>
+            ) : null}
+            {acquisition.stage === "downloading" ? (
+              <>
+                <span>Downloading — {Math.round(acquisition.progress * 100)}%</span>
+                <ProgressBar value={acquisition.progress} large />
+              </>
+            ) : null}
+            {acquisition.stage === "ready" ? <span>Ready to play.</span> : null}
+            {acquisition.stage === "error" ? (
+              <span className={styles.sourceError} role="alert">
+                {acquisition.message}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className={styles.body}>
           <p className={styles.synopsis}>{media.about}</p>
