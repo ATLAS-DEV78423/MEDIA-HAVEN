@@ -67,8 +67,13 @@ afterEach(() => {
 });
 
 function RouteProbe() {
-  const { pathname } = useLocation();
-  return <span data-testid="route">{pathname}</span>;
+  const { pathname, state } = useLocation();
+  const poster = (state as { poster?: string } | null)?.poster ?? "";
+  return (
+    <span data-testid="route">
+      {pathname} {poster}
+    </span>
+  );
 }
 
 function mount() {
@@ -131,6 +136,20 @@ describe("Discover catalog", () => {
       });
     });
     expect(screen.getByTestId("route")).toHaveTextContent("/details/catalog-movie-101");
+  });
+
+  it("carries the clicked poster into the expanded view", async () => {
+    const user = userEvent.setup();
+    mount();
+
+    await user.click(await screen.findByRole("button", { name: "Anime" }));
+    await user.click(await screen.findByRole("button", { name: /play spirited away, 2001/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route")).toHaveTextContent(
+        "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/1.jpg",
+      );
+    });
   });
 
   it("searches AniList when Anime is selected", async () => {

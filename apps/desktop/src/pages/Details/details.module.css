@@ -151,6 +151,14 @@
   opacity: 0.62;
 }
 
+.acquisition {
+  display: grid;
+  gap: var(--s-2);
+  margin-top: var(--s-5);
+  color: var(--paper-72);
+  font-size: var(--text-small);
+}
+
 .body {
   display: grid;
   grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);

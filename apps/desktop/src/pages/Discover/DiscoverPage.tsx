@@ -5,7 +5,7 @@ import { Chip, buttonClass } from "@/components/ui/Controls";
 import { EmptyState } from "@/components/ui/Surfaces";
 import { api, describeError, type CatalogItem, type CatalogResult } from "@/services/api";
 import { normalizeTitle, similarity, suggestTitles } from "@/services/fuzzy";
-import { CatalogCard } from "./CatalogCard";
+import { CatalogCard, posterFor } from "./CatalogCard";
 import styles from "./discover.module.css";
 
 /* Required TMDB credit and clear AniList source attribution. */
@@ -168,7 +168,7 @@ export function DiscoverPage() {
         item.year,
         item.kind,
       );
-      navigate(`/details/${mediaId}`);
+      navigate(`/details/${mediaId}`, { state: { poster: posterFor(item) } });
     } catch (failure) {
       setError(describeError(failure));
     } finally {
