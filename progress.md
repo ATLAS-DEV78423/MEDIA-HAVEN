@@ -2272,3 +2272,9 @@ None from list endpoints (Details works); opt-in is env-based not persisted;
 SBOM NOT RUN (no tool, documented); installer non-deterministic across builds
 (hash changed between runs, documented); second-machine LAN + TV hardware + CP
 sign-offs remain human gates. No checkpoint passed by an agent.
+
+## 2026-11-26 — push, package and install for user testing
+
+Pushed master to origin/master: 025eb1f..3b858a6 (series/anime acquisition and playback merge). Ran infrastructure/packaging/windows/build.ps1 with CARGO_TARGET_DIR cleared: PASS, unsigned per-user NSIS 4.90 MiB; installer SHA-256 matched SHA256SUMS.txt (3beec981fb4d3acda9be52cce4d04e4beed60cf02ad161ea97bcebbd6624010b). SBOM NOT RUN (no sbom/bom.json) — pre-existing warning.
+Installed silently (/S) to %LOCALAPPDATA%\\MEDIA_HAVEN\\mediahaven-desktop.exe (refreshed 2026-11-26 17:10). Installed binary contains the latest asset names index-ebyOTx0h.js and index-BE8gRF6o.css. Launched with saved user-level settings: PID 21424, window title MEDIA_HAVEN, left running for human E2E testing. Core and qB containers were healthy/up. No release published.
+NOT RUN: in-app click-through of the series/anime flow; that is the purpose of the left-running app.
