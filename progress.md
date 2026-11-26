@@ -2,11 +2,10 @@
 
 ## Last updated
 
-2026-11-24 (full catalog→acquisition→playback QA pass; ADR-0024 source
-discovery + opt-in TMDB catalog still in progress). The newest dated entry is
-first; earlier sections are retained as history and are explicitly superseded
-where they disagree with it. See `roadmap.md` for sequencing and `CHANGELOG.md`
-for a feature summary.
+2026-11-26 (series acquisition fix round; ADR-0024 source discovery + opt-in
+TMDB catalog accepted). The newest dated entry is first; earlier sections are
+retained as history and are explicitly superseded where they disagree with it.
+See `roadmap.md` for sequencing and `CHANGELOG.md` for a feature summary.
 
 ## 2026-11-26 — Task 2 verification of the series acquisition change
 
@@ -100,6 +99,10 @@ with the poster as background, and that Play gave no download progress.
 Gates observed: typecheck 0, lint 0, Vitest 93/93 across 18 files, tokens 86/0,
 build ok, bundle clean, contract parity 4/4, fmt 0, `git diff --check` 0.
 No commit, no redeploy, no live app click-through.
+
+Correction (2026-11-26): this UI work was carried uncommitted into the worktree;
+it first entered history in `dfa403d` and this fix round, not in a 2026-11-25
+commit. No history was rewritten.
 
 ## 2026-11-25 — audit fixes 1, 2, 3, 6, 7, 8 applied
 

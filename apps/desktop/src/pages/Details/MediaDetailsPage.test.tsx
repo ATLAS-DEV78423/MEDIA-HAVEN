@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { EpisodeSummary, MediaDetail } from "@/services/types";
@@ -408,5 +408,174 @@ describe("Details acquisition progress", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reports a failed download instead of showing endless progress", async () => {
+    detailResult = { ...DETAIL, availability: { state: "missing-file" } };
+    await mount();
+
+    let polls = 0;
+    invoke = vi.fn(async (command: string) => {
+      switch (command) {
+        case "library_detail":
+          return detailResult;
+        case "source_search":
+          return searchResult;
+        case "source_set":
+          return { downloadId: "d1" };
+        case "download_status":
+          polls += 1;
+          return [
+            {
+              id: "d1",
+              torrentHash: "h",
+              mediaId: "m1",
+              state: "error",
+              progress: 0.1,
+            },
+          ];
+        default:
+          return [];
+      }
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    const flush = () =>
+      act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /^play$/i }));
+      });
+      await flush();
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+      await flush();
+
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "The download failed. Try another source.",
+      );
+      expect(screen.getByRole("status").textContent).not.toMatch(/downloading/i);
+
+      await act(async () => {
+        vi.advanceTimersByTime(4000);
+      });
+      await flush();
+      expect(polls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not install the previous title's poll after a mid-search route change", async () => {
+    detailResult = SERIES_DETAIL;
+    episodeResult = [];
+    let resolveSearch: (value: unknown) => void = () => undefined;
+    const pendingSearch = new Promise<unknown>((resolve) => {
+      resolveSearch = resolve;
+    });
+    let statusCalls = 0;
+    invoke = vi.fn(async (command: string) => {
+      switch (command) {
+        case "library_detail":
+          return detailResult;
+        case "library_episodes":
+          return episodeResult;
+        case "source_search":
+          return pendingSearch;
+        case "source_set":
+          return { downloadId: "d1" };
+        case "download_status":
+          statusCalls += 1;
+          return [];
+        default:
+          return [];
+      }
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: "/details/s1", state: null }]}>
+        <Link to="/details/s2" data-testid="switch-to-s2">
+          switch
+        </Link>
+        <Routes>
+          <Route path="/details/:mediaId" element={<MediaDetailsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole("heading", { name: "A Local Series" });
+
+    const flush = () =>
+      act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /^play$/i }));
+      });
+      await flush();
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId("switch-to-s2"));
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+      });
+      await flush();
+      const callsBeforeResolve = statusCalls;
+
+      await act(async () => {
+        resolveSearch({ items: SHORTLIST });
+      });
+      await flush();
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      await flush();
+
+      expect(invoke).not.toHaveBeenCalledWith("source_set", expect.anything());
+      expect(statusCalls).toBe(callsBeforeResolve);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers Play Now on load when a ready download already exists", async () => {
+    detailResult = { ...DETAIL, availability: { state: "missing-file" } };
+    invoke = vi.fn(async (command: string) => {
+      switch (command) {
+        case "library_detail":
+          return detailResult;
+        case "download_status":
+          return [
+            {
+              id: "d1",
+              torrentHash: "h",
+              mediaId: "m1",
+              state: "ready",
+              progress: 1,
+            },
+          ];
+        default:
+          return [];
+      }
+    });
+    window.__TAURI_INTERNALS__ = { invoke };
+
+    await mount();
+
+    const play = await screen.findByRole("link", { name: /play now/i });
+    expect(play).toHaveAttribute("href", "/player/m1");
   });
 });

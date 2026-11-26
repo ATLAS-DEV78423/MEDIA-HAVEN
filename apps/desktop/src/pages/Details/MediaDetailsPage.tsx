@@ -92,9 +92,12 @@ export function MediaDetailsPage() {
   const [confirmedMagnet, setConfirmedMagnet] = useState<string | null>(null);
   const [acquisition, setAcquisition] = useState<AcquisitionStage | null>(null);
   const pollTimer = useRef<number | null>(null);
+  const generationRef = useRef(0);
 
   const loadDetail = useCallback(async () => {
     if (!mediaId) return;
+    generationRef.current += 1;
+    const generation = generationRef.current;
     setDetail(null);
     setDetailError(null);
     setEpisodes([]);
@@ -113,8 +116,21 @@ export function MediaDetailsPage() {
       pollTimer.current = null;
     }
     try {
-      setDetail(await api.detail(mediaId));
+      const loaded = await api.detail(mediaId);
+      if (generationRef.current !== generation) return;
+      setDetail(loaded);
+      // A download that finished while the player was open survives a remount.
+      try {
+        const rows = await api.downloadStatus();
+        if (generationRef.current !== generation) return;
+        if (rows.some((row) => row.mediaId === mediaId && row.state === "ready")) {
+          setAcquisition({ stage: "ready" });
+        }
+      } catch {
+        // No status source in this session; the manual flow still works.
+      }
     } catch (error) {
+      if (generationRef.current !== generation) return;
       setDetailError(describeError(error));
     }
   }, [mediaId]);
@@ -191,9 +207,11 @@ export function MediaDetailsPage() {
 
   const startPlayback = useCallback(async () => {
     if (!mediaId || !detail) return;
+    const generation = generationRef.current;
     setAcquisition({ stage: "searching" });
     try {
       const result = await api.sourceSearch(detail.title, detail.year);
+      if (generationRef.current !== generation) return;
       const magnet = result.items?.[0]?.magnet;
       if (result.setup_required === true || !magnet) {
         setAcquisition({
@@ -206,16 +224,27 @@ export function MediaDetailsPage() {
         return;
       }
       await api.sourceSet(mediaId, magnet);
+      if (generationRef.current !== generation) return;
       setAcquisition({ stage: "downloading", progress: 0 });
       if (pollTimer.current !== null) window.clearInterval(pollTimer.current);
       pollTimer.current = window.setInterval(() => {
         void (async () => {
           try {
             const rows = await api.downloadStatus();
+            if (generationRef.current !== generation) return;
             const row = rows.find((entry) => entry.mediaId === mediaId);
             if (!row) return;
             if (row.state === "ready" || row.progress >= 1) {
               setAcquisition({ stage: "ready" });
+              if (pollTimer.current !== null) {
+                window.clearInterval(pollTimer.current);
+                pollTimer.current = null;
+              }
+            } else if (row.state === "error") {
+              setAcquisition({
+                stage: "error",
+                message: "The download failed. Try another source.",
+              });
               if (pollTimer.current !== null) {
                 window.clearInterval(pollTimer.current);
                 pollTimer.current = null;
@@ -229,6 +258,7 @@ export function MediaDetailsPage() {
         })();
       }, 2000);
     } catch (error) {
+      if (generationRef.current !== generation) return;
       setAcquisition({ stage: "error", message: describeError(error) });
     }
   }, [detail, mediaId]);
