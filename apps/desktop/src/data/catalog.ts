@@ -68,20 +68,12 @@ const KEYWORDS: [RegExp, string][] = [
   [/star wars/i, "starwars"],
 ];
 
-const FALLBACK = ["dune", "arrival", "quiet", "br", "after", "tomorrow", "starwars"];
+const PLACEHOLDER = "/artwork/placeholder.svg";
 
-const hash = (value: string): number => {
-  let total = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    total = (total * 31 + value.charCodeAt(index)) % 100000;
-  }
-  return total;
-};
-
-export function artFor(id: string, title: string): ArtSet {
-  const keyword = KEYWORDS.find(([pattern]) => pattern.test(title))?.[1];
-  const key = keyword ?? FALLBACK[hash(id) % FALLBACK.length] ?? "dune";
-  return ART[key] ?? { hero: "/artwork/dune-hero.jpg", still: "/artwork/dune-card.jpg" };
+export function artFor(_id: string, title: string): ArtSet {
+  const key = KEYWORDS.find(([pattern]) => pattern.test(title))?.[1];
+  if (!key) return { hero: PLACEHOLDER, still: PLACEHOLDER };
+  return ART[key] ?? { hero: PLACEHOLDER, still: PLACEHOLDER };
 }
 
 export function runtimeLabel(minutes: number | null | undefined): string {

@@ -2278,3 +2278,10 @@ sign-offs remain human gates. No checkpoint passed by an agent.
 Pushed master to origin/master: 025eb1f..3b858a6 (series/anime acquisition and playback merge). Ran infrastructure/packaging/windows/build.ps1 with CARGO_TARGET_DIR cleared: PASS, unsigned per-user NSIS 4.90 MiB; installer SHA-256 matched SHA256SUMS.txt (3beec981fb4d3acda9be52cce4d04e4beed60cf02ad161ea97bcebbd6624010b). SBOM NOT RUN (no sbom/bom.json) — pre-existing warning.
 Installed silently (/S) to %LOCALAPPDATA%\\MEDIA_HAVEN\\mediahaven-desktop.exe (refreshed 2026-11-26 17:10). Installed binary contains the latest asset names index-ebyOTx0h.js and index-BE8gRF6o.css. Launched with saved user-level settings: PID 21424, window title MEDIA_HAVEN, left running for human E2E testing. Core and qB containers were healthy/up. No release published.
 NOT RUN: in-app click-through of the series/anime flow; that is the purpose of the left-running app.
+
+## 2026-11-26 — source search, artwork and wanted-state fixes
+
+Root cause of "no magnet link": the user-level MEDIAHAVEN_PROWLARR_URL was http://host.docker.internal:9117, which does not resolve on the Windows host. Direct loopback Prowlarr queries returned 103 magnets for The Matrix and 175 for Firefly Wedding. Saved URL changed to http://127.0.0.1:9117.
+source_search_with swallowed all fetch errors with unwrap_or_default(), so a failed endpoint looked like an empty shortlist. It now returns a fixed error string; UI shows it in Details instead of "No candidates". Regression tests added in renderer.rs and MediaDetailsPage.test.tsx.
+Artwork: artFor no longer hashes unknown titles to unrelated film stills; it returns /artwork/placeholder.svg. Zero season/episode counts are hidden until episodes exist. The availability badge shows Downloading/Ready to play during acquisition instead of File missing.
+Gates: fmt 0, clippy 0, cargo test --workspace 0, typecheck 0, lint 0, Vitest 102/102 across 19 files, tokens 87/0, build ok, bundle clean.

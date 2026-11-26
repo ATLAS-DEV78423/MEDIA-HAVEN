@@ -263,6 +263,54 @@ describe("Details play control", () => {
   });
 });
 
+describe("Details wanted-state copy", () => {
+  it("does not show a zero season count for a series with no episodes", async () => {
+    detailResult = { ...SERIES_DETAIL, seasons: [] };
+    await mount("s1", "A Local Series");
+
+    expect(screen.queryByText("Seasons")).toBeNull();
+    expect(screen.queryByText("Episodes")).toBeNull();
+  });
+
+  it("shows downloading instead of file missing while acquiring", async () => {
+    const user = userEvent.setup();
+    detailResult = { ...DETAIL, availability: { state: "missing-file" } };
+    await mount();
+
+    await user.click(screen.getByRole("button", { name: /^play$/i }));
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/downloading/i).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByText("File missing")).toBeNull();
+  });
+});
+
+describe("Details source search failures", () => {
+  it("shows a search failure instead of an empty shortlist", async () => {
+    const user = userEvent.setup();
+    searchResult = { items: [], error: "Source search could not be reached." };
+    await mount();
+
+    await user.click(screen.getByRole("button", { name: /^find sources$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not be reached/i);
+    expect(screen.queryByText(/no candidates were returned/i)).toBeNull();
+  });
+
+  it("reports a search failure when Play cannot reach the indexer", async () => {
+    const user = userEvent.setup();
+    detailResult = { ...DETAIL, availability: { state: "missing-file" } };
+    searchResult = { items: [], error: "Source search could not be reached." };
+    await mount();
+
+    await user.click(screen.getByRole("button", { name: /^play$/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not be reached/i);
+    expect(invoke).not.toHaveBeenCalledWith("source_set", expect.anything());
+  });
+});
+
 describe("Details acquisition progress", () => {
   it("finds a source, shows progress, then offers Play Now", async () => {
     detailResult = { ...DETAIL, availability: { state: "missing-file" } };

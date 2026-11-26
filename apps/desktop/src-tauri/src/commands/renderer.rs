@@ -623,12 +623,12 @@ fn source_search_with(
     let Some(config) = config else {
         return setup_required();
     };
-    let items = if config.direct {
+    let result = if config.direct {
         crate::discovery::torznab_search(&config.endpoint, &config.key, title, year, fetch)
     } else {
         // Prowlarr v3 JSON API first: some installs return 404 on per-indexer
         // Torznab URLs. Any failure or empty result falls back to the existing
-        // discovery + multi-Torznab path, so no error text reaches the renderer.
+        // discovery + multi-Torznab path.
         match crate::discovery::prowlarr_search(&config.endpoint, &config.key, title, year, fetch) {
             Ok(items) if !items.is_empty() => Ok(items),
             _ => crate::discovery::prowlarr_torznab_endpoints(&config.endpoint, &config.key, fetch)
@@ -642,9 +642,16 @@ fn source_search_with(
                     )
                 }),
         }
+    };
+    let (items, error) = match result {
+        Ok(items) => (items, None),
+        Err(_) => (Vec::new(), Some("Source search could not be reached.")),
+    };
+    let mut body = json!({ "items": items, "setup_required": false });
+    if let Some(error) = error {
+        body["error"] = json!(error);
     }
-    .unwrap_or_default();
-    json!({ "items": items, "setup_required": false })
+    body
 }
 
 /// Ranked source shortlist for a library title. No config => empty list plus
@@ -1195,6 +1202,20 @@ mod tests {
                     .to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn source_search_reports_a_failed_endpoint() {
+        let fetch: Box<crate::discovery::FetchFn> =
+            Box::new(|_: &str, _: Option<&str>| Err("unreachable".to_string()));
+        let get = |name: &str, _: &str, _: &str| match name {
+            "MEDIAHAVEN_PROWLARR_API_KEY" => Some("prowl-key".to_string()),
+            _ => None,
+        };
+        let value = source_search_with(resolve_source_config(&get), "Movie", None, &fetch);
+        assert_eq!(value["setup_required"], false);
+        assert_eq!(value["items"].as_array().map(Vec::len), Some(0));
+        assert_eq!(value["error"], "Source search could not be reached.");
     }
 
     #[test]

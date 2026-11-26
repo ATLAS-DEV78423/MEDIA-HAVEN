@@ -61,6 +61,7 @@ export interface ShortlistItem {
 export interface SourceSearchResult {
   items: ShortlistItem[];
   setup_required?: boolean;
+  error?: string;
 }
 
 /** Confirming a source now starts acquisition; the id is path-free. */

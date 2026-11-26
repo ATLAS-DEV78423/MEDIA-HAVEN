@@ -172,6 +172,11 @@ export function MediaDetailsPage() {
     setShortlistState("loading");
     try {
       const result = await api.sourceSearch(detail.title, detail.year);
+      if (result.error) {
+        setShortlistError(result.error);
+        setShortlistState("error");
+        return;
+      }
       if (result.setup_required === true) {
         setShortlistState("setup_required");
         return;
@@ -212,6 +217,10 @@ export function MediaDetailsPage() {
     try {
       const result = await api.sourceSearch(detail.title, detail.year);
       if (generationRef.current !== generation) return;
+      if (result.error) {
+        setAcquisition({ stage: "error", message: result.error });
+        return;
+      }
       const magnet = result.items?.[0]?.magnet;
       if (result.setup_required === true || !magnet) {
         setAcquisition({
@@ -379,10 +388,12 @@ export function MediaDetailsPage() {
     detail?.kind === "movie" && detail.director
       ? { label: "Director", value: detail.director }
       : null,
-    isSeries && detail?.kind === "series"
+    isSeries && detail?.kind === "series" && detail.seasons.length > 0
       ? { label: "Seasons", value: String(detail.seasons.length) }
       : null,
-    isSeries && detail?.kind === "series"
+    isSeries &&
+    detail?.kind === "series" &&
+    detail.seasons.reduce((total, season) => total + season.episodeCount, 0) > 0
       ? {
           label: "Episodes",
           value: String(
@@ -433,7 +444,13 @@ export function MediaDetailsPage() {
               {media.genres.length > 0 ? <span>{media.genres.join(" · ")}</span> : null}
               {availability && availability.state !== "available" ? (
                 <span className={styles.offline}>
-                  {availability.state === "missing-file" ? "File missing" : "Offline"}
+                  {availability.state === "missing-file"
+                    ? acquisition?.stage === "ready"
+                      ? "Ready to play"
+                      : acquisition
+                        ? "Downloading"
+                        : "File missing"
+                    : "Offline"}
                 </span>
               ) : null}
               {media.progress !== undefined ? (
