@@ -8,6 +8,99 @@ first; earlier sections are retained as history and are explicitly superseded
 where they disagree with it. See `roadmap.md` for sequencing and `CHANGELOG.md`
 for a feature summary.
 
+## 2026-11-26 — Task 2 verification of the series acquisition change
+
+Verification only; no product code changed in this pass. BASE `dfa403d` changed
+only `MediaDetailsPage.tsx` and its test — no Rust file changed. Run from the
+repo root with a fresh target dir `CARGO_TARGET_DIR=target/qa-series`:
+
+- `cargo fmt --all -- --check` — exit 0.
+- `cargo clippy --workspace --all-targets -- -D warnings` — exit 0.
+- `cargo test --workspace` — exit 0; all suites `ok`, 324 passed, 0 failed,
+  2 pre-existing ignored (`searching_10k_items_is_within_budget`,
+  `mpv::tests::live_real_file_plays`).
+- `cargo test -p mediahaven-contract --test route_parity` — exit 0, 4/4.
+
+The live signed check against `127.0.0.1:8080` (controller-owned) was observed
+earlier on 2026-11-26: `POST /playback_start` HTTP 200 for media id
+`catalog-series-de6e8643ef7d341629b11966ee109825`. Not re-run here; no Docker
+or container change made.
+
+NOT RUN here: live signed HTTP check (controller owns it), frontend/E2E gates,
+coverage thresholds, second-machine LAN checks.
+
+## 2026-11-26 — live functional pass and browser QA
+
+After explicit consent, Docker Desktop and the existing `mediahaven-core` and
+`mediahaven-qbittorrent` containers were started (no rebuild or config change).
+Live signed checks against the running core observed: `healthz` 200;
+`/host/acquisition_status` returned the real torrent at `state: ready`,
+`progress: 1.0` with the bound media id; `/playback_source/:id` returned the
+real `/downloads/<filename>` path; `/host/defender_state` returned `clean`;
+`POST /playback_start` returned HTTP 200 with a session for "Firefly Wedding";
+mpv stayed alive 6 s with window title `Firefly Wedding - S01E05 - Hurt - mpv`.
+The 1.47 GB file remains in the acquisition root.
+
+Browser QA (Playwright Chromium, Vite dev server, injected host-command stubs)
+walked 13 routes at 1280×720, 768×1024 and 390×844: 39/39 rendered, 0 console
+errors, 0 pageerrors, 0 failed requests, no horizontal overflow, no empty
+`<main>`, 7/7 primary nav links worked, 0 dead/empty hrefs. Search, Discover
+tabs, Details Find sources, Home catalog card → Details, player timer, profiles
+and setup were all clean. No UI bug found. The app uses HashRouter, so routes
+must be `/#/route`; bare `/discover` renders Home by design.
+
+Static wiring check: all 31 command names used by `services/api.ts` appear in
+`apps/desktop/src-tauri/src/lib.rs`. Known friction left open by earlier
+decisions: `services/generated.ts` still lists only the old 24 commands,
+`playwright.config.ts` at repo root needs `NODE_PATH=apps/desktop/node_modules`,
+and findings 4/5 (host credential, supervisor wiring) are still held.
+
+## 2026-11-26 — full verification of the catalog/playback UI wave
+
+Asked to test everything with the verification-loop and Matt Pocock `tdd`
+skills. All commands run locally; no code changed in this pass.
+
+- Rust: `cargo fmt --all -- --check` 0, `cargo clippy --workspace --all-targets
+  -- -D warnings` 0, `cargo test --workspace` 0 (all suites ok), contract
+  parity 4/4, `tests/dependency_graph.sh` OK.
+- Frontend: typecheck 0, lint 0, Vitest 93/93 across 18 files, token check
+  86/0, build ok, bundle clean.
+- E2E: `playwright test` 1/1 (boot gate, no unexpected console errors or
+  overflow). The root `playwright.config.ts` imports `@playwright/test`, which
+  lives in `apps/desktop/node_modules`; the run needed
+  `NODE_PATH=apps/desktop/node_modules` and `--config ../../playwright.config.ts`.
+  Running `npx playwright test` from the repo root fails with MODULE_NOT_FOUND.
+- Security scan: no `sk-` keys, no `api_key` literals, no `console.log` in
+  `apps/desktop/src`. `git diff --check` 0; 9 files changed in the UI wave.
+- NOT RUN: coverage thresholds (no coverage provider configured), live app
+  click-through, container redeploy, second-machine LAN checks.
+
+## 2026-11-25 — catalog expanded view and download-stage playback wired
+
+The user reported that clicking a catalog movie did not show an expanded view
+with the poster as background, and that Play gave no download progress.
+
+- `CatalogCard.posterFor()` now supplies one poster source to the card and to
+  the Details backdrop. Discover and Home pass it in router state; Details
+  uses it for both the opening and loaded backdrop. TDD: a failing Discover
+  test for the poster in route state, then a failing Details test for the
+  backdrop src, both turned green.
+- Details Play on a not-available movie now calls `source_search`, takes the
+  top magnet, calls `source_set`, polls `download_status` every 2 s, shows
+  "Finding a magnet link…" then "Downloading — N%" with a progress bar, and
+  ends in a "Play Now" link to `/player/:id`. The user's Play press is the
+  human confirmation for the chosen source. Series/episodes are unchanged.
+  TDD: failing stage-transition test with fake timers, then green.
+- Backend check: `source_search`, `source_set`, `download_status` and
+  `playback_start` are all registered in `generate_handler!`; `download_status`
+  forwards to `/host/acquisition_status`; Play Now reaches PlayerPage →
+  `playback_start`, whose host probe and Defender gates run first. No backend
+  change was needed. Contract parity stayed green (4/4).
+
+Gates observed: typecheck 0, lint 0, Vitest 93/93 across 18 files, tokens 86/0,
+build ok, bundle clean, contract parity 4/4, fmt 0, `git diff --check` 0.
+No commit, no redeploy, no live app click-through.
+
 ## 2026-11-25 — audit fixes 1, 2, 3, 6, 7, 8 applied
 
 Whole-repo audit produced 20 ranked findings. Six pure-code Must-fix items
