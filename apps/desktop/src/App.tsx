@@ -59,10 +59,8 @@ function ServiceDown({
           copy of your catalogue, so it will not show invented titles.
         </p>
         <p className={styles.gateBody}>
-          Start the backend, then retry:
-          <code className={styles.code}>
-            MEDIAHAVEN_DEV=1 cargo run -p mediahaven-core
-          </code>
+          Check that Docker is running, then retry. If it stopped, reopen MEDIA
+          HAVEN and it will start the local service again.
         </p>
         <p className={styles.gateMeta}>Expected at {apiBase}</p>
         <div className={styles.gateActions}>

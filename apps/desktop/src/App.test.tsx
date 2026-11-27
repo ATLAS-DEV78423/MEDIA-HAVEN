@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { api } from "./services/api";
 import { AppStateProvider } from "./state/AppState";
 
 const settings = {
@@ -86,6 +87,19 @@ function mount(route = "/") {
 
 beforeEach(() => {
   window.localStorage.clear();
+});
+
+describe("ServiceDown gate", () => {
+  it("does not tell the user to run a developer command", async () => {
+    vi.mocked(api.ready).mockRejectedValueOnce(new Error("offline"));
+    mount();
+
+    expect(
+      await screen.findByRole("heading", { name: /library service is not answering/i }),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toContain("MEDIAHAVEN_DEV=1");
+    expect(document.body.textContent).toMatch(/docker|setup/i);
+  });
 });
 
 describe("app shell", () => {

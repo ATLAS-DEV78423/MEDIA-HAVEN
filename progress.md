@@ -2287,3 +2287,8 @@ Artwork: artFor no longer hashes unknown titles to unrelated film stills; it ret
 Gates: fmt 0, clippy 0, cargo test --workspace 0, typecheck 0, lint 0, Vitest 102/102 across 19 files, tokens 87/0, build ok, bundle clean.
 
 Rebuilt and reinstalled after those fixes: build.ps1 PASS (unsigned per-user NSIS 4.90 MiB, installer SHA-256 matched SHA256SUMS.txt: 006ca71065a5f47ad3ab3da6170a240a79a720ae763d009832e3d6f3f9cabdf3). Installed binary contains asset index-D3pFj2po.js. Relaunched with saved user-level settings: PID 17836, window MEDIA_HAVEN, left running. Prowlarr URL is now http://127.0.0.1:9117 in the user environment.
+
+## 2026-11-27 — Docker restart and ServiceDown copy fix
+
+Docker Desktop had stopped again, leaving core unreachable at 127.0.0.1:8080 and the app on the ServiceDown gate. Started the engine and the saved mediahaven-qbittorrent/mediahaven-core containers; core reported healthy and healthz returned 200.
+The gate also told users to run MEDIAHAVEN_DEV=1 cargo run -p mediahaven-core, which is wrong for the packaged app and contradicts the no-command-line contract. Replaced it with plain guidance to check Docker and retry. TDD test added in App.test.tsx; gate copy test 3/3, full frontend Vitest 103/103, typecheck 0, lint 0, tokens 87/0, build ok, bundle clean.
